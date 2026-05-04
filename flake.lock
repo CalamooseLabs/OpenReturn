@@ -1,0 +1,51 @@
+{
+  "nodes": {
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1777826146,
+        "narHash": "sha256-wQ/iN5Zp5VIa3ebBibijPnLyKhor+xEbDy4d0goa9Zs=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "73c703c22422b8951895a960959dbbaca7296492",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixpkgs-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "nixpkgs": "nixpkgs",
+        "zed-editor": "zed-editor"
+      }
+    },
+    "zed-editor": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "dir": "flakes/zed-editor",
+        "lastModified": 1763486553,
+        "narHash": "sha256-1bmlyqpTEDC+Bpu7n47vaoSThSggMbgBaJ/mvbrdttI=",
+        "owner": "CalamooseLabs",
+        "repo": "antlers",
+        "rev": "db8969c971163c8437a0a9309c9495439a00f548",
+        "type": "github"
+      },
+      "original": {
+        "dir": "flakes/zed-editor",
+        "owner": "CalamooseLabs",
+        "ref": "flakes.zed-editor",
+        "repo": "antlers",
+        "type": "github"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}

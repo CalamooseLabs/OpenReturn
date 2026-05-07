@@ -1,6 +1,6 @@
 from parser import Parser
 
-class Form990Parser(Parser):
+class IRS990Parser(Parser):
   namespace =  {'irs': 'http://www.irs.gov/efile'}
   nsFind = "/irs:"
 
@@ -21,7 +21,7 @@ class Form990Parser(Parser):
       "fundraising_expenses": ["ReturnData/IRS990/TotalFunctionalExpensesGrp/FundraisingAmt"],
       "contributions": ["ReturnData/IRS990/CYContributionsGrantsAmt"],
       "government_grants": ["ReturnData/IRS990/GovernmentGrantsAmt"],
-      "surplus_revenue": ["ReturnData/IRS990/CYRevenuesLessExpensesAmt"],
+      "fund_balances": ["ReturnData/IRS990/CYRevenuesLessExpensesAmt"],
       "liabilities": ["ReturnData/IRS990/TotalLiabilitiesEOYAmt"],
       "assets": ["ReturnData/IRS990/NetAssetsOrFundBalancesEOYAmt"],
       "working_capital": [
@@ -100,7 +100,7 @@ class Form990Parser(Parser):
       finalVal = 0
       for path in paths:
         val = super().getElem(path)
-        finalVal += int(val if val != None else 0)
+        finalVal += float(val if val != None else 0)
       extractedData[key] = finalVal
 
     return extractedData

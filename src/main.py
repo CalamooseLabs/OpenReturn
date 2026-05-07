@@ -4,7 +4,7 @@
 from pprint import pprint
 import sys
 
-from parser.Form990 import Form990Parser
+from src.parser.IRS990 import IRS990Parser
 from unzipper import Unzipper
 from database import Database
 
@@ -13,7 +13,7 @@ def main() -> int:
   db = Database()
 
   for f in UZ:
-      t = Form990Parser(f.read())
+      t = IRS990Parser(f.read())
       pprint(t.extract())
 
   db.close()

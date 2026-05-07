@@ -15,6 +15,7 @@ def main() -> int:
   for f in UZ:
       t = IRS990Parser(f.read())
       print(t.getElem("ReturnData/IRS990/ProgramServiceRevenueGrp/Desc"))
+      print(t.getElem("ReturnData/IRS990/ProgramServiceRevenueGrp/Desc"))
 
   db.close()
   return 0;

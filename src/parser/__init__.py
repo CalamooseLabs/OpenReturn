@@ -10,12 +10,14 @@ class TreeNode(TypedDict):
 Tree: TypeAlias = dict[str, TreeNode]
 
 class Parser:
+  foundElements: dict[str, int] = {}
+
   def __init__(self, xmlstr: str, namespace: dict[str, str], nsFind: str) -> None:
     self.root = ET.fromstring(xmlstr)
     self.ns = namespace
     self.nsFind = nsFind
 
-  def getElem(self, path: str) -> list[str] | None:
+  def getElem(self, path: str) -> str | None:
     chunks = path.split("/")
     findStr = "./"
     for chunk in chunks:
@@ -24,12 +26,11 @@ class Parser:
     elems = self.root.findall(findStr, self.ns)
 
     if len(elems):
-      innerElems: list[str] = []
-      for elem in elems:
-        innerText = elem.text
-        if type(innerText) is str:
-          innerElems.append(innerText)
-      return innerElems
+      if path not in self.foundElements:
+        self.foundElements[path] = -1
+      self.foundElements[path] += 1
+
+      return elems[self.foundElements[path]].text
 
     return None
 

@@ -5,6 +5,8 @@
   zedSettings = {
     auto_install_extensions = {
       "python" = true;
+      "xml" = true;
+      "sql" = true;
     };
   };
 in

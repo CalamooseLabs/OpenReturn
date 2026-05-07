@@ -211,9 +211,6 @@ CREATE TABLE IF NOT EXISTS statement_of_revenue (
 
   -- 2g: Total program service revenue
   program_service_revenue_total INTEGER,
-  program_service_revenue_total_related INTEGER,
-  program_service_revenue_total_unrelated INTEGER,
-  program_service_revenue_total_excluded INTEGER,
 
   -- Line 3: Investment income (dividends, interest, etc.)
   investment_income_total INTEGER,

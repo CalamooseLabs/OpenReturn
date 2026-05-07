@@ -4,7 +4,7 @@
 from pprint import pprint
 import sys
 
-from src.parser.IRS990 import IRS990Parser
+from parser.IRS990 import IRS990Parser
 from unzipper import Unzipper
 from database import Database
 
@@ -14,7 +14,7 @@ def main() -> int:
 
   for f in UZ:
       t = IRS990Parser(f.read())
-      pprint(t.extract())
+      print(t.getElem("ReturnData/IRS990/ProgramServiceRevenueGrp/Desc"))
 
   db.close()
   return 0;

@@ -15,18 +15,21 @@ class Parser:
     self.ns = namespace
     self.nsFind = nsFind
 
-  def getElem(self, path: str) -> str | None:
+  def getElem(self, path: str) -> list[str] | None:
     chunks = path.split("/")
     findStr = "./"
     for chunk in chunks:
       findStr = findStr + self.nsFind + chunk
 
-    elem = self.root.find(findStr, self.ns)
+    elems = self.root.findall(findStr, self.ns)
 
-    if type(elem) is ET.Element:
-      innerText = elem.text
-      if type(innerText) is str:
-        return innerText
+    if len(elems):
+      innerElems: list[str] = []
+      for elem in elems:
+        innerText = elem.text
+        if type(innerText) is str:
+          innerElems.append(innerText)
+      return innerElems
 
     return None
 

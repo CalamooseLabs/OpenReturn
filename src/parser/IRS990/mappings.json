@@ -1381,681 +1381,662 @@
   {
     "name": "Program Service Revenue A — Description",
     "dbcolumn": "program_service_revenue_a_desc",
-    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/Desc",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue A — Total",
     "dbcolumn": "program_service_revenue_a_total",
-    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/TotalRevenueColumnAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue A — Related",
     "dbcolumn": "program_service_revenue_a_related",
-    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/RelatedOrExemptFuncIncomeAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue A — Unrelated Business",
     "dbcolumn": "program_service_revenue_a_unrelated",
-    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/UnrelatedBusinessRevenueAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue A — Excluded",
     "dbcolumn": "program_service_revenue_a_excluded",
-    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/ExclusionAmt",
     "tablename": "statement_of_revenue"
   },
 
   {
     "name": "Program Service Revenue B — Description",
     "dbcolumn": "program_service_revenue_b_desc",
-    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/Desc",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue B — Total",
     "dbcolumn": "program_service_revenue_b_total",
-    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/TotalRevenueColumnAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue B — Related",
     "dbcolumn": "program_service_revenue_b_related",
-    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/RelatedOrExemptFuncIncomeAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue B — Unrelated Business",
     "dbcolumn": "program_service_revenue_b_unrelated",
-    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/UnrelatedBusinessRevenueAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue B — Excluded",
     "dbcolumn": "program_service_revenue_b_excluded",
-    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/ExclusionAmt",
     "tablename": "statement_of_revenue"
   },
 
   {
     "name": "Program Service Revenue C — Description",
     "dbcolumn": "program_service_revenue_c_desc",
-    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/Desc",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue C — Total",
     "dbcolumn": "program_service_revenue_c_total",
-    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/TotalRevenueColumnAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue C — Related",
     "dbcolumn": "program_service_revenue_c_related",
-    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/RelatedOrExemptFuncIncomeAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue C — Unrelated Business",
     "dbcolumn": "program_service_revenue_c_unrelated",
-    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/UnrelatedBusinessRevenueAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue C — Excluded",
     "dbcolumn": "program_service_revenue_c_excluded",
-    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/ExclusionAmt",
     "tablename": "statement_of_revenue"
   },
 
   {
     "name": "Program Service Revenue D — Description",
     "dbcolumn": "program_service_revenue_d_desc",
-    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/Desc",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue D — Total",
     "dbcolumn": "program_service_revenue_d_total",
-    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/TotalRevenueColumnAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue D — Related",
     "dbcolumn": "program_service_revenue_d_related",
-    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/RelatedOrExemptFuncIncomeAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue D — Unrelated Business",
     "dbcolumn": "program_service_revenue_d_unrelated",
-    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/UnrelatedBusinessRevenueAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue D — Excluded",
     "dbcolumn": "program_service_revenue_d_excluded",
-    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/ExclusionAmt",
     "tablename": "statement_of_revenue"
   },
 
   {
     "name": "Program Service Revenue E — Description",
     "dbcolumn": "program_service_revenue_e_desc",
-    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/Desc",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue E — Total",
     "dbcolumn": "program_service_revenue_e_total",
-    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/TotalRevenueColumnAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue E — Related",
     "dbcolumn": "program_service_revenue_e_related",
-    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/RelatedOrExemptFuncIncomeAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue E — Unrelated Business",
     "dbcolumn": "program_service_revenue_e_unrelated",
-    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/UnrelatedBusinessRevenueAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue E — Excluded",
     "dbcolumn": "program_service_revenue_e_excluded",
-    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/ExclusionAmt",
     "tablename": "statement_of_revenue"
   },
 
   {
     "name": "Program Service Revenue — All Other — Total",
     "dbcolumn": "program_service_revenue_other_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/TotalOthProgramServiceRevGrp/TotalRevenueColumnAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue — All Other — Related",
     "dbcolumn": "program_service_revenue_other_related",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/TotalOthProgramServiceRevGrp/RelatedOrExemptFuncIncomeAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue — All Other — Unrelated Business",
     "dbcolumn": "program_service_revenue_other_unrelated",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/TotalOthProgramServiceRevGrp/UnrelatedBusinessRevenueAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue — All Other — Excluded",
     "dbcolumn": "program_service_revenue_other_excluded",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/TotalOthProgramServiceRevGrp/ExclusionAmt",
     "tablename": "statement_of_revenue"
   },
 
   {
     "name": "Program Service Revenue — Total",
     "dbcolumn": "program_service_revenue_total",
-    "path": "ReturnData/IRS990/",
-    "tablename": "statement_of_revenue"
-  },
-  {
-    "name": "Program Service Revenue — Total Related",
-    "dbcolumn": "program_service_revenue_total_related",
-    "path": "ReturnData/IRS990/",
-    "tablename": "statement_of_revenue"
-  },
-  {
-    "name": "Program Service Revenue — Total Unrelated Business",
-    "dbcolumn": "program_service_revenue_total_unrelated",
-    "path": "ReturnData/IRS990/",
-    "tablename": "statement_of_revenue"
-  },
-  {
-    "name": "Program Service Revenue — Total Excluded",
-    "dbcolumn": "program_service_revenue_total_excluded",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/TotalProgramServiceRevenueAmt",
     "tablename": "statement_of_revenue"
   },
 
   {
     "name": "Investment Income — Total",
     "dbcolumn": "investment_income_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/InvestmentIncomeGrp/TotalRevenueColumnAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Investment Income — Related",
     "dbcolumn": "investment_income_related",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/InvestmentIncomeGrp/RelatedOrExemptFuncIncomeAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Investment Income — Unrelated Business",
     "dbcolumn": "investment_income_unrelated",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/InvestmentIncomeGrp/UnrelatedBusinessRevenueAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Investment Income — Excluded",
     "dbcolumn": "investment_income_excluded",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/InvestmentIncomeGrp/ExclusionAmt",
     "tablename": "statement_of_revenue"
   },
 
   {
     "name": "Income from Investment of Tax-Exempt Bond Proceeds — Total",
     "dbcolumn": "tax_exempt_bond_proceeds_income_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/IncmFromInvestBondProceedsGrp/TotalRevenueColumnAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Income from Investment of Tax-Exempt Bond Proceeds — Related",
     "dbcolumn": "tax_exempt_bond_proceeds_income_related",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/IncmFromInvestBondProceedsGrp/RelatedOrExemptFuncIncomeAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Income from Investment of Tax-Exempt Bond Proceeds — Unrelated Business",
     "dbcolumn": "tax_exempt_bond_proceeds_income_unrelated",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/IncmFromInvestBondProceedsGrp/UnrelatedBusinessRevenueAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Income from Investment of Tax-Exempt Bond Proceeds — Excluded",
     "dbcolumn": "tax_exempt_bond_proceeds_income_excluded",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/IncmFromInvestBondProceedsGrp/ExclusionAmt",
     "tablename": "statement_of_revenue"
   },
 
   {
     "name": "Royalties — Total",
     "dbcolumn": "royalties_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/RoyaltiesRevenueGrp/TotalRevenueColumnAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Royalties — Related",
     "dbcolumn": "royalties_related",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/RoyaltiesRevenueGrp/RelatedOrExemptFuncIncomeAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Royalties — Unrelated Business",
     "dbcolumn": "royalties_unrelated",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/RoyaltiesRevenueGrp/UnrelatedBusinessRevenueAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Royalties — Excluded",
     "dbcolumn": "royalties_excluded",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/RoyaltiesRevenueGrp/ExclusionAmt",
     "tablename": "statement_of_revenue"
   },
 
   {
     "name": "Gross Rents — Real Property",
     "dbcolumn": "gross_rents_real",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/GrossRentsGrp/RealAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Gross Rents — Personal Property",
     "dbcolumn": "gross_rents_personal",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/GrossRentsGrp/PersonalAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Rental Expenses — Real Property",
     "dbcolumn": "rental_expenses_real",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/LessRentalExpensesGrp/RealAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Rental Expenses — Personal Property",
     "dbcolumn": "rental_expenses_personal",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/LessRentalExpensesGrp/PersonalAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Rental Income or Loss — Real Property",
     "dbcolumn": "rental_income_or_loss_real",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/RentalIncomeOrLossGrp/RealAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Rental Income or Loss — Personal Property",
     "dbcolumn": "rental_income_or_loss_personal",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/RentalIncomeOrLossGrp/PersonalAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Net Rental Income or Loss — Total",
     "dbcolumn": "net_rental_income_or_loss_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/NetRentalIncomeOrLossGrp/TotalRevenueColumnAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Net Rental Income or Loss — Related",
     "dbcolumn": "net_rental_income_or_loss_related",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/NetRentalIncomeOrLossGrp/RelatedOrExemptFuncIncomeAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Net Rental Income or Loss — Unrelated Business",
     "dbcolumn": "net_rental_income_or_loss_unrelated",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/NetRentalIncomeOrLossGrp/UnrelatedBusinessRevenueAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Net Rental Income or Loss — Excluded",
     "dbcolumn": "net_rental_income_or_loss_excluded",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/NetRentalIncomeOrLossGrp/ExclusionAmt",
     "tablename": "statement_of_revenue"
   },
-
   {
     "name": "Gross Sales of Assets — Securities",
     "dbcolumn": "gross_sales_securities",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/GrossAmountSalesAssetsGrp/SecuritiesAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Gross Sales of Assets — Other Assets",
     "dbcolumn": "gross_sales_other_assets",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/GrossAmountSalesAssetsGrp/OtherAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Cost Basis of Assets Sold — Securities",
     "dbcolumn": "cost_basis_securities",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/LessCostOthBasisSalesExpnssGrp/SecuritiesAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Cost Basis of Assets Sold — Other Assets",
     "dbcolumn": "cost_basis_other_assets",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/LessCostOthBasisSalesExpnssGrp/OtherAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Gain or Loss — Securities",
     "dbcolumn": "gain_or_loss_securities",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/GainOrLossGrp/SecuritiesAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Gain or Loss — Other Assets",
     "dbcolumn": "gain_or_loss_other_assets",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/GainOrLossGrp/OtherAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Net Gain or Loss on Sales of Assets — Total",
     "dbcolumn": "net_gain_or_loss_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/NetGainOrLossInvestmentsGrp/TotalRevenueColumnAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Net Gain or Loss on Sales of Assets — Related",
     "dbcolumn": "net_gain_or_loss_related",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/NetGainOrLossInvestmentsGrp/RelatedOrExemptFuncIncomeAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Net Gain or Loss on Sales of Assets — Unrelated Business",
     "dbcolumn": "net_gain_or_loss_unrelated",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/NetGainOrLossInvestmentsGrp/UnrelatedBusinessRevenueAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Net Gain or Loss on Sales of Assets — Excluded",
     "dbcolumn": "net_gain_or_loss_excluded",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/NetGainOrLossInvestmentsGrp/ExclusionAmt",
     "tablename": "statement_of_revenue"
   },
 
   {
     "name": "Gross Income from Fundraising Events",
     "dbcolumn": "gross_income_fundraising_events",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/FundraisingGrossIncomeAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Direct Expenses from Fundraising Events",
     "dbcolumn": "direct_expenses_fundraising_events",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/FundraisingDirectExpensesAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Net Income from Fundraising Events — Total",
     "dbcolumn": "net_income_fundraising_events_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/NetIncmFromFundraisingEvtGrp/TotalRevenueColumnAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Net Income from Fundraising Events — Related",
     "dbcolumn": "net_income_fundraising_events_related",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/NetIncmFromFundraisingEvtGrp/RelatedOrExemptFuncIncomeAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Net Income from Fundraising Events — Unrelated Business",
     "dbcolumn": "net_income_fundraising_events_unrelated",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/NetIncmFromFundraisingEvtGrp/UnrelatedBusinessRevenueAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Net Income from Fundraising Events — Excluded",
     "dbcolumn": "net_income_fundraising_events_excluded",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/NetIncmFromFundraisingEvtGrp/ExclusionAmt",
     "tablename": "statement_of_revenue"
   },
 
   {
     "name": "Gross Income from Gaming Activities",
     "dbcolumn": "gross_income_gaming",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/GamingGrossIncomeAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Direct Expenses from Gaming Activities",
     "dbcolumn": "direct_expenses_gaming",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/GamingDirectExpensesAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Net Income from Gaming Activities — Total",
     "dbcolumn": "net_income_gaming_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/NetIncomeFromGamingGrp/TotalRevenueColumnAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Net Income from Gaming Activities — Related",
     "dbcolumn": "net_income_gaming_related",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/NetIncomeFromGamingGrp/RelatedOrExemptFuncIncomeAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Net Income from Gaming Activities — Unrelated Business",
     "dbcolumn": "net_income_gaming_unrelated",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/NetIncomeFromGamingGrp/UnrelatedBusinessRevenueAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Net Income from Gaming Activities — Excluded",
     "dbcolumn": "net_income_gaming_excluded",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/NetIncomeFromGamingGrp/ExclusionAmt",
     "tablename": "statement_of_revenue"
   },
 
   {
     "name": "Gross Sales of Inventory",
     "dbcolumn": "gross_sales_inventory",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/GrossSalesOfInventoryAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Cost of Goods Sold",
     "dbcolumn": "cost_of_goods_sold",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/CostOfGoodsSoldAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Net Income from Sales of Inventory — Total",
     "dbcolumn": "net_income_sales_inventory_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/NetIncomeOrLossGrp/TotalRevenueColumnAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Net Income from Sales of Inventory — Related",
     "dbcolumn": "net_income_sales_inventory_related",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/NetIncomeOrLossGrp/RelatedOrExemptFuncIncomeAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Net Income from Sales of Inventory — Unrelated Business",
     "dbcolumn": "net_income_sales_inventory_unrelated",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/NetIncomeOrLossGrp/UnrelatedBusinessRevenueAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Net Income from Sales of Inventory — Excluded",
     "dbcolumn": "net_income_sales_inventory_excluded",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/NetIncomeOrLossGrp/ExclusionAmt",
     "tablename": "statement_of_revenue"
   },
 
   {
     "name": "Miscellaneous Revenue A — Description",
     "dbcolumn": "miscellaneous_revenue_a_desc",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherRevenueMiscGrp/Desc",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Miscellaneous Revenue A — Total",
     "dbcolumn": "miscellaneous_revenue_a_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherRevenueMiscGrp/TotalRevenueColumnAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Miscellaneous Revenue A — Related",
     "dbcolumn": "miscellaneous_revenue_a_related",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherRevenueMiscGrp/RelatedOrExemptFuncIncomeAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Miscellaneous Revenue A — Unrelated Business",
     "dbcolumn": "miscellaneous_revenue_a_unrelated",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherRevenueMiscGrp/UnrelatedBusinessRevenueAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Miscellaneous Revenue A — Excluded",
     "dbcolumn": "miscellaneous_revenue_a_excluded",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherRevenueMiscGrp/ExclusionAmt",
     "tablename": "statement_of_revenue"
   },
 
   {
     "name": "Miscellaneous Revenue B — Description",
     "dbcolumn": "miscellaneous_revenue_b_desc",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherRevenueMiscGrp/Desc",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Miscellaneous Revenue B — Total",
     "dbcolumn": "miscellaneous_revenue_b_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherRevenueMiscGrp/TotalRevenueColumnAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Miscellaneous Revenue B — Related",
     "dbcolumn": "miscellaneous_revenue_b_related",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherRevenueMiscGrp/RelatedOrExemptFuncIncomeAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Miscellaneous Revenue B — Unrelated Business",
     "dbcolumn": "miscellaneous_revenue_b_unrelated",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherRevenueMiscGrp/UnrelatedBusinessRevenueAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Miscellaneous Revenue B — Excluded",
     "dbcolumn": "miscellaneous_revenue_b_excluded",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherRevenueMiscGrp/ExclusionAmt",
     "tablename": "statement_of_revenue"
   },
 
   {
     "name": "Miscellaneous Revenue C — Description",
     "dbcolumn": "miscellaneous_revenue_c_desc",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherRevenueMiscGrp/Desc",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Miscellaneous Revenue C — Total",
     "dbcolumn": "miscellaneous_revenue_c_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherRevenueMiscGrp/TotalRevenueColumnAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Miscellaneous Revenue C — Related",
     "dbcolumn": "miscellaneous_revenue_c_related",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherRevenueMiscGrp/RelatedOrExemptFuncIncomeAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Miscellaneous Revenue C — Unrelated Business",
     "dbcolumn": "miscellaneous_revenue_c_unrelated",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherRevenueMiscGrp/UnrelatedBusinessRevenueAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Miscellaneous Revenue C — Excluded",
     "dbcolumn": "miscellaneous_revenue_c_excluded",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherRevenueMiscGrp/ExclusionAmt",
     "tablename": "statement_of_revenue"
   },
 
   {
     "name": "All Other Miscellaneous Revenue — Total",
     "dbcolumn": "all_other_revenue_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/MiscellaneousRevenueGrp/TotalRevenueColumnAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "All Other Miscellaneous Revenue — Related",
     "dbcolumn": "all_other_revenue_related",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/MiscellaneousRevenueGrp/RelatedOrExemptFuncIncomeAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "All Other Miscellaneous Revenue — Unrelated Business",
     "dbcolumn": "all_other_revenue_unrelated",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/MiscellaneousRevenueGrp/UnrelatedBusinessRevenueAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "All Other Miscellaneous Revenue — Excluded",
     "dbcolumn": "all_other_revenue_excluded",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/MiscellaneousRevenueGrp/ExclusionAmt",
     "tablename": "statement_of_revenue"
   },
 
   {
     "name": "Total Miscellaneous Revenue — Total",
     "dbcolumn": "miscellaneous_revenue_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherRevenueTotalAmt/TotalRevenueColumnAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Total Miscellaneous Revenue — Related",
     "dbcolumn": "miscellaneous_revenue_total_related",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherRevenueTotalAmt/RelatedOrExemptFuncIncomeAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Total Miscellaneous Revenue — Unrelated Business",
     "dbcolumn": "miscellaneous_revenue_total_unrelated",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherRevenueTotalAmt/UnrelatedBusinessRevenueAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Total Miscellaneous Revenue — Excluded",
     "dbcolumn": "miscellaneous_revenue_total_excluded",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherRevenueTotalAmt/ExclusionAmt",
     "tablename": "statement_of_revenue"
   },
 
   {
     "name": "Total Revenue — Total",
     "dbcolumn": "total_revenue",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/TotalRevenueGrp/TotalRevenueColumnAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Total Revenue — Related",
     "dbcolumn": "total_revenue_related",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/TotalRevenueGrp/RelatedOrExemptFuncIncomeAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Total Revenue — Unrelated Business",
     "dbcolumn": "total_revenue_unrelated",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/TotalRevenueGrp/UnrelatedBusinessRevenueAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Total Revenue — Excluded",
     "dbcolumn": "total_revenue_excluded",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/TotalRevenueGrp/ExclusionAmt",
     "tablename": "statement_of_revenue"
   },
   {

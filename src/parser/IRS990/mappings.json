@@ -79,52 +79,52 @@
   {
     "name": "Loans Receivable from Officers/Directors/Trustees/Key Employees (BOY)",
     "dbcolumn": "loans_receivable_from_officers_boy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
   {
     "name": "Loans Receivable from Officers/Directors/Trustees/Key Employees (EOY)",
     "dbcolumn": "loans_receivable_from_officers_eoy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
 
   {
     "name": "Loans Receivable from Other Disqualified Persons (BOY)",
     "dbcolumn": "loans_receivable_from_disqualified_persons_boy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
   {
     "name": "Loans Receivable from Other Disqualified Persons (EOY)",
     "dbcolumn": "loans_receivable_from_disqualified_persons_eoy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
 
   {
     "name": "Notes and Loans Receivable, Net (BOY)",
     "dbcolumn": "notes_and_loans_receivable_net_boy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
   {
     "name": "Notes and Loans Receivable, Net (EOY)",
     "dbcolumn": "notes_and_loans_receivable_net_eoy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
 
   {
     "name": "Inventories for Sale or Use (BOY)",
     "dbcolumn": "inventories_for_sale_or_use_boy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
   {
     "name": "Inventories for Sale or Use (EOY)",
     "dbcolumn": "inventories_for_sale_or_use_eoy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
 
@@ -170,65 +170,65 @@
   {
     "name": "Investments — Publicly Traded Securities (BOY)",
     "dbcolumn": "investments_publicly_traded_securities_boy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
   {
     "name": "Investments — Publicly Traded Securities (EOY)",
     "dbcolumn": "investments_publicly_traded_securities_eoy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
 
   {
     "name": "Investments — Other Securities (BOY)",
     "dbcolumn": "investments_other_securities_boy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
   {
     "name": "Investments — Other Securities (EOY)",
     "dbcolumn": "investments_other_securities_eoy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
 
   {
     "name": "Investments — Program-Related (BOY)",
     "dbcolumn": "investments_program_related_boy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
   {
     "name": "Investments — Program-Related (EOY)",
     "dbcolumn": "investments_program_related_eoy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
 
   {
     "name": "Intangible Assets (BOY)",
     "dbcolumn": "intangible_assets_boy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
   {
     "name": "Intangible Assets (EOY)",
     "dbcolumn": "intangible_assets_eoy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
 
   {
     "name": "Other Assets (BOY)",
     "dbcolumn": "other_assets_boy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
   {
     "name": "Other Assets (EOY)",
     "dbcolumn": "other_assets_eoy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
 
@@ -261,13 +261,13 @@
   {
     "name": "Grants Payable (BOY)",
     "dbcolumn": "grants_payable_boy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
   {
     "name": "Grants Payable (EOY)",
     "dbcolumn": "grants_payable_eoy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
 
@@ -287,65 +287,65 @@
   {
     "name": "Tax-Exempt Bond Liabilities (BOY)",
     "dbcolumn": "tax_exempt_bond_liabilities_boy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
   {
     "name": "Tax-Exempt Bond Liabilities (EOY)",
     "dbcolumn": "tax_exempt_bond_liabilities_eoy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
 
   {
     "name": "Escrow or Custodial Account Liability (BOY)",
     "dbcolumn": "escrow_or_custodial_account_liability_boy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
   {
     "name": "Escrow or Custodial Account Liability (EOY)",
     "dbcolumn": "escrow_or_custodial_account_liability_eoy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
 
   {
     "name": "Loans Payable to Officers/Directors/Trustees/Key Employees (BOY)",
     "dbcolumn": "loans_payable_to_officers_boy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
   {
     "name": "Loans Payable to Officers/Directors/Trustees/Key Employees (EOY)",
     "dbcolumn": "loans_payable_to_officers_eoy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
 
   {
     "name": "Secured Mortgages and Notes Payable to Unrelated Third Parties (BOY)",
     "dbcolumn": "secured_mortgages_and_notes_payable_boy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
   {
     "name": "Secured Mortgages and Notes Payable to Unrelated Third Parties (EOY)",
     "dbcolumn": "secured_mortgages_and_notes_payable_eoy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
 
   {
     "name": "Unsecured Notes and Loans Payable to Unrelated Third Parties (BOY)",
     "dbcolumn": "unsecured_notes_and_loans_payable_boy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
   {
     "name": "Unsecured Notes and Loans Payable to Unrelated Third Parties (EOY)",
     "dbcolumn": "unsecured_notes_and_loans_payable_eoy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
 
@@ -404,39 +404,39 @@
   {
     "name": "Capital Stock or Trust Principal, or Current Funds (BOY)",
     "dbcolumn": "capital_stock_or_trust_principal_boy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
   {
     "name": "Capital Stock or Trust Principal, or Current Funds (EOY)",
     "dbcolumn": "capital_stock_or_trust_principal_eoy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
 
   {
     "name": "Paid-In or Capital Surplus (BOY)",
     "dbcolumn": "paid_in_or_capital_surplus_boy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
   {
     "name": "Paid-In or Capital Surplus (EOY)",
     "dbcolumn": "paid_in_or_capital_surplus_eoy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
 
   {
     "name": "Retained Earnings, Endowment, Accumulated Income, or Other Funds (BOY)",
     "dbcolumn": "retained_earnings_endowment_boy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
   {
     "name": "Retained Earnings, Endowment, Accumulated Income, or Other Funds (EOY)",
     "dbcolumn": "retained_earnings_endowment_eoy",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "balance_sheet"
   },
 
@@ -2107,7 +2107,7 @@
   {
     "name": "Discontinued Operations or Changed Activities",
     "dbcolumn": "discontinued_operations",
-    "path": "ReturnData/IRS990/",
+    "path": "",
     "tablename": "summary"
   },
   {

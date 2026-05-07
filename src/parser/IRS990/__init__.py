@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 from parser import Parser
 
 class IRS990Parser(Parser):
@@ -8,6 +11,13 @@ class IRS990Parser(Parser):
 
   def __init__(self, xmlstr: str) -> None:
     super().__init__(xmlstr, self.namespace, self.nsFind)
+
+    base_path = Path(__file__).parent
+    file_path = base_path / "mappings.json"
+
+    with open(file_path, 'r') as file:
+      self.mappings = json.load(file)
+    print(self.mappings)
 
   def __split_words(self, tag: str) -> str:
     wordList: list[str] = []

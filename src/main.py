@@ -1,23 +1,20 @@
 #! /usr/bin/env nix-shell
 #! nix-shell -i python3 -p python3
 
+from pprint import pprint
 import sys
 
 from parser.Form990 import Form990Parser
 from unzipper import Unzipper
-from parser import Parser
 from database import Database
-
-
 
 def main() -> int:
   UZ = Unzipper(sys.argv[1])
   db = Database()
 
   for f in UZ:
-    t = Form990Parser(f.read())
-    [_, smallTree] = t.dict()
-    db.insert_record(smallTree)
+      t = Form990Parser(f.read())
+      pprint(t.extract())
 
   db.close()
   return 0;

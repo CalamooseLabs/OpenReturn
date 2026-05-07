@@ -8,7 +8,6 @@ class TreeNode(TypedDict):
     children: list[dict[str, TreeNode]]
 
 Tree: TypeAlias = dict[str, TreeNode]
-CleanTree: TypeAlias = dict[str, str]
 
 class Parser:
   def __init__(self, xmlstr: str, namespace: dict[str, str], nsFind: str) -> None:
@@ -16,7 +15,7 @@ class Parser:
     self.ns = namespace
     self.nsFind = nsFind
 
-  def getElem(self, path: str) -> str:
+  def getElem(self, path: str) -> str | None:
     chunks = path.split("/")
     findStr = "./"
     for chunk in chunks:
@@ -29,17 +28,14 @@ class Parser:
       if type(innerText) is str:
         return innerText
 
-    raise Exception("Parser Error", "Most likely an invalid path")
+    return None
 
-  def tree(self, depth: int = -1, tagStrip: str = "", groupSkip: list[str] = []) -> tuple[Tree, CleanTree]:
-    return self.__tree(self.root, depth, 1, tagStrip, groupSkip)
+  def tree(self, depth: int = -1, tagStrip: str = "") -> Tree:
+    return self.__tree(self.root, depth, 1, tagStrip)
 
-  def __tree(self, root: ET.Element, depth: int, currentDepth: int, tagStrip: str, groupSkip: list[str]) -> tuple[Tree, CleanTree]:
+  def __tree(self, root: ET.Element, depth: int, currentDepth: int, tagStrip: str) -> Tree:
     tag: str = root.tag.removeprefix(tagStrip)
     txt: str = root.text.strip() if root.text is not None else ""
-
-    if (tag in groupSkip):
-      return {},{}
 
     dataTree: Tree = {
       tag: {
@@ -48,16 +44,9 @@ class Parser:
       }
     }
 
-    cleanTree: CleanTree = {}
-    if (txt != ""):
-      cleanTree = {
-        tag: txt
-      }
-
     for child in root:
       if (currentDepth < depth or depth == -1):
-        returnTree: tuple[Tree, CleanTree] = self.__tree(child, depth, currentDepth + 1, tagStrip, groupSkip)
-        dataTree[tag]["children"].append(returnTree[0])
-        cleanTree.update(returnTree[1])
+        returnTree: Tree = self.__tree(child, depth, currentDepth + 1, tagStrip)
+        dataTree[tag]["children"].append(returnTree)
 
-    return dataTree, cleanTree
+    return dataTree

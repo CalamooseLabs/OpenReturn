@@ -79,52 +79,52 @@
   {
     "name": "Loans Receivable from Officers/Directors/Trustees/Key Employees (BOY)",
     "dbcolumn": "loans_receivable_from_officers_boy",
-    "path": "",
+    "path": "ReturnData/IRS990/ReceivablesFromOfficersEtcGrp/BOYAmt",
     "tablename": "balance_sheet"
   },
   {
     "name": "Loans Receivable from Officers/Directors/Trustees/Key Employees (EOY)",
     "dbcolumn": "loans_receivable_from_officers_eoy",
-    "path": "",
+    "path": "ReturnData/IRS990/ReceivablesFromOfficersEtcGrp/EOYAmt",
     "tablename": "balance_sheet"
   },
 
   {
     "name": "Loans Receivable from Other Disqualified Persons (BOY)",
     "dbcolumn": "loans_receivable_from_disqualified_persons_boy",
-    "path": "",
+    "path": "ReturnData/IRS990/RcvblFromDisqualifiedPrsnGrp/BOYAmt",
     "tablename": "balance_sheet"
   },
   {
     "name": "Loans Receivable from Other Disqualified Persons (EOY)",
     "dbcolumn": "loans_receivable_from_disqualified_persons_eoy",
-    "path": "",
+    "path": "ReturnData/IRS990/RcvblFromDisqualifiedPrsnGrp/EOYAmt",
     "tablename": "balance_sheet"
   },
 
   {
     "name": "Notes and Loans Receivable, Net (BOY)",
     "dbcolumn": "notes_and_loans_receivable_net_boy",
-    "path": "",
+    "path": "ReturnData/IRS990/OthNotesLoansReceivableNetGrp/BOYAmt",
     "tablename": "balance_sheet"
   },
   {
     "name": "Notes and Loans Receivable, Net (EOY)",
     "dbcolumn": "notes_and_loans_receivable_net_eoy",
-    "path": "",
+    "path": "ReturnData/IRS990/OthNotesLoansReceivableNetGrp/EOYAmt",
     "tablename": "balance_sheet"
   },
 
   {
     "name": "Inventories for Sale or Use (BOY)",
     "dbcolumn": "inventories_for_sale_or_use_boy",
-    "path": "",
+    "path": "ReturnData/IRS990/InventoriesForSaleOrUseGrp/BOYAmt",
     "tablename": "balance_sheet"
   },
   {
     "name": "Inventories for Sale or Use (EOY)",
     "dbcolumn": "inventories_for_sale_or_use_eoy",
-    "path": "",
+    "path": "ReturnData/IRS990/InventoriesForSaleOrUseGrp/EOYAmt",
     "tablename": "balance_sheet"
   },
 
@@ -170,65 +170,65 @@
   {
     "name": "Investments — Publicly Traded Securities (BOY)",
     "dbcolumn": "investments_publicly_traded_securities_boy",
-    "path": "",
+    "path": "ReturnData/IRS990/InvestmentsPubTradedSecGrp/BOYAmt",
     "tablename": "balance_sheet"
   },
   {
     "name": "Investments — Publicly Traded Securities (EOY)",
     "dbcolumn": "investments_publicly_traded_securities_eoy",
-    "path": "",
+    "path": "ReturnData/IRS990/InvestmentsPubTradedSecGrp/EOYAmt",
     "tablename": "balance_sheet"
   },
 
   {
     "name": "Investments — Other Securities (BOY)",
     "dbcolumn": "investments_other_securities_boy",
-    "path": "",
+    "path": "ReturnData/IRS990/InvestmentsOtherSecuritiesGrp/BOYAmt",
     "tablename": "balance_sheet"
   },
   {
     "name": "Investments — Other Securities (EOY)",
     "dbcolumn": "investments_other_securities_eoy",
-    "path": "",
+    "path": "ReturnData/IRS990/InvestmentsOtherSecuritiesGrp/EOYAmt",
     "tablename": "balance_sheet"
   },
 
   {
     "name": "Investments — Program-Related (BOY)",
     "dbcolumn": "investments_program_related_boy",
-    "path": "",
+    "path": "ReturnData/IRS990/InvestmentsProgramRelatedGrp/BOYAmt",
     "tablename": "balance_sheet"
   },
   {
     "name": "Investments — Program-Related (EOY)",
     "dbcolumn": "investments_program_related_eoy",
-    "path": "",
+    "path": "ReturnData/IRS990/InvestmentsProgramRelatedGrp/EOYAmt",
     "tablename": "balance_sheet"
   },
 
   {
     "name": "Intangible Assets (BOY)",
     "dbcolumn": "intangible_assets_boy",
-    "path": "",
+    "path": "ReturnData/IRS990/IntangibleAssetsGrp/BOYAmt",
     "tablename": "balance_sheet"
   },
   {
     "name": "Intangible Assets (EOY)",
     "dbcolumn": "intangible_assets_eoy",
-    "path": "",
+    "path": "ReturnData/IRS990/IntangibleAssetsGrp/EOYAmt",
     "tablename": "balance_sheet"
   },
 
   {
     "name": "Other Assets (BOY)",
     "dbcolumn": "other_assets_boy",
-    "path": "",
+    "path": "ReturnData/IRS990/OtherAssetsTotalGrp/BOYAmt",
     "tablename": "balance_sheet"
   },
   {
     "name": "Other Assets (EOY)",
     "dbcolumn": "other_assets_eoy",
-    "path": "",
+    "path": "ReturnData/IRS990/OtherAssetsTotalGrp/EOYAmt",
     "tablename": "balance_sheet"
   },
 
@@ -261,13 +261,13 @@
   {
     "name": "Grants Payable (BOY)",
     "dbcolumn": "grants_payable_boy",
-    "path": "",
+    "path": "ReturnData/IRS990/GrantsPayableGrp/BOYAmt",
     "tablename": "balance_sheet"
   },
   {
     "name": "Grants Payable (EOY)",
     "dbcolumn": "grants_payable_eoy",
-    "path": "",
+    "path": "ReturnData/IRS990/GrantsPayableGrp/EOYAmt",
     "tablename": "balance_sheet"
   },
 
@@ -287,65 +287,65 @@
   {
     "name": "Tax-Exempt Bond Liabilities (BOY)",
     "dbcolumn": "tax_exempt_bond_liabilities_boy",
-    "path": "",
+    "path": "ReturnData/IRS990/TaxExemptBondLiabilitiesGrp/BOYAmt",
     "tablename": "balance_sheet"
   },
   {
     "name": "Tax-Exempt Bond Liabilities (EOY)",
     "dbcolumn": "tax_exempt_bond_liabilities_eoy",
-    "path": "",
+    "path": "ReturnData/IRS990/TaxExemptBondLiabilitiesGrp/EOYAmt",
     "tablename": "balance_sheet"
   },
 
   {
     "name": "Escrow or Custodial Account Liability (BOY)",
     "dbcolumn": "escrow_or_custodial_account_liability_boy",
-    "path": "",
+    "path": "ReturnData/IRS990/EscrowAccountLiabilityGrp/BOYAmt",
     "tablename": "balance_sheet"
   },
   {
     "name": "Escrow or Custodial Account Liability (EOY)",
     "dbcolumn": "escrow_or_custodial_account_liability_eoy",
-    "path": "",
+    "path": "ReturnData/IRS990/EscrowAccountLiabilityGrp/EOYAmt",
     "tablename": "balance_sheet"
   },
 
   {
     "name": "Loans Payable to Officers/Directors/Trustees/Key Employees (BOY)",
     "dbcolumn": "loans_payable_to_officers_boy",
-    "path": "",
+    "path": "ReturnData/IRS990/LoansFromOfficersDirectorsGrp/BOYAmt",
     "tablename": "balance_sheet"
   },
   {
     "name": "Loans Payable to Officers/Directors/Trustees/Key Employees (EOY)",
     "dbcolumn": "loans_payable_to_officers_eoy",
-    "path": "",
+    "path": "ReturnData/IRS990/LoansFromOfficersDirectorsGrp/EOYAmt",
     "tablename": "balance_sheet"
   },
 
   {
     "name": "Secured Mortgages and Notes Payable to Unrelated Third Parties (BOY)",
     "dbcolumn": "secured_mortgages_and_notes_payable_boy",
-    "path": "",
+    "path": "ReturnData/IRS990/MortgNotesPyblScrdInvstPropGrp/BOYAmt",
     "tablename": "balance_sheet"
   },
   {
     "name": "Secured Mortgages and Notes Payable to Unrelated Third Parties (EOY)",
     "dbcolumn": "secured_mortgages_and_notes_payable_eoy",
-    "path": "",
+    "path": "ReturnData/IRS990/MortgNotesPyblScrdInvstPropGrp/EOYAmt",
     "tablename": "balance_sheet"
   },
 
   {
     "name": "Unsecured Notes and Loans Payable to Unrelated Third Parties (BOY)",
     "dbcolumn": "unsecured_notes_and_loans_payable_boy",
-    "path": "",
+    "path": "ReturnData/IRS990/UnsecuredNotesLoansPayableGrp/BOYAmt",
     "tablename": "balance_sheet"
   },
   {
     "name": "Unsecured Notes and Loans Payable to Unrelated Third Parties (EOY)",
     "dbcolumn": "unsecured_notes_and_loans_payable_eoy",
-    "path": "",
+    "path": "ReturnData/IRS990/UnsecuredNotesLoansPayableGrp/EOYAmt",
     "tablename": "balance_sheet"
   },
 
@@ -404,39 +404,39 @@
   {
     "name": "Capital Stock or Trust Principal, or Current Funds (BOY)",
     "dbcolumn": "capital_stock_or_trust_principal_boy",
-    "path": "",
+    "path": "ReturnData/IRS990/CapStkTrPrinCurrentFundsGrp/BOYAmt",
     "tablename": "balance_sheet"
   },
   {
     "name": "Capital Stock or Trust Principal, or Current Funds (EOY)",
     "dbcolumn": "capital_stock_or_trust_principal_eoy",
-    "path": "",
+    "path": "ReturnData/IRS990/CapStkTrPrinCurrentFundsGrp/EOYAmt",
     "tablename": "balance_sheet"
   },
 
   {
     "name": "Paid-In or Capital Surplus (BOY)",
     "dbcolumn": "paid_in_or_capital_surplus_boy",
-    "path": "",
+    "path": "ReturnData/IRS990/PdInCapSrplsLandBldgEqpFundGrp/BOYAmt",
     "tablename": "balance_sheet"
   },
   {
     "name": "Paid-In or Capital Surplus (EOY)",
     "dbcolumn": "paid_in_or_capital_surplus_eoy",
-    "path": "",
+    "path": "ReturnData/IRS990/PdInCapSrplsLandBldgEqpFundGrp/EOYAmt",
     "tablename": "balance_sheet"
   },
 
   {
     "name": "Retained Earnings, Endowment, Accumulated Income, or Other Funds (BOY)",
     "dbcolumn": "retained_earnings_endowment_boy",
-    "path": "",
+    "path": "ReturnData/IRS990/RtnEarnEndowmentIncmOthFndsGrp/BOYAmt",
     "tablename": "balance_sheet"
   },
   {
     "name": "Retained Earnings, Endowment, Accumulated Income, or Other Funds (EOY)",
     "dbcolumn": "retained_earnings_endowment_eoy",
-    "path": "",
+    "path": "ReturnData/IRS990/RtnEarnEndowmentIncmOthFndsGrp/EOYAmt",
     "tablename": "balance_sheet"
   },
 
@@ -468,1102 +468,1068 @@
   {
     "name": "Grants to Domestic Organizations and Governments — Total",
     "dbcolumn": "grants_domestic_orgs_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/GrantsToDomesticOrgsGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Grants to Domestic Organizations and Governments — Program Services",
     "dbcolumn": "grants_domestic_orgs_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/GrantsToDomesticOrgsGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Grants to Domestic Organizations and Governments — Management & General",
     "dbcolumn": "grants_domestic_orgs_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/GrantsToDomesticOrgsGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Grants to Domestic Organizations and Governments — Fundraising",
     "dbcolumn": "grants_domestic_orgs_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/GrantsToDomesticOrgsGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Grants to Domestic Individuals — Total",
     "dbcolumn": "grants_domestic_individuals_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/GrantsToDomesticIndividualsGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Grants to Domestic Individuals — Program Services",
     "dbcolumn": "grants_domestic_individuals_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/GrantsToDomesticIndividualsGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Grants to Domestic Individuals — Management & General",
     "dbcolumn": "grants_domestic_individuals_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/GrantsToDomesticIndividualsGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Grants to Domestic Individuals — Fundraising",
     "dbcolumn": "grants_domestic_individuals_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/GrantsToDomesticIndividualsGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Grants to Foreign Organizations, Governments, and Individuals — Total",
     "dbcolumn": "grants_foreign_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ForeignGrantsGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Grants to Foreign Organizations, Governments, and Individuals — Program Services",
     "dbcolumn": "grants_foreign_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ForeignGrantsGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Grants to Foreign Organizations, Governments, and Individuals — Management & General",
     "dbcolumn": "grants_foreign_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ForeignGrantsGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Grants to Foreign Organizations, Governments, and Individuals — Fundraising",
     "dbcolumn": "grants_foreign_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ForeignGrantsGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Benefits Paid to or for Members — Total",
     "dbcolumn": "benefits_paid_to_members_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/BenefitsToMembersGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Benefits Paid to or for Members — Program Services",
     "dbcolumn": "benefits_paid_to_members_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/BenefitsToMembersGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Benefits Paid to or for Members — Management & General",
     "dbcolumn": "benefits_paid_to_members_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/BenefitsToMembersGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Benefits Paid to or for Members — Fundraising",
     "dbcolumn": "benefits_paid_to_members_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/BenefitsToMembersGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Compensation of Current Officers, Directors, Trustees, Key Employees — Total",
     "dbcolumn": "compensation_officers_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/CompCurrentOfcrDirectorsGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Compensation of Current Officers, Directors, Trustees, Key Employees — Program Services",
     "dbcolumn": "compensation_officers_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/CompCurrentOfcrDirectorsGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Compensation of Current Officers, Directors, Trustees, Key Employees — Management & General",
     "dbcolumn": "compensation_officers_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/CompCurrentOfcrDirectorsGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Compensation of Current Officers, Directors, Trustees, Key Employees — Fundraising",
     "dbcolumn": "compensation_officers_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/CompCurrentOfcrDirectorsGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Compensation to Disqualified Persons — Total",
     "dbcolumn": "compensation_disqualified_persons_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/CompDisqualPersonsGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Compensation to Disqualified Persons — Program Services",
     "dbcolumn": "compensation_disqualified_persons_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/CompDisqualPersonsGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Compensation to Disqualified Persons — Management & General",
     "dbcolumn": "compensation_disqualified_persons_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/CompDisqualPersonsGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Compensation to Disqualified Persons — Fundraising",
     "dbcolumn": "compensation_disqualified_persons_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/CompDisqualPersonsGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Other Salaries and Wages — Total",
     "dbcolumn": "other_salaries_and_wages_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherSalariesAndWagesGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Other Salaries and Wages — Program Services",
     "dbcolumn": "other_salaries_and_wages_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherSalariesAndWagesGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Other Salaries and Wages — Management & General",
     "dbcolumn": "other_salaries_and_wages_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherSalariesAndWagesGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Other Salaries and Wages — Fundraising",
     "dbcolumn": "other_salaries_and_wages_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherSalariesAndWagesGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Pension Plan Accruals and Contributions — Total",
     "dbcolumn": "pension_plan_contributions_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/PensionPlanContributionsGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Pension Plan Accruals and Contributions — Program Services",
     "dbcolumn": "pension_plan_contributions_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/PensionPlanContributionsGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Pension Plan Accruals and Contributions — Management & General",
     "dbcolumn": "pension_plan_contributions_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/PensionPlanContributionsGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Pension Plan Accruals and Contributions — Fundraising",
     "dbcolumn": "pension_plan_contributions_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/PensionPlanContributionsGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Other Employee Benefits — Total",
     "dbcolumn": "other_employee_benefits_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherEmployeeBenefitsGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Other Employee Benefits — Program Services",
     "dbcolumn": "other_employee_benefits_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherEmployeeBenefitsGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Other Employee Benefits — Management & General",
     "dbcolumn": "other_employee_benefits_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherEmployeeBenefitsGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Other Employee Benefits — Fundraising",
     "dbcolumn": "other_employee_benefits_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherEmployeeBenefitsGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Payroll Taxes — Total",
     "dbcolumn": "payroll_taxes_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/PayrollTaxesGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Payroll Taxes — Program Services",
     "dbcolumn": "payroll_taxes_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/PayrollTaxesGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Payroll Taxes — Management & General",
     "dbcolumn": "payroll_taxes_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/PayrollTaxesGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Payroll Taxes — Fundraising",
     "dbcolumn": "payroll_taxes_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/PayrollTaxesGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Fees for Services — Management — Total",
     "dbcolumn": "fees_for_services_management_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/FeesForServicesManagementGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Fees for Services — Management — Program Services",
     "dbcolumn": "fees_for_services_management_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/FeesForServicesManagementGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Fees for Services — Management — Management & General",
     "dbcolumn": "fees_for_services_management_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/FeesForServicesManagementGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Fees for Services — Management — Fundraising",
     "dbcolumn": "fees_for_services_management_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/FeesForServicesManagementGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Fees for Services — Legal — Total",
     "dbcolumn": "fees_for_services_legal_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/FeesForServicesLegalGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Fees for Services — Legal — Program Services",
     "dbcolumn": "fees_for_services_legal_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/FeesForServicesLegalGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Fees for Services — Legal — Management & General",
     "dbcolumn": "fees_for_services_legal_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/FeesForServicesLegalGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Fees for Services — Legal — Fundraising",
     "dbcolumn": "fees_for_services_legal_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/FeesForServicesLegalGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Fees for Services — Accounting — Total",
     "dbcolumn": "fees_for_services_accounting_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/FeesForServicesAccountingGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Fees for Services — Accounting — Program Services",
     "dbcolumn": "fees_for_services_accounting_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/FeesForServicesAccountingGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Fees for Services — Accounting — Management & General",
     "dbcolumn": "fees_for_services_accounting_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/FeesForServicesAccountingGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Fees for Services — Accounting — Fundraising",
     "dbcolumn": "fees_for_services_accounting_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/FeesForServicesAccountingGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Fees for Services — Lobbying — Total",
     "dbcolumn": "fees_for_services_lobbying_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/FeesForServicesLobbyingGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Fees for Services — Lobbying — Program Services",
     "dbcolumn": "fees_for_services_lobbying_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/FeesForServicesLobbyingGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Fees for Services — Lobbying — Management & General",
     "dbcolumn": "fees_for_services_lobbying_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/FeesForServicesLobbyingGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Fees for Services — Lobbying — Fundraising",
     "dbcolumn": "fees_for_services_lobbying_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/FeesForServicesLobbyingGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Fees for Services — Professional Fundraising — Total",
     "dbcolumn": "fees_for_services_prof_fundraising_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/FeesForServicesProfFundraising/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Fees for Services — Professional Fundraising — Program Services",
     "dbcolumn": "fees_for_services_prof_fundraising_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/FeesForServicesProfFundraising/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Fees for Services — Professional Fundraising — Management & General",
     "dbcolumn": "fees_for_services_prof_fundraising_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/FeesForServicesProfFundraising/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Fees for Services — Professional Fundraising — Fundraising",
     "dbcolumn": "fees_for_services_prof_fundraising_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/FeesForServicesProfFundraising/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Fees for Services — Investment Management — Total",
     "dbcolumn": "fees_for_services_investment_mgmt_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/FeesForSrvcInvstMgmntFeesGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Fees for Services — Investment Management — Program Services",
     "dbcolumn": "fees_for_services_investment_mgmt_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/FeesForSrvcInvstMgmntFeesGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Fees for Services — Investment Management — Management & General",
     "dbcolumn": "fees_for_services_investment_mgmt_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/FeesForSrvcInvstMgmntFeesGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Fees for Services — Investment Management — Fundraising",
     "dbcolumn": "fees_for_services_investment_mgmt_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/FeesForSrvcInvstMgmntFeesGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Fees for Services — Other — Total",
     "dbcolumn": "fees_for_services_other_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/FeesForServicesOtherGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Fees for Services — Other — Program Services",
     "dbcolumn": "fees_for_services_other_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/FeesForServicesOtherGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Fees for Services — Other — Management & General",
     "dbcolumn": "fees_for_services_other_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/FeesForServicesOtherGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Fees for Services — Other — Fundraising",
     "dbcolumn": "fees_for_services_other_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/FeesForServicesOtherGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Advertising and Promotion — Total",
     "dbcolumn": "advertising_and_promotion_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/AdvertisingGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Advertising and Promotion — Program Services",
     "dbcolumn": "advertising_and_promotion_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/AdvertisingGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Advertising and Promotion — Management & General",
     "dbcolumn": "advertising_and_promotion_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/AdvertisingGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Advertising and Promotion — Fundraising",
     "dbcolumn": "advertising_and_promotion_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/AdvertisingGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Office Expenses — Total",
     "dbcolumn": "office_expenses_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OfficeExpensesGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Office Expenses — Program Services",
     "dbcolumn": "office_expenses_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OfficeExpensesGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Office Expenses — Management & General",
     "dbcolumn": "office_expenses_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OfficeExpensesGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Office Expenses — Fundraising",
     "dbcolumn": "office_expenses_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OfficeExpensesGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Information Technology — Total",
     "dbcolumn": "information_technology_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/InformationTechnologyGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Information Technology — Program Services",
     "dbcolumn": "information_technology_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/InformationTechnologyGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Information Technology — Management & General",
     "dbcolumn": "information_technology_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/InformationTechnologyGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Information Technology — Fundraising",
     "dbcolumn": "information_technology_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/InformationTechnologyGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Royalties — Total",
     "dbcolumn": "royalties_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/RoyaltiesGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Royalties — Program Services",
     "dbcolumn": "royalties_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/RoyaltiesGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Royalties — Management & General",
     "dbcolumn": "royalties_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/RoyaltiesGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Royalties — Fundraising",
     "dbcolumn": "royalties_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/RoyaltiesGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Occupancy — Total",
     "dbcolumn": "occupancy_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OccupancyGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Occupancy — Program Services",
     "dbcolumn": "occupancy_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OccupancyGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Occupancy — Management & General",
     "dbcolumn": "occupancy_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OccupancyGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Occupancy — Fundraising",
     "dbcolumn": "occupancy_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OccupancyGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Travel — Total",
     "dbcolumn": "travel_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/TravelGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Travel — Program Services",
     "dbcolumn": "travel_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/TravelGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Travel — Management & General",
     "dbcolumn": "travel_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/TravelGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Travel — Fundraising",
     "dbcolumn": "travel_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/TravelGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Payments of Travel or Entertainment for Public Officials — Total",
     "dbcolumn": "travel_entertainment_public_officials_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/PymtTravelEntrtnmntPubOfclGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Payments of Travel or Entertainment for Public Officials — Program Services",
     "dbcolumn": "travel_entertainment_public_officials_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/PymtTravelEntrtnmntPubOfclGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Payments of Travel or Entertainment for Public Officials — Management & General",
     "dbcolumn": "travel_entertainment_public_officials_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/PymtTravelEntrtnmntPubOfclGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Payments of Travel or Entertainment for Public Officials — Fundraising",
     "dbcolumn": "travel_entertainment_public_officials_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/PymtTravelEntrtnmntPubOfclGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Conferences, Conventions, and Meetings — Total",
     "dbcolumn": "conferences_conventions_meetings_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ConferencesMeetingsGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Conferences, Conventions, and Meetings — Program Services",
     "dbcolumn": "conferences_conventions_meetings_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ConferencesMeetingsGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Conferences, Conventions, and Meetings — Management & General",
     "dbcolumn": "conferences_conventions_meetings_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ConferencesMeetingsGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Conferences, Conventions, and Meetings — Fundraising",
     "dbcolumn": "conferences_conventions_meetings_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ConferencesMeetingsGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Interest — Total",
     "dbcolumn": "interest_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/InterestGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Interest — Program Services",
     "dbcolumn": "interest_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/InterestGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Interest — Management & General",
     "dbcolumn": "interest_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/InterestGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Interest — Fundraising",
     "dbcolumn": "interest_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/InterestGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Payments to Affiliates — Total",
     "dbcolumn": "payments_to_affiliates_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/PaymentsToAffiliatesGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Payments to Affiliates — Program Services",
     "dbcolumn": "payments_to_affiliates_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/PaymentsToAffiliatesGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Payments to Affiliates — Management & General",
     "dbcolumn": "payments_to_affiliates_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/PaymentsToAffiliatesGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Payments to Affiliates — Fundraising",
     "dbcolumn": "payments_to_affiliates_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/PaymentsToAffiliatesGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Depreciation, Depletion, and Amortization — Total",
     "dbcolumn": "depreciation_depletion_amortization_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/DepreciationDepletionGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Depreciation, Depletion, and Amortization — Program Services",
     "dbcolumn": "depreciation_depletion_amortization_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/DepreciationDepletionGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Depreciation, Depletion, and Amortization — Management & General",
     "dbcolumn": "depreciation_depletion_amortization_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/DepreciationDepletionGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Depreciation, Depletion, and Amortization — Fundraising",
     "dbcolumn": "depreciation_depletion_amortization_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/DepreciationDepletionGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Insurance — Total",
     "dbcolumn": "insurance_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/InsuranceGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Insurance — Program Services",
     "dbcolumn": "insurance_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/InsuranceGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Insurance — Management & General",
     "dbcolumn": "insurance_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/InsuranceGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Insurance — Fundraising",
     "dbcolumn": "insurance_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/InsuranceGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Other Expenses A — Description",
     "dbcolumn": "other_expenses_a_desc",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherExpensesGrp/Desc",
     "tablename": "functional_expenses"
   },
   {
     "name": "Other Expenses A — Total",
     "dbcolumn": "other_expenses_a_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherExpensesGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Other Expenses A — Program Services",
     "dbcolumn": "other_expenses_a_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherExpensesGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Other Expenses A — Management & General",
     "dbcolumn": "other_expenses_a_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherExpensesGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Other Expenses A — Fundraising",
     "dbcolumn": "other_expenses_a_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherExpensesGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Other Expenses B — Description",
     "dbcolumn": "other_expenses_b_desc",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherExpensesGrp/Desc",
     "tablename": "functional_expenses"
   },
   {
     "name": "Other Expenses B — Total",
     "dbcolumn": "other_expenses_b_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherExpensesGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Other Expenses B — Program Services",
     "dbcolumn": "other_expenses_b_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherExpensesGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Other Expenses B — Management & General",
     "dbcolumn": "other_expenses_b_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherExpensesGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Other Expenses B — Fundraising",
     "dbcolumn": "other_expenses_b_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherExpensesGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Other Expenses C — Description",
     "dbcolumn": "other_expenses_c_desc",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherExpensesGrp/Desc",
     "tablename": "functional_expenses"
   },
   {
     "name": "Other Expenses C — Total",
     "dbcolumn": "other_expenses_c_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherExpensesGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Other Expenses C — Program Services",
     "dbcolumn": "other_expenses_c_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherExpensesGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Other Expenses C — Management & General",
     "dbcolumn": "other_expenses_c_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherExpensesGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Other Expenses C — Fundraising",
     "dbcolumn": "other_expenses_c_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherExpensesGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Other Expenses D — Description",
     "dbcolumn": "other_expenses_d_desc",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherExpensesGrp/Desc",
     "tablename": "functional_expenses"
   },
   {
     "name": "Other Expenses D — Total",
     "dbcolumn": "other_expenses_d_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherExpensesGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Other Expenses D — Program Services",
     "dbcolumn": "other_expenses_d_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherExpensesGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Other Expenses D — Management & General",
     "dbcolumn": "other_expenses_d_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherExpensesGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Other Expenses D — Fundraising",
     "dbcolumn": "other_expenses_d_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/OtherExpensesGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "All Other Expenses — Total",
     "dbcolumn": "all_other_expenses_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/AllOtherExpensesGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "All Other Expenses — Program Services",
     "dbcolumn": "all_other_expenses_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/AllOtherExpensesGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "All Other Expenses — Management & General",
     "dbcolumn": "all_other_expenses_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/AllOtherExpensesGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "All Other Expenses — Fundraising",
     "dbcolumn": "all_other_expenses_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/AllOtherExpensesGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
-
   {
     "name": "Total Functional Expenses — Total",
     "dbcolumn": "total_functional_expenses_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/TotalFunctionalExpensesGrp/TotalAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Total Functional Expenses — Program Services",
     "dbcolumn": "total_functional_expenses_program",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/TotalFunctionalExpensesGrp/ProgramServicesAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Total Functional Expenses — Management & General",
     "dbcolumn": "total_functional_expenses_mgmt",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/TotalFunctionalExpensesGrp/ManagementAndGeneralAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Total Functional Expenses — Fundraising",
     "dbcolumn": "total_functional_expenses_fundraising",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/TotalFunctionalExpensesGrp/FundraisingAmt",
     "tablename": "functional_expenses"
   },
   {
     "name": "Contributions — Federated Campaigns",
     "dbcolumn": "contributions_federated_campaigns",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/FederatedCampaignsAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Contributions — Membership Dues",
     "dbcolumn": "contributions_membership_dues",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/MembershipDuesAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Contributions — Fundraising Events",
     "dbcolumn": "contributions_fundraising_events",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/FundraisingAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Contributions — Related Organizations",
     "dbcolumn": "contributions_related_organizations",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/RelatedOrganizationsAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Contributions — Government Grants",
     "dbcolumn": "contributions_government_grants",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/GovernmentGrantsAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Contributions — All Other",
     "dbcolumn": "contributions_all_other",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/AllOtherContributionsAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Contributions — Noncash (Memo Only)",
     "dbcolumn": "contributions_noncash",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/NoncashContributionsAmt",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Contributions — Total",
     "dbcolumn": "contributions_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/TotalContributionsAmt",
     "tablename": "statement_of_revenue"
   },
 
   {
     "name": "Program Service Revenue A — Description",
     "dbcolumn": "program_service_revenue_a_desc",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue A — Total",
     "dbcolumn": "program_service_revenue_a_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue A — Related",
     "dbcolumn": "program_service_revenue_a_related",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue A — Unrelated Business",
     "dbcolumn": "program_service_revenue_a_unrelated",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue A — Excluded",
     "dbcolumn": "program_service_revenue_a_excluded",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
     "tablename": "statement_of_revenue"
   },
 
   {
     "name": "Program Service Revenue B — Description",
     "dbcolumn": "program_service_revenue_b_desc",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue B — Total",
     "dbcolumn": "program_service_revenue_b_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue B — Related",
     "dbcolumn": "program_service_revenue_b_related",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue B — Unrelated Business",
     "dbcolumn": "program_service_revenue_b_unrelated",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue B — Excluded",
     "dbcolumn": "program_service_revenue_b_excluded",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
     "tablename": "statement_of_revenue"
   },
 
   {
     "name": "Program Service Revenue C — Description",
     "dbcolumn": "program_service_revenue_c_desc",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue C — Total",
     "dbcolumn": "program_service_revenue_c_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue C — Related",
     "dbcolumn": "program_service_revenue_c_related",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue C — Unrelated Business",
     "dbcolumn": "program_service_revenue_c_unrelated",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue C — Excluded",
     "dbcolumn": "program_service_revenue_c_excluded",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
     "tablename": "statement_of_revenue"
   },
 
   {
     "name": "Program Service Revenue D — Description",
     "dbcolumn": "program_service_revenue_d_desc",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue D — Total",
     "dbcolumn": "program_service_revenue_d_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue D — Related",
     "dbcolumn": "program_service_revenue_d_related",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue D — Unrelated Business",
     "dbcolumn": "program_service_revenue_d_unrelated",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue D — Excluded",
     "dbcolumn": "program_service_revenue_d_excluded",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
     "tablename": "statement_of_revenue"
   },
 
   {
     "name": "Program Service Revenue E — Description",
     "dbcolumn": "program_service_revenue_e_desc",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue E — Total",
     "dbcolumn": "program_service_revenue_e_total",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue E — Related",
     "dbcolumn": "program_service_revenue_e_related",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue E — Unrelated Business",
     "dbcolumn": "program_service_revenue_e_unrelated",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
     "tablename": "statement_of_revenue"
   },
   {
     "name": "Program Service Revenue E — Excluded",
     "dbcolumn": "program_service_revenue_e_excluded",
-    "path": "ReturnData/IRS990/",
+    "path": "ReturnData/IRS990/ProgramServiceRevenueGrp/",
     "tablename": "statement_of_revenue"
   },
 
@@ -2107,7 +2073,7 @@
   {
     "name": "Discontinued Operations or Changed Activities",
     "dbcolumn": "discontinued_operations",
-    "path": "",
+    "path": "ReturnData/IRS990/ContractTerminationInd",
     "tablename": "summary"
   },
   {

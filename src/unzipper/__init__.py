@@ -22,3 +22,7 @@ class Unzipper:
     with self.unzippedFile.open(self.files[self.index]) as f:
       content = f.read().decode()
       return content
+
+  def name(self) -> str:
+    with self.unzippedFile.open(self.files[self.index]) as f:
+      return f.name

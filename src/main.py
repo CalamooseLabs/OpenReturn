@@ -6,27 +6,31 @@ import sys
 
 from parser.IRS990 import IRS990Parser
 from unzipper import Unzipper
-from database import Database
+from database.IRS990 import IRS990Database
 from router.Upload import UploadRouter
 from server import Server
 
 def main() -> int:
-  # UZ = Unzipper(sys.argv[1])
-  # db = Database()
+  UZ = Unzipper(sys.argv[1])
+  db = IRS990Database()
+  xpath_index = db.get_xpath_index()
 
-  # for f in UZ:
-  #     t = IRS990Parser(f.read())
-  #     print(t.getElem("ReturnData/IRS990/ProgramServiceRevenueGrp/Desc"))
-  #     print(t.getElem("ReturnData/IRS990/ProgramServiceRevenueGrp/Desc"))
+  for f in UZ:
+      t = IRS990Parser(f.read())
+      print()
+      print()
+      print(f"---{f.name()}---")
+      for key in xpath_index:
+        print(f"{key}: {t.getElem(key)}")
 
-  # db.close()
+  db.close()
 
-  app = Server()
+  # app = Server()
 
-  upload_router = UploadRouter(prefix='/files')
-  app.include_router(upload_router)
+  # upload_router = UploadRouter()
+  # app.include_router(upload_router)
 
-  app.run()
+  # app.run()
 
   return 0;
 

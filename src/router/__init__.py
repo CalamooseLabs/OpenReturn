@@ -1,7 +1,7 @@
 from typing import Callable
 
 class Router:
-  def __init__(self, template_dir = "", prefix: str = ''):
+  def __init__(self, prefix: str = '', template_dir: str = ''):
     self.prefix = prefix
     self.routes: dict[str, dict[str, Callable]] = {
       'GET': {},

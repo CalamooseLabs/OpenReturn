@@ -3,3 +3,7 @@ __pycache__
 resources
 *.zip
 *.db
+*.spec
+dist
+build
+result

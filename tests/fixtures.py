@@ -1,8 +1,8 @@
 """Shared XML fixtures for tests."""
 from pathlib import Path
 
-FIXTURE_ZIPS_DIR = Path(__file__).parent / 'data' / 'zips'
-FIXTURE_BAD_ZIPS_DIR = FIXTURE_ZIPS_DIR / 'bad'
+FIXTURE_ZIPS_DIR = Path(__file__).parent / 'data' / 'zips' / 'good'
+FIXTURE_BAD_ZIPS_DIR = Path(__file__).parent / 'data' / 'zips' / 'bad'
 
 VALID_990_XML = """<?xml version="1.0" encoding="UTF-8"?>
 <Return xmlns="http://www.irs.gov/efile">

@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS form (
 
 CREATE TABLE IF NOT EXISTS part (
   part_id INTEGER PRIMARY KEY AUTOINCREMENT,
-  form_code INTEGER NOT NULL REFERENCES form (code) ON DELETE CASCADE,
+  form_code TEXT NOT NULL REFERENCES form (code) ON DELETE CASCADE,
   part_number TEXT NOT NULL,
   part_name TEXT NOT NULL,
   UNIQUE (form_code, part_number)
@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS filing (
   uuid CHARACTER(36) PRIMARY KEY,
   year SMALLINT NOT NULL,
   organization_id CHARACTER(10),
-  form_code INTEGER NOT NULL REFERENCES form (code),
+  form_code TEXT NOT NULL REFERENCES form (code),
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   object_id TEXT UNIQUE,
   xml_source_url TEXT,
@@ -101,3 +101,5 @@ CREATE INDEX IF NOT EXISTS idx_field_xml_path ON field (xml_path);
 CREATE INDEX IF NOT EXISTS idx_reported_data_filing ON reported_data (filing_id);
 
 CREATE INDEX IF NOT EXISTS idx_reported_data_field ON reported_data (field_id);
+
+CREATE INDEX IF NOT EXISTS idx_filing_org ON filing (organization_id);

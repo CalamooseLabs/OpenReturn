@@ -2,8 +2,11 @@
 __pycache__
 resources
 *.zip
+!tests/data/**/*.zip
 *.db
 *.spec
 dist
 build
 result
+GIT_COMMIT_MSG
+CLAUDE.md

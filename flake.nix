@@ -1,5 +1,5 @@
 {
-  description = "API backend for 990 Automation.";
+  description = "API backend for 990 Automation & Evaluation.";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -12,7 +12,10 @@
 
   outputs = {nixpkgs, ...} @ inputs: let
     system = "x86_64-linux";
-    pkgs = import nixpkgs {system = system;};
+    pkgs = import nixpkgs {
+      system = system;
+      config.allowUnfree = true;
+    };
     ffapi = pkgs.callPackage ./build.nix {};
   in {
     devShells.${system}.default = import ./shell.nix {

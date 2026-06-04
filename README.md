@@ -2,6 +2,54 @@
 
 IRS Form 990 parser and API backend. Ingests ZIP archives of Form 990 XML filings (990, 990-EZ, 990-N, 990-PF, 990-T), extracts field values via XPath, stores them in SQLite, and exposes a REST API for querying organizations, filings, reported data, and financial scores.
 
+## NixOS
+
+OpenReturn ships a NixOS module. Add the flake as an input and enable the service:
+
+```nix
+# flake.nix
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    openreturn.url = "github:your-org/OpenReturn";
+    openreturn.inputs.nixpkgs.follows = "nixpkgs";
+  };
+
+  outputs = { nixpkgs, openreturn, ... }: {
+    nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        openreturn.nixosModules.default
+        {
+          services.openreturn = {
+            enable = true;
+            host = "0.0.0.0";
+            port = 8080;
+          };
+        }
+      ];
+    };
+  };
+}
+```
+
+### Module options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enable` | bool | `false` | Enable the service |
+| `package` | package | flake default | Override the openreturn package |
+| `host` | string | `"localhost"` | Bind address |
+| `port` | port | `8080` | Bind port |
+| `debug` | bool | `false` | Verbose request/response logging |
+| `dataDir` | string | `"/var/lib/openreturn"` | Directory where `IRS990.db` is stored |
+| `user` | string | `"openreturn"` | Service user |
+| `group` | string | `"openreturn"` | Service group |
+
+The service runs as a dedicated system user with a hardened systemd unit (`NoNewPrivileges`, `PrivateTmp`, `ProtectSystem = strict`). The database file is written to `dataDir`, which is managed by systemd's `StateDirectory`.
+
+> **Note:** The flake is currently hardcoded to `x86_64-linux`. Other platforms require modifying `flake.nix`.
+
 ## Running
 
 ```bash

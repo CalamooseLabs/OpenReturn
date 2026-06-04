@@ -17,10 +17,11 @@ CREATE TABLE IF NOT EXISTS score_factor (
 
 CREATE TABLE IF NOT EXISTS organization_score (
   score_id INTEGER PRIMARY KEY AUTOINCREMENT,
-  organization_id CHARACTER(10) NOT NULL REFERENCES organization (ein),
+  filing_id CHARACTER(36) NOT NULL REFERENCES filing (uuid),
   model_id INTEGER NOT NULL REFERENCES score_model (model_id),
   total_score REAL,
-  scored_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  scored_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (filing_id, model_id)
 );
 
 CREATE TABLE IF NOT EXISTS organization_score_factor (
@@ -32,7 +33,7 @@ CREATE TABLE IF NOT EXISTS organization_score_factor (
   UNIQUE (score_id, factor_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_org_score_org ON organization_score (organization_id);
+CREATE INDEX IF NOT EXISTS idx_org_score_filing ON organization_score (filing_id);
 
 CREATE INDEX IF NOT EXISTS idx_org_score_model ON organization_score (model_id);
 

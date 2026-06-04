@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS form (
   code TEXT PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
   description TEXT,
+  supported INTEGER NOT NULL DEFAULT 0,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -77,6 +78,8 @@ CREATE TABLE IF NOT EXISTS filing (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   object_id TEXT UNIQUE,
   xml_source_url TEXT,
+  xml_filename TEXT,
+  zip_filename TEXT,
   FOREIGN KEY (organization_id) REFERENCES organization (ein)
 );
 

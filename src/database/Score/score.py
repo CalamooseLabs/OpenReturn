@@ -31,11 +31,11 @@ class ScoreDatabase(IRS990Database):
       for r in rows
     ]
 
-  def create_score(self, ein: str, model_version: int = 1) -> int:
+  def create_score(self, filing_id: str, model_version: int = 1) -> int:
     model_id = self.get_model_id(model_version)
     self.cursor.execute(
-      "INSERT INTO organization_score (organization_id, model_id) VALUES (?, ?)",
-      (ein, model_id)
+      "INSERT INTO organization_score (filing_id, model_id) VALUES (?, ?)",
+      (filing_id, model_id)
     )
     self.connection.commit()
     return self.cursor.lastrowid
@@ -62,25 +62,52 @@ class ScoreDatabase(IRS990Database):
   def list_scores(self, ein: str) -> list[dict]:
     rows = self.cursor.execute(
       """
-      SELECT os.score_id, sm.version, os.total_score, os.scored_at
+      SELECT os.score_id, sm.version, f.uuid, f.year, os.total_score, os.scored_at
       FROM organization_score os
       JOIN score_model sm ON sm.model_id = os.model_id
-      WHERE os.organization_id = ?
-      ORDER BY os.scored_at DESC
+      JOIN filing f ON f.uuid = os.filing_id
+      WHERE f.organization_id = ?
+      ORDER BY f.year DESC, os.scored_at DESC
       """,
       (ein,)
     ).fetchall()
     return [
-      {"score_id": r[0], "model_version": r[1], "total_score": r[2], "scored_at": r[3]}
+      {"score_id": r[0], "model_version": r[1], "filing_id": r[2], "year": r[3],
+       "total_score": r[4], "scored_at": r[5]}
       for r in rows
     ]
+
+  def get_score_by_filing(self, filing_id: str) -> dict | None:
+    row = self.cursor.execute(
+      "SELECT score_id FROM organization_score WHERE filing_id = ? ORDER BY scored_at DESC LIMIT 1",
+      (filing_id,)
+    ).fetchone()
+    if not row:
+      return None
+    return self.get_score(row[0])
+
+  def get_score_by_ein_year(self, ein: str, year: int) -> dict | None:
+    row = self.cursor.execute(
+      """
+      SELECT os.score_id
+      FROM organization_score os
+      JOIN filing f ON f.uuid = os.filing_id
+      WHERE f.organization_id = ? AND f.year = ?
+      ORDER BY os.scored_at DESC LIMIT 1
+      """,
+      (ein, year)
+    ).fetchone()
+    if not row:
+      return None
+    return self.get_score(row[0])
 
   def get_score(self, score_id: int) -> dict | None:
     row = self.cursor.execute(
       """
-      SELECT os.score_id, os.organization_id, sm.version, os.total_score, os.scored_at
+      SELECT os.score_id, f.organization_id, sm.version, f.uuid, f.year, os.total_score, os.scored_at
       FROM organization_score os
       JOIN score_model sm ON sm.model_id = os.model_id
+      JOIN filing f ON f.uuid = os.filing_id
       WHERE os.score_id = ?
       """,
       (score_id,)
@@ -99,10 +126,12 @@ class ScoreDatabase(IRS990Database):
     ).fetchall()
     return {
       "score_id": row[0],
-      "organization_id": row[1],
+      "ein": row[1],
       "model_version": row[2],
-      "total_score": row[3],
-      "scored_at": row[4],
+      "filing_id": row[3],
+      "year": row[4],
+      "total_score": row[5],
+      "scored_at": row[6],
       "factors": [
         {"name": f[0], "weight": f[1], "raw_value": f[2], "weighted_value": f[3]}
         for f in factors

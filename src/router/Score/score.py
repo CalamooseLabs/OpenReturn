@@ -4,6 +4,7 @@ from http.client import HTTPMessage
 
 from router import Router
 from database.Score import ScoreDatabase
+from scoring import ScoringEngine
 
 
 def _qp(query_params: dict, key: str) -> str | None:
@@ -23,6 +24,7 @@ class ScoreRouter(Router):
   def __init__(self, prefix: str = '/scores', db: ScoreDatabase = None) -> None:
     super().__init__(prefix)
     self.db = db
+    self.engine = ScoringEngine(db)
     self._register_routes()
 
   def _register_routes(self):
@@ -44,6 +46,16 @@ class ScoreRouter(Router):
         return {"error": "missing query param: ein"}
       return {"ein": ein, "scores": self.db.list_scores(ein)}
 
+    @self.get('/filing')
+    def get_score_by_filing(query_params: dict, body: Any, headers: HTTPMessage):
+      filing_id = _qp(query_params, 'filing_id')
+      if not filing_id:
+        return {"error": "missing query param: filing_id"}
+      score = self.db.get_score_by_filing(filing_id)
+      if score is None:
+        return {"error": f"no score found for filing: {filing_id}"}
+      return score
+
     @self.get('/detail')
     def get_score(query_params: dict, body: Any, headers: HTTPMessage):
       raw = _qp(query_params, 'score_id')
@@ -60,17 +72,17 @@ class ScoreRouter(Router):
 
     @self.post('')
     def create_score(query_params: dict, body: Any, headers: HTTPMessage):
-      data, err = _require_fields(body, 'ein')
+      data, err = _require_fields(body, 'filing_id')
       if err:
         return err
       model_version = int(data.get('model_version', 1))
       try:
-        score_id = self.db.create_score(data['ein'], model_version)
+        score_id = self.db.create_score(data['filing_id'], model_version)
       except ValueError as e:
         return {"error": str(e)}
       except sqlite3.IntegrityError as e:
         return {"error": str(e)}
-      return {"score_id": score_id, "ein": data['ein'], "model_version": model_version}
+      return {"score_id": score_id, "filing_id": data['filing_id'], "model_version": model_version}
 
     @self.post('/factors')
     def store_factor_values(query_params: dict, body: Any, headers: HTTPMessage):
@@ -109,3 +121,33 @@ class ScoreRouter(Router):
       except ValueError as e:
         return {"error": str(e)}
       return {"score_id": score_id, "total_score": total_score}
+
+    @self.post('/calculate')
+    def calculate_score(query_params: dict, body: Any, headers: HTTPMessage):
+      data, err = _require_fields(body, 'ein', 'year')
+      if err:
+        return err
+      try:
+        year = int(data['year'])
+        model_version = int(data.get('model_version', 1))
+        result = self.engine.calculate(data['ein'], year, model_version)
+      except ValueError as e:
+        return {"error": str(e)}
+      except sqlite3.IntegrityError as e:
+        return {"error": str(e)}
+      return result
+
+    @self.get('/lookup')
+    def lookup_score(query_params: dict, body: Any, headers: HTTPMessage):
+      ein  = _qp(query_params, 'ein')
+      year = _qp(query_params, 'year')
+      if not ein or not year:
+        return {"error": "missing query params: ein, year"}
+      try:
+        year_int = int(year)
+      except ValueError:
+        return {"error": "year must be an integer"}
+      score = self.db.get_score_by_ein_year(ein, year_int)
+      if score is None:
+        return {"error": f"no score found for EIN {ein} year {year}"}
+      return score

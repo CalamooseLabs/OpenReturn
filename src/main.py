@@ -3,6 +3,7 @@
 
 import argparse
 import sys
+from pathlib import Path
 
 from database.Score import ScoreDatabase
 from router.Upload import UploadRouter
@@ -22,7 +23,7 @@ _USER_TABLES: dict[str, list[str]] = {
   'organization':             ['ein', 'name', 'created_at'],
   'filing':                   ['uuid', 'year', 'organization_id', 'form_code', 'created_at'],
   'reported_data':            ['value_id', 'filing_id', 'field_id', 'raw_value'],
-  'organization_score':       ['score_id', 'organization_id', 'model_id', 'total_score', 'scored_at'],
+  'organization_score':       ['score_id', 'filing_id', 'model_id', 'total_score', 'scored_at'],
   'organization_score_factor':['value_id', 'score_id', 'factor_id', 'raw_value', 'weighted_value'],
 }
 
@@ -92,18 +93,36 @@ def _dump_db(db: ScoreDatabase) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description='ffapi — IRS 990 API server')
     parser.add_argument('--debug',   action='store_true', help='Verbose request/response logging')
-    parser.add_argument('--testing', action='store_true', help='Dump database state on startup')
+    parser.add_argument('--testing', action='store_true', help='Clear database, optionally ingest --zip-dir, then dump state')
+    parser.add_argument('--zip-dir', help='Directory of ZIP files to ingest on startup (use with --testing)')
     parser.add_argument('--host',    default='localhost',  help='Bind host (default: localhost)')
     parser.add_argument('--port',    type=int, default=8080, help='Bind port (default: 8080)')
     args = parser.parse_args()
 
+    if args.testing:
+      Path("IRS990.db").unlink(missing_ok=True)
+
     db = ScoreDatabase()
+    upload_router = UploadRouter(db=db)
 
     if args.testing:
+      if args.zip_dir:
+        zip_dir = Path(args.zip_dir)
+        print(f"\n{_B}Ingesting ZIPs from{_R}  {_CYAN}{zip_dir}{_R}")
+        print(f"{_DIM}{'─' * 52}{_R}")
+        results = upload_router.process_zip_dir(zip_dir)
+        counts = {"stored": 0, "skipped": 0, "error": 0}
+        for r in results:
+          status = r.get("status", "error")
+          counts[status] = counts.get(status, 0) + 1
+          color = _GRN if status == "stored" else (_YLW if status == "skipped" else _RED)
+          print(f"  {color}{status:<8}{_R}  {r.get('file', '')}  {_DIM}{r.get('reason', r.get('ein', ''))}{_R}")
+        print(f"\n  stored={_GRN}{counts['stored']}{_R}  skipped={_YLW}{counts['skipped']}{_R}  errors={_RED}{counts['error']}{_R}")
+        print(f"{_DIM}{'─' * 52}{_R}")
       _dump_db(db)
 
     app = Server(host=args.host, port=args.port, debug=args.debug)
-    app.include_router(UploadRouter(db=db))
+    app.include_router(upload_router)
     app.include_router(IRS990Router(db=db))
     app.include_router(ScoreRouter(db=db))
     app.run()

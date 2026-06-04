@@ -53,28 +53,32 @@ VALUES
   ('WY', 'Wyoming');
 
 INSERT INTO
-  form (code, name, description)
+  form (code, name, description, supported)
 VALUES
   (
     "990",
     "990",
-    "Most common type of 990 form, typically used by larger organizations."
+    "Most common type of 990 form, typically used by larger organizations.",
+    1
   ),
   (
     "990EZ",
     "990-EZ",
-    "Used by medium sized organizations."
+    "Used by medium sized organizations.",
+    0
   ),
   (
     "990N",
     "990-N",
-    "Used by small sized organizations."
+    "Used by small sized organizations.",
+    0
   ),
-  ("990PF", "990-PF", "Used by private foundations."),
+  ("990PF", "990-PF", "Used by private foundations.", 0),
   (
     "990T",
     "990-T",
-    "Used by organizations with unrelated business income."
+    "Used by organizations with unrelated business income.",
+    0
   );
 
 INSERT INTO

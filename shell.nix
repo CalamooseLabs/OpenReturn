@@ -79,6 +79,7 @@ in
       pkgs.python3
       pkgs.sql-formatter
       pkgs.ruff
+      pkgs.claude-code
       gcommit
       runtests
       runserver

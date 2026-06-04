@@ -23,11 +23,13 @@
       inherit inputs;
     };
 
-    packages.x86_64-linux.default = ffapi;
+    packages.${system}.default = ffapi;
 
-    apps.default = {
+    apps.${system}.default = {
       type = "app";
       program = "${ffapi}/bin/ffapi";
     };
+
+    nixosModules.default = import ./module.nix;
   };
 }

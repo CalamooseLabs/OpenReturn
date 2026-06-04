@@ -1,4 +1,4 @@
-# ffapi
+# OpenReturn
 
 IRS Form 990 parser and API backend. Ingests ZIP archives of Form 990 XML filings (990, 990-EZ, 990-N, 990-PF, 990-T), extracts field values via XPath, stores them in SQLite, and exposes a REST API for querying organizations, filings, reported data, and financial scores.
 

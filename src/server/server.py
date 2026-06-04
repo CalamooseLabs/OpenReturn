@@ -213,7 +213,7 @@ class Server:
     self.server = HTTPServer((self.host, self.port), handler)
 
     debug_tag = f"  {_YELLOW}{_BOLD}debug{_R}" if self.debug else ""
-    print(f"{_BOLD}{_GREEN}ffapi{_R}  listening on {_CYAN}http://{self.host}:{self.port}{_R}{debug_tag}")
+    print(f"{_BOLD}{_GREEN}OpenReturn{_R}  listening on {_CYAN}http://{self.host}:{self.port}{_R}{debug_tag}")
     self._print_routes()
 
     try:

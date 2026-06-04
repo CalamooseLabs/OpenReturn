@@ -1,7 +1,7 @@
 { pkgs ? import <nixpkgs> {} }:
 
 pkgs.python3Packages.buildPythonApplication {
-  pname = "ffapi";
+  pname = "openreturn";
   version = "0.1.0";
 
   src = ./.;

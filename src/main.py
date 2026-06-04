@@ -91,7 +91,7 @@ def _dump_db(db: ScoreDatabase) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description='ffapi — IRS 990 API server')
+    parser = argparse.ArgumentParser(description='OpenReturn — IRS 990 API server')
     parser.add_argument('--debug',   action='store_true', help='Verbose request/response logging')
     parser.add_argument('--testing', action='store_true', help='Clear database, optionally ingest --zip-dir, then dump state')
     parser.add_argument('--zip-dir', help='Directory of ZIP files to ingest on startup (use with --testing)')

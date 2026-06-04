@@ -16,18 +16,18 @@
       system = system;
       config.allowUnfree = true;
     };
-    ffapi = pkgs.callPackage ./build.nix {};
+    openreturn = pkgs.callPackage ./build.nix {};
   in {
     devShells.${system}.default = import ./shell.nix {
       inherit pkgs;
       inherit inputs;
     };
 
-    packages.${system}.default = ffapi;
+    packages.${system}.default = openreturn;
 
     apps.${system}.default = {
       type = "app";
-      program = "${ffapi}/bin/ffapi";
+      program = "${openreturn}/bin/openreturn";
     };
 
     nixosModules.default = import ./module.nix;

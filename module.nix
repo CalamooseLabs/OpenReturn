@@ -1,15 +1,15 @@
 { config, lib, pkgs, ... }:
 let
-  cfg = config.services.ffapi;
+  cfg = config.services.openreturn;
 in {
-  options.services.ffapi = {
-    enable = lib.mkEnableOption "ffapi IRS 990 API server";
+  options.services.openreturn = {
+    enable = lib.mkEnableOption "openreturn IRS 990 API server";
 
     package = lib.mkOption {
       type = lib.types.package;
       default = pkgs.callPackage ./build.nix {};
       defaultText = lib.literalExpression "pkgs.callPackage ./build.nix {}";
-      description = "The ffapi package to use.";
+      description = "The openreturn package to use.";
     };
 
     host = lib.mkOption {
@@ -32,20 +32,20 @@ in {
 
     dataDir = lib.mkOption {
       type = lib.types.str;
-      default = "/var/lib/ffapi";
+      default = "/var/lib/openreturn";
       description = "Directory where IRS990.db is stored. The service runs from this directory.";
     };
 
     user = lib.mkOption {
       type = lib.types.str;
-      default = "ffapi";
-      description = "User account under which ffapi runs.";
+      default = "openreturn";
+      description = "User account under which openreturn runs.";
     };
 
     group = lib.mkOption {
       type = lib.types.str;
-      default = "ffapi";
-      description = "Group under which ffapi runs.";
+      default = "openreturn";
+      description = "Group under which openreturn runs.";
     };
   };
 
@@ -53,13 +53,13 @@ in {
     users.users.${cfg.user} = {
       isSystemUser = true;
       group = cfg.group;
-      description = "ffapi service user";
+      description = "openreturn service user";
     };
 
     users.groups.${cfg.group} = {};
 
-    systemd.services.ffapi = {
-      description = "ffapi IRS 990 API server";
+    systemd.services.openreturn = {
+      description = "openreturn IRS 990 API server";
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" ];
 
@@ -71,7 +71,7 @@ in {
         StateDirectoryMode = "0750";
 
         ExecStart = lib.concatStringsSep " " (
-          [ "${cfg.package}/bin/ffapi" "--host" cfg.host "--port" (toString cfg.port) ]
+          [ "${cfg.package}/bin/openreturn" "--host" cfg.host "--port" (toString cfg.port) ]
           ++ lib.optional cfg.debug "--debug"
         );
 

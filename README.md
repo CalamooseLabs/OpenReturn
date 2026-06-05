@@ -47,8 +47,25 @@ OpenReturn ships a NixOS module. Add the flake as an input and enable the servic
 | `dataDir` | string | `"/var/lib/openreturn"` | Directory where `IRS990.db` is stored |
 | `user` | string | `"openreturn"` | Service user |
 | `group` | string | `"openreturn"` | Service group |
+| `openFirewall` | bool | `true` | Open the firewall for the configured port |
+| `auth` | bool | `false` | Require API key authentication for all requests |
 
 The service runs as a dedicated system user with a hardened systemd unit (`NoNewPrivileges`, `PrivateTmp`, `ProtectSystem = strict`). The database file is written to `dataDir`, which is managed by systemd's `StateDirectory`.
+
+### Restart behaviour
+
+The unit restarts automatically on failure with a 5-second delay between attempts. If the service crashes 5 times within 60 seconds systemd stops retrying and marks it failed — this prevents a broken startup from looping forever. To recover after a persistent failure:
+
+```bash
+# Inspect what went wrong
+journalctl -u openreturn -n 50
+
+# Clear the failure state and start again
+systemctl reset-failed openreturn
+systemctl start openreturn
+```
+
+Deploying a new version via `nixos-rebuild switch` automatically restarts the service.
 
 > **Note:** The flake is currently hardcoded to `x86_64-linux`. Other platforms require modifying `flake.nix`.
 
@@ -63,6 +80,7 @@ python3 src/main.py
 
 # Options
 python3 src/main.py --host 0.0.0.0 --port 9000 --debug
+python3 src/main.py --auth                               # require API key on all routes
 python3 src/main.py --testing --zip-dir /path/to/zips   # ingest ZIPs, dump DB state, exit
 ```
 
@@ -95,7 +113,7 @@ python3 src/main.py --testing --zip-dir /path/to/zips   # ingest ZIPs, dump DB s
 | `POST` | `/irs990/filings` | body: `{ein, year, form_code}` | Create filing |
 | `POST` | `/irs990/filings/data` | body: `{filing_id, values: {field_id: value}}` | Store reported field values |
 
-\* `format`: `json` (default), `md`, or `html`
+\* `format`: `json` (default), `md`, `html`, or `xml`
 
 ### Scores — `/scores`
 

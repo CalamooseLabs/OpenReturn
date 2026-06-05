@@ -78,6 +78,8 @@ in {
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" ];
 
+      restartTriggers = [ cfg.package ];
+
       serviceConfig = {
         User = cfg.user;
         Group = cfg.group;
@@ -93,6 +95,8 @@ in {
 
         Restart = "on-failure";
         RestartSec = "5s";
+        StartLimitIntervalSec = "60s";
+        StartLimitBurst = 5;
 
         # Hardening
         NoNewPrivileges = true;

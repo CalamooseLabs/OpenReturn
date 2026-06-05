@@ -14,13 +14,13 @@ in {
 
     host = lib.mkOption {
       type = lib.types.str;
-      default = "0.0.0.0";
+      default = "localhost";
       description = "Bind address for the HTTP server.";
     };
 
     port = lib.mkOption {
       type = lib.types.port;
-      default = 80;
+      default = 8080;
       description = "Bind port for the HTTP server.";
     };
 

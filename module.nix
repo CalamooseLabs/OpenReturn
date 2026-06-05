@@ -112,6 +112,8 @@ in {
           ++ lib.optional cfg.auth "--auth"
         );
 
+        Environment = "PYTHONUNBUFFERED=1";
+
         Restart = "on-failure";
         RestartSec = "5s";
         StartLimitIntervalSec = "0";

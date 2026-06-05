@@ -47,10 +47,13 @@ OpenReturn ships a NixOS module. Add the flake as an input and enable the servic
 | `dataDir` | string | `"/var/lib/openreturn"` | Directory where `IRS990.db` is stored |
 | `user` | string | `"openreturn"` | Service user |
 | `group` | string | `"openreturn"` | Service group |
+| `runAsRoot` | bool | `false` | Run as root instead of the dedicated service user (not recommended) |
 | `openFirewall` | bool | `true` | Open the firewall for the configured port |
 | `auth` | bool | `false` | Require API key authentication for all requests |
 
-The service runs as a dedicated system user with a hardened systemd unit (`NoNewPrivileges`, `PrivateTmp`, `ProtectSystem = strict`). The database file is written to `dataDir`, which is managed by systemd's `StateDirectory`.
+The service runs as a dedicated system user with a hardened systemd unit (`PrivateTmp`, `ProtectSystem = strict`). The database file is written to `dataDir`, which is managed by systemd's `StateDirectory`.
+
+When `port` is 1024 or above the unit also sets `NoNewPrivileges = true`. When `port` is below 1024 (e.g. `port = 80`) the unit instead grants `CAP_NET_BIND_SERVICE` via `AmbientCapabilities` and locks the bounding set to that single capability, so the process can bind the privileged port without running as root and without being able to acquire any other capability.
 
 ### Restart behaviour
 

@@ -1,6 +1,8 @@
 { config, lib, pkgs, ... }:
 let
   cfg = config.services.openreturn;
+  effectiveUser  = if cfg.runAsRoot then "root" else cfg.user;
+  effectiveGroup = if cfg.runAsRoot then "root" else cfg.group;
 in {
   options.services.openreturn = {
     enable = lib.mkEnableOption "openreturn IRS 990 API server";
@@ -39,13 +41,23 @@ in {
     user = lib.mkOption {
       type = lib.types.str;
       default = "openreturn";
-      description = "User account under which openreturn runs.";
+      description = "User account under which openreturn runs. Ignored when runAsRoot = true.";
     };
 
     group = lib.mkOption {
       type = lib.types.str;
       default = "openreturn";
-      description = "Group under which openreturn runs.";
+      description = "Group under which openreturn runs. Ignored when runAsRoot = true.";
+    };
+
+    runAsRoot = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Run the service as root instead of the dedicated service user.
+        Not recommended for production — prefer the default unprivileged
+        setup, which grants CAP_NET_BIND_SERVICE automatically when port < 1024.
+      '';
     };
 
     openFirewall = lib.mkOption {
@@ -73,13 +85,12 @@ in {
 
     networking.firewall.allowedTCPPorts = lib.mkIf cfg.openFirewall [ cfg.port ];
 
-    users.users.${cfg.user} = {
+    users.users.${cfg.user}  = lib.mkIf (!cfg.runAsRoot) {
       isSystemUser = true;
       group = cfg.group;
       description = "openreturn service user";
     };
-
-    users.groups.${cfg.group} = {};
+    users.groups.${cfg.group} = lib.mkIf (!cfg.runAsRoot) {};
 
     systemd.services.openreturn = {
       description = "openreturn IRS 990 API server";
@@ -89,8 +100,8 @@ in {
       restartTriggers = [ cfg.package cfg.host (toString cfg.port) ];
 
       serviceConfig = {
-        User = cfg.user;
-        Group = cfg.group;
+        User = effectiveUser;
+        Group = effectiveGroup;
         WorkingDirectory = cfg.dataDir;
         StateDirectory = lib.removePrefix "/var/lib/" cfg.dataDir;
         StateDirectoryMode = "0750";
@@ -105,12 +116,18 @@ in {
         RestartSec = "5s";
         StartLimitIntervalSec = "0";
 
-        # Hardening
-        NoNewPrivileges = true;
+        # Hardening — root needs neither capabilities nor NoNewPrivileges.
+        # For an unprivileged user on a privileged port, grant only the one
+        # capability needed; on a high port, use NoNewPrivileges instead.
         PrivateTmp = true;
         ProtectSystem = "strict";
         ReadWritePaths = [ cfg.dataDir ];
         ProtectHome = true;
+      } // lib.optionalAttrs (!cfg.runAsRoot && cfg.port < 1024) {
+        AmbientCapabilities = "CAP_NET_BIND_SERVICE";
+        CapabilityBoundingSet = "CAP_NET_BIND_SERVICE";
+      } // lib.optionalAttrs (!cfg.runAsRoot && cfg.port >= 1024) {
+        NoNewPrivileges = true;
       };
     };
   };

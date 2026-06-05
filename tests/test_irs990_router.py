@@ -17,6 +17,18 @@ FILING_ONE = {
     "form_code": "990", "created_at": "2024-01-01", "object_id": None, "xml_source_url": None,
 }
 
+FILING_ONE_FULL = {
+    **FILING_ONE,
+    "xml_filename": "filing.xml",
+    "zip_filename": "2023.zip",
+}
+
+FILING_DATA = {
+    "filing_id": "uuid-abc-123", "ein": "111111111", "year": 2023,
+    "form_code": "990", "xml_filename": "filing.xml", "zip_filename": "2023.zip",
+    "fields": [],
+}
+
 REPORTED_ROW = {"xml_path": "ReturnData/IRS990/ActivityOrMissionDesc", "raw_value": "Test", "field_id": 42}
 
 
@@ -28,6 +40,7 @@ def _make_router():
     db.get_filing.return_value = None
     db.create_filing.return_value = "uuid-abc-123"
     db.get_reported_data.return_value = []
+    db.get_filing_data_by_ein_year.return_value = None
     return IRS990Router(db=db), db
 
 
@@ -76,6 +89,12 @@ class TestIRS990RouterRegistration(unittest.TestCase):
     def test_get_filings_data_registered(self):
         self.assertIn("/irs990/filings/data", self.router.routes["GET"])
 
+    def test_get_filings_lookup_registered(self):
+        self.assertIn("/irs990/filings/lookup", self.router.routes["GET"])
+
+    def test_get_organizations_full_registered(self):
+        self.assertIn("/irs990/organizations/full", self.router.routes["GET"])
+
     def test_post_filings_data_registered(self):
         self.assertIn("/irs990/filings/data", self.router.routes["POST"])
 
@@ -88,9 +107,11 @@ class TestIRS990RouterRegistration(unittest.TestCase):
         expected = {
             "/irs990/organizations",
             "/irs990/organizations/detail",
+            "/irs990/organizations/full",
             "/irs990/filings",
             "/irs990/filings/detail",
             "/irs990/filings/data",
+            "/irs990/filings/lookup",
         }
         self.assertEqual(set(self.router.routes["GET"].keys()), expected)
 
@@ -434,6 +455,7 @@ class TestGetReportedData(unittest.TestCase):
 
     def setUp(self):
         self.router, self.db = _make_router()
+        self.db.get_filing.return_value = FILING_ONE_FULL
 
     def _call(self, **qp):
         return _call(self.router, "GET", "/irs990/filings/data", _qp(**qp) if qp else {})
@@ -446,6 +468,16 @@ class TestGetReportedData(unittest.TestCase):
         result = self._call()
         self.assertIn("filing_id", result["error"])
 
+    def test_not_found_returns_error(self):
+        self.db.get_filing.return_value = None
+        result = self._call(filing_id="no-such-uuid")
+        self.assertIn("error", result)
+
+    def test_not_found_error_contains_id(self):
+        self.db.get_filing.return_value = None
+        result = self._call(filing_id="no-such-uuid")
+        self.assertIn("no-such-uuid", result["error"])
+
     def test_returns_filing_id_key(self):
         result = self._call(filing_id="uuid-abc-123")
         self.assertIn("filing_id", result)
@@ -454,31 +486,31 @@ class TestGetReportedData(unittest.TestCase):
         result = self._call(filing_id="uuid-abc-123")
         self.assertEqual(result["filing_id"], "uuid-abc-123")
 
-    def test_returns_data_key(self):
+    def test_returns_fields_key(self):
         result = self._call(filing_id="uuid-abc-123")
-        self.assertIn("data", result)
+        self.assertIn("fields", result)
 
-    def test_data_is_list(self):
+    def test_fields_is_list(self):
         result = self._call(filing_id="uuid-abc-123")
-        self.assertIsInstance(result["data"], list)
+        self.assertIsInstance(result["fields"], list)
 
     def test_calls_get_reported_data_with_id(self):
         self._call(filing_id="uuid-abc-123")
         self.db.get_reported_data.assert_called_once_with("uuid-abc-123")
 
-    def test_empty_data_when_no_fields(self):
+    def test_empty_fields_when_no_data(self):
         result = self._call(filing_id="uuid-abc-123")
-        self.assertEqual(result["data"], [])
+        self.assertEqual(result["fields"], [])
 
-    def test_returns_data_from_db(self):
+    def test_returns_fields_from_db(self):
         self.db.get_reported_data.return_value = [REPORTED_ROW]
         result = self._call(filing_id="uuid-abc-123")
-        self.assertEqual(result["data"], [REPORTED_ROW])
+        self.assertEqual(result["fields"], [REPORTED_ROW])
 
-    def test_data_count_matches_db(self):
+    def test_fields_count_matches_db(self):
         self.db.get_reported_data.return_value = [REPORTED_ROW, REPORTED_ROW]
         result = self._call(filing_id="uuid-abc-123")
-        self.assertEqual(len(result["data"]), 2)
+        self.assertEqual(len(result["fields"]), 2)
 
 
 # ---------------------------------------------------------------------------
@@ -545,6 +577,271 @@ class TestStoreReportedData(unittest.TestCase):
     def test_value_error_on_non_int_key_returns_error(self):
         result = self._call({"filing_id": "uuid-abc-123", "values": {"not-an-int": "v"}})
         self.assertIn("error", result)
+
+
+# ---------------------------------------------------------------------------
+# GET /irs990/organizations/full
+# ---------------------------------------------------------------------------
+
+class TestGetOrganizationFull(unittest.TestCase):
+
+    def setUp(self):
+        self.router, self.db = _make_router()
+
+    def _call(self, **qp):
+        return _call(self.router, "GET", "/irs990/organizations/full", _qp(**qp) if qp else {})
+
+    def test_missing_ein_returns_error(self):
+        result = self._call()
+        self.assertIn("error", result)
+
+    def test_missing_ein_error_mentions_param(self):
+        result = self._call()
+        self.assertIn("ein", result["error"])
+
+    def test_org_not_found_returns_error(self):
+        result = self._call(ein="999999999")
+        self.assertIn("error", result)
+
+    def test_org_not_found_error_contains_ein(self):
+        result = self._call(ein="999999999")
+        self.assertIn("999999999", result["error"])
+
+    def test_calls_get_organization_with_ein(self):
+        self._call(ein="111111111")
+        self.db.get_organization.assert_called_once_with("111111111")
+
+    def test_found_calls_list_filings_with_ein(self):
+        self.db.get_organization.return_value = ORG_ALPHA
+        self._call(ein="111111111")
+        self.db.list_filings.assert_called_once_with("111111111")
+
+    def test_not_found_does_not_call_list_filings(self):
+        self._call(ein="999999999")
+        self.db.list_filings.assert_not_called()
+
+    def test_found_includes_org_ein(self):
+        self.db.get_organization.return_value = ORG_ALPHA
+        result = self._call(ein="111111111")
+        self.assertEqual(result["ein"], "111111111")
+
+    def test_found_includes_org_name(self):
+        self.db.get_organization.return_value = ORG_ALPHA
+        result = self._call(ein="111111111")
+        self.assertEqual(result["name"], "Alpha Org")
+
+    def test_found_includes_filings_key(self):
+        self.db.get_organization.return_value = ORG_ALPHA
+        result = self._call(ein="111111111")
+        self.assertIn("filings", result)
+
+    def test_filings_is_list(self):
+        self.db.get_organization.return_value = ORG_ALPHA
+        result = self._call(ein="111111111")
+        self.assertIsInstance(result["filings"], list)
+
+    def test_empty_filings_when_none(self):
+        self.db.get_organization.return_value = ORG_ALPHA
+        result = self._call(ein="111111111")
+        self.assertEqual(result["filings"], [])
+
+    def test_filing_count_matches_db(self):
+        self.db.get_organization.return_value = ORG_ALPHA
+        self.db.list_filings.return_value = [dict(FILING_ONE), dict(FILING_ONE)]
+        result = self._call(ein="111111111")
+        self.assertEqual(len(result["filings"]), 2)
+
+    def test_each_filing_has_links(self):
+        self.db.get_organization.return_value = ORG_ALPHA
+        self.db.list_filings.return_value = [dict(FILING_ONE)]
+        result = self._call(ein="111111111")
+        self.assertIn("links", result["filings"][0])
+
+    def test_links_has_detail_key(self):
+        self.db.get_organization.return_value = ORG_ALPHA
+        self.db.list_filings.return_value = [dict(FILING_ONE)]
+        result = self._call(ein="111111111")
+        self.assertIn("detail", result["filings"][0]["links"])
+
+    def test_links_has_data_key(self):
+        self.db.get_organization.return_value = ORG_ALPHA
+        self.db.list_filings.return_value = [dict(FILING_ONE)]
+        result = self._call(ein="111111111")
+        self.assertIn("data", result["filings"][0]["links"])
+
+    def test_links_has_lookup_key(self):
+        self.db.get_organization.return_value = ORG_ALPHA
+        self.db.list_filings.return_value = [dict(FILING_ONE)]
+        result = self._call(ein="111111111")
+        self.assertIn("lookup", result["filings"][0]["links"])
+
+    def test_detail_link_contains_filing_id(self):
+        self.db.get_organization.return_value = ORG_ALPHA
+        self.db.list_filings.return_value = [dict(FILING_ONE)]
+        result = self._call(ein="111111111")
+        self.assertIn("uuid-abc-123", result["filings"][0]["links"]["detail"])
+
+    def test_lookup_link_contains_ein(self):
+        self.db.get_organization.return_value = ORG_ALPHA
+        self.db.list_filings.return_value = [dict(FILING_ONE)]
+        result = self._call(ein="111111111")
+        self.assertIn("111111111", result["filings"][0]["links"]["lookup"])
+
+    def test_lookup_link_contains_year(self):
+        self.db.get_organization.return_value = ORG_ALPHA
+        self.db.list_filings.return_value = [dict(FILING_ONE)]
+        result = self._call(ein="111111111")
+        self.assertIn("2023", result["filings"][0]["links"]["lookup"])
+
+    def test_data_link_contains_filing_id(self):
+        self.db.get_organization.return_value = ORG_ALPHA
+        self.db.list_filings.return_value = [dict(FILING_ONE)]
+        result = self._call(ein="111111111")
+        self.assertIn("uuid-abc-123", result["filings"][0]["links"]["data"])
+
+
+# ---------------------------------------------------------------------------
+# GET /irs990/filings/lookup
+# ---------------------------------------------------------------------------
+
+class TestLookupFilingByEinYear(unittest.TestCase):
+
+    def setUp(self):
+        self.router, self.db = _make_router()
+
+    def _call(self, **qp):
+        return _call(self.router, "GET", "/irs990/filings/lookup", _qp(**qp) if qp else {})
+
+    def test_missing_ein_returns_error(self):
+        result = self._call(year="2023")
+        self.assertIn("error", result)
+
+    def test_missing_year_returns_error(self):
+        result = self._call(ein="111111111")
+        self.assertIn("error", result)
+
+    def test_missing_both_returns_error(self):
+        result = self._call()
+        self.assertIn("error", result)
+
+    def test_missing_ein_error_mentions_param(self):
+        result = self._call(year="2023")
+        self.assertIn("ein", result["error"])
+
+    def test_non_integer_year_returns_error(self):
+        result = self._call(ein="111111111", year="not-a-year")
+        self.assertIn("error", result)
+
+    def test_non_integer_year_error_mentions_year(self):
+        result = self._call(ein="111111111", year="not-a-year")
+        self.assertIn("year", result["error"])
+
+    def test_not_found_returns_error(self):
+        result = self._call(ein="111111111", year="2023")
+        self.assertIn("error", result)
+
+    def test_not_found_error_contains_ein(self):
+        result = self._call(ein="111111111", year="2023")
+        self.assertIn("111111111", result["error"])
+
+    def test_not_found_error_contains_year(self):
+        result = self._call(ein="111111111", year="2023")
+        self.assertIn("2023", result["error"])
+
+    def test_calls_db_with_ein_and_int_year(self):
+        self._call(ein="111111111", year="2023")
+        self.db.get_filing_data_by_ein_year.assert_called_once_with("111111111", 2023)
+
+    def test_found_returns_db_result(self):
+        self.db.get_filing_data_by_ein_year.return_value = FILING_DATA
+        result = self._call(ein="111111111", year="2023")
+        self.assertEqual(result, FILING_DATA)
+
+    def test_found_result_is_dict(self):
+        self.db.get_filing_data_by_ein_year.return_value = FILING_DATA
+        result = self._call(ein="111111111", year="2023")
+        self.assertIsInstance(result, dict)
+
+    def test_format_md_returns_string(self):
+        self.db.get_filing_data_by_ein_year.return_value = FILING_DATA
+        result = self._call(ein="111111111", year="2023", format="md")
+        self.assertIsInstance(result, str)
+
+    def test_format_html_returns_string(self):
+        self.db.get_filing_data_by_ein_year.return_value = FILING_DATA
+        result = self._call(ein="111111111", year="2023", format="html")
+        self.assertIsInstance(result, str)
+
+    def test_format_xml_returns_tuple(self):
+        self.db.get_filing_data_by_ein_year.return_value = FILING_DATA
+        result = self._call(ein="111111111", year="2023", format="xml")
+        self.assertIsInstance(result, tuple)
+
+    def test_format_xml_content_type(self):
+        self.db.get_filing_data_by_ein_year.return_value = FILING_DATA
+        _, content_type = self._call(ein="111111111", year="2023", format="xml")
+        self.assertEqual(content_type, 'application/xml')
+
+    def test_format_case_insensitive(self):
+        self.db.get_filing_data_by_ein_year.return_value = FILING_DATA
+        result_lower = self._call(ein="111111111", year="2023", format="xml")
+        result_upper = self._call(ein="111111111", year="2023", format="XML")
+        self.assertIsInstance(result_lower, tuple)
+        self.assertIsInstance(result_upper, tuple)
+
+
+# ---------------------------------------------------------------------------
+# GET /irs990/filings/data — format parameter
+# ---------------------------------------------------------------------------
+
+class TestGetReportedDataFormat(unittest.TestCase):
+
+    def setUp(self):
+        self.router, self.db = _make_router()
+        self.db.get_filing.return_value = FILING_ONE_FULL
+
+    def _call(self, **qp):
+        return _call(self.router, "GET", "/irs990/filings/data", _qp(**qp) if qp else {})
+
+    def test_default_format_returns_dict(self):
+        result = self._call(filing_id="uuid-abc-123")
+        self.assertIsInstance(result, dict)
+
+    def test_format_json_returns_dict(self):
+        result = self._call(filing_id="uuid-abc-123", format="json")
+        self.assertIsInstance(result, dict)
+
+    def test_format_md_returns_string(self):
+        result = self._call(filing_id="uuid-abc-123", format="md")
+        self.assertIsInstance(result, str)
+
+    def test_format_html_returns_string(self):
+        result = self._call(filing_id="uuid-abc-123", format="html")
+        self.assertIsInstance(result, str)
+
+    def test_format_xml_returns_tuple(self):
+        result = self._call(filing_id="uuid-abc-123", format="xml")
+        self.assertIsInstance(result, tuple)
+
+    def test_format_xml_content_type(self):
+        _, content_type = self._call(filing_id="uuid-abc-123", format="xml")
+        self.assertEqual(content_type, 'application/xml')
+
+    def test_format_xml_body_is_string(self):
+        body, _ = self._call(filing_id="uuid-abc-123", format="xml")
+        self.assertIsInstance(body, str)
+
+    def test_format_case_insensitive_xml(self):
+        result = self._call(filing_id="uuid-abc-123", format="XML")
+        self.assertIsInstance(result, tuple)
+
+    def test_format_case_insensitive_md(self):
+        result = self._call(filing_id="uuid-abc-123", format="MD")
+        self.assertIsInstance(result, str)
+
+    def test_unknown_format_falls_back_to_dict(self):
+        result = self._call(filing_id="uuid-abc-123", format="csv")
+        self.assertIsInstance(result, dict)
 
 
 if __name__ == "__main__":

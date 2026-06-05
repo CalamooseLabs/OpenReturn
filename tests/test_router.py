@@ -67,6 +67,76 @@ class TestRouter(unittest.TestCase):
 
         self.assertIn("/test/bar", router.routes["POST"])
 
+    # --- secure_by_default / per-route secured ---
+
+    def test_default_secure_by_default_is_false(self):
+        router = Router(prefix="/test")
+
+        @router.get("/pub")
+        def handler(**_): return "ok"
+
+        self.assertFalse(handler._secured)
+
+    def test_secure_by_default_true_stamps_handler(self):
+        router = Router(prefix="/test", secure_by_default=True)
+
+        @router.get("/priv")
+        def handler(**_): return "ok"
+
+        self.assertTrue(handler._secured)
+
+    def test_per_route_secured_true_overrides_default_false(self):
+        router = Router(prefix="/test", secure_by_default=False)
+
+        @router.get("/priv", secured=True)
+        def handler(**_): return "ok"
+
+        self.assertTrue(handler._secured)
+
+    def test_per_route_secured_false_overrides_default_true(self):
+        router = Router(prefix="/test", secure_by_default=True)
+
+        @router.get("/pub", secured=False)
+        def handler(**_): return "ok"
+
+        self.assertFalse(handler._secured)
+
+    def test_secured_none_falls_back_to_secure_by_default_false(self):
+        router = Router(prefix="/test", secure_by_default=False)
+
+        @router.get("/x", secured=None)
+        def handler(**_): return "ok"
+
+        self.assertFalse(handler._secured)
+
+    def test_secured_none_falls_back_to_secure_by_default_true(self):
+        router = Router(prefix="/test", secure_by_default=True)
+
+        @router.get("/x", secured=None)
+        def handler(**_): return "ok"
+
+        self.assertTrue(handler._secured)
+
+    def test_post_route_inherits_secure_by_default(self):
+        router = Router(prefix="/test", secure_by_default=True)
+
+        @router.post("/data")
+        def handler(**_): return "ok"
+
+        self.assertTrue(handler._secured)
+
+    def test_two_routes_different_secured_values(self):
+        router = Router(prefix="/test", secure_by_default=True)
+
+        @router.get("/priv")
+        def priv(**_): return "ok"
+
+        @router.get("/pub", secured=False)
+        def pub(**_): return "ok"
+
+        self.assertTrue(priv._secured)
+        self.assertFalse(pub._secured)
+
     def test_render_template_substitutes_variables(self):
         router = Router(template_dir=tempfile.gettempdir())
         tmp = os.path.join(tempfile.gettempdir(), "_test_template.html")

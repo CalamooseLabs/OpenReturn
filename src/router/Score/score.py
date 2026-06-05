@@ -21,8 +21,8 @@ def _require_fields(body: Any, *keys: str) -> tuple[dict | None, dict | None]:
 
 
 class ScoreRouter(Router):
-  def __init__(self, prefix: str = '/scores', db: ScoreDatabase = None) -> None:
-    super().__init__(prefix)
+  def __init__(self, prefix: str = '/scores', db: ScoreDatabase = None, secure_by_default: bool = False) -> None:
+    super().__init__(prefix, secure_by_default=secure_by_default)
     self.db = db
     self.engine = ScoringEngine(db)
     self._register_routes()

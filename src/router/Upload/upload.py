@@ -16,9 +16,9 @@ class UploadRouter(Router):
   _YEAR_PATH  = "ReturnHeader/TaxYr"
   _FORM_PATH  = "ReturnHeader/ReturnTypeCd"
 
-  def __init__(self, prefix: str = '/upload', db: IRS990Database = None):
+  def __init__(self, prefix: str = '/upload', db: IRS990Database = None, secure_by_default: bool = False):
     base_path = Path(__file__).parent
-    super().__init__(prefix, str(base_path / "views"))
+    super().__init__(prefix, str(base_path / "views"), secure_by_default=secure_by_default)
     self.db = db
     self.xpath_index = db.get_xpath_index()
     self.supported_forms = db.get_supported_forms()

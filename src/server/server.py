@@ -1,6 +1,8 @@
 import json
+import re
 import time
 import traceback
+from importlib.metadata import version, PackageNotFoundError
 
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from http.client import HTTPMessage
@@ -49,10 +51,11 @@ def _debug_sep(title: str = ''):
     print(f"  {_DIM}│{_R}")
 
 class Server:
-  def __init__(self, host: str = 'localhost', port: int = 8080, debug: bool = False):
+  def __init__(self, host: str = 'localhost', port: int = 8080, debug: bool = False, key_validator=None):
     self.host = host
     self.port = port
     self.debug = debug
+    self.key_validator = key_validator
     self.routes: dict[str, dict[str, Callable]] = {
       'GET': {},
       'POST': {}
@@ -86,11 +89,15 @@ class Server:
   def _create_handler(self):
     routes = self.routes
     debug = self.debug
+    key_validator = self.key_validator
 
     class RequestHandler(BaseHTTPRequestHandler):
-      def _send_response(self, status_code: int, body: str | bytes, content_type: str = 'text/html'):
+      def _send_response(self, status_code: int, body: str | bytes, content_type: str = 'text/html', extra_headers: dict | None = None):
         self.send_response(status_code)
         self.send_header('Content-Type', content_type)
+        if extra_headers:
+          for k, v in extra_headers.items():
+            self.send_header(k, v)
         self.end_headers()
         if isinstance(body, str):
           body = body.encode('utf-8')
@@ -117,6 +124,26 @@ class Server:
 
           if debug:
             _debug_sep(f'handler → {handler.__name__}')
+
+          if key_validator is not None and getattr(handler, '_secured', False):
+            provided = None
+            auth_header = self.headers.get('Authorization', '')
+            if auth_header.startswith('Bearer '):
+              provided = auth_header[7:]
+            if not provided:
+              provided = self.headers.get('X-API-Key') or None
+            if not provided or not key_validator(provided):
+              body = json.dumps({"error": "unauthorized"})
+              self._send_response(401, body, 'application/json',
+                                  {'WWW-Authenticate': 'Bearer realm="openreturn"'})
+              elapsed_ms = (time.monotonic() - start) * 1000
+              mc = _method_color(method)
+              if debug:
+                _debug_sep()
+                print(f"  {_DIM}└─{_R}  {_RED}{_BOLD}401{_R}  {_DIM}{elapsed_ms:.1f}ms{_R}")
+              else:
+                print(f"  {mc}{_BOLD}{method:<6}{_R}  {_CYAN}{path}{_R}  {_RED}401{_R}  {_DIM}{elapsed_ms:.1f}ms{_R}")
+              return
 
           body = None
           if method == 'POST':
@@ -156,6 +183,9 @@ class Server:
             if isinstance(result, dict):
               result_body = json.dumps(result)
               self._send_response(200, result_body, 'application/json')
+            elif isinstance(result, tuple):
+              result_body, content_type = result
+              self._send_response(200, result_body, content_type)
             else:
               result_body = str(result)
               self._send_response(200, result_body)
@@ -212,8 +242,20 @@ class Server:
     handler = self._create_handler()
     self.server = HTTPServer((self.host, self.port), handler)
 
-    debug_tag = f"  {_YELLOW}{_BOLD}debug{_R}" if self.debug else ""
-    print(f"{_BOLD}{_GREEN}OpenReturn{_R}  listening on {_CYAN}http://{self.host}:{self.port}{_R}{debug_tag}")
+    try:
+      raw = version("openreturn")
+      _version = re.sub(r'a(\d+)$', r'-alpha.\1',
+                 re.sub(r'b(\d+)$', r'-beta.\1',
+                 re.sub(r'rc(\d+)$', r'-rc.\1', raw)))
+    except PackageNotFoundError:
+      _version = "dev"
+    tags = []
+    if self.debug:
+      tags.append(f"{_YELLOW}{_BOLD}debug{_R}")
+    if self.key_validator:
+      tags.append(f"{_MAGENTA}auth{_R}")
+    tag_str = ("  " + "  ".join(tags)) if tags else ""
+    print(f"{_BOLD}{_GREEN}OpenReturn{_R}  {_DIM}v{_version}{_R}  listening on {_CYAN}http://{self.host}:{self.port}{_R}{tag_str}")
     self._print_routes()
 
     try:

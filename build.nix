@@ -2,7 +2,7 @@
 
 pkgs.python3Packages.buildPythonApplication {
   pname = "openreturn";
-  version = "0.1.0";
+  version = "0.1.0a1";
 
   src = ./.;
   format = "pyproject";

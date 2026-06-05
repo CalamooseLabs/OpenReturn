@@ -4,13 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openreturn"
-version = "0.1.0"
+version = "0.1.0a1"
 requires-python = ">=3.10"
 dependencies = [
 ]
 
 [project.scripts]
 openreturn = "main:main"
+openreturn-keys = "keys:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

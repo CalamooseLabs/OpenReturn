@@ -11,8 +11,10 @@ OpenReturn ships a NixOS module. Add the flake as an input and enable the servic
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-    openreturn.url = "github:your-org/OpenReturn";
-    openreturn.inputs.nixpkgs.follows = "nixpkgs";
+    openreturn = {
+        url = "github:CalamooseLabs/OpenReturn";
+        inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs = { nixpkgs, openreturn, ... }: {

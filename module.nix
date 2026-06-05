@@ -47,9 +47,24 @@ in {
       default = "openreturn";
       description = "Group under which openreturn runs.";
     };
+
+    openFirewall = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Open the firewall for the configured port.";
+    };
+
+    auth = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Require API key authentication for all requests.";
+    };
+
   };
 
   config = lib.mkIf cfg.enable {
+    networking.firewall.allowedTCPPorts = lib.mkIf cfg.openFirewall [ cfg.port ];
+
     users.users.${cfg.user} = {
       isSystemUser = true;
       group = cfg.group;
@@ -73,6 +88,7 @@ in {
         ExecStart = lib.concatStringsSep " " (
           [ "${cfg.package}/bin/openreturn" "--host" cfg.host "--port" (toString cfg.port) ]
           ++ lib.optional cfg.debug "--debug"
+          ++ lib.optional cfg.auth "--auth"
         );
 
         Restart = "on-failure";

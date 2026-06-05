@@ -1,3 +1,5 @@
+import hashlib
+import secrets
 import uuid
 from database import Database
 
@@ -42,6 +44,44 @@ def _build_field(r: tuple) -> dict:
 class IRS990Database(Database):
   def __init__(self, name="IRS990") -> None:
     super().__init__(name, "IRS990", populate_guard="form")
+    self._run_script("setup_api_keys.sql", "IRS990")
+
+  # --- API keys ---
+
+  def create_api_key(self, name: str) -> tuple[int, str]:
+    raw = secrets.token_urlsafe(32)
+    key_hash = hashlib.sha256(raw.encode()).hexdigest()
+    self.cursor.execute(
+      "INSERT INTO api_key (name, key_hash) VALUES (?, ?)", (name, key_hash)
+    )
+    self.connection.commit()
+    return self.cursor.lastrowid, raw
+
+  def validate_api_key(self, raw: str) -> bool:
+    key_hash = hashlib.sha256(raw.encode()).hexdigest()
+    row = self.cursor.execute(
+      "SELECT key_id FROM api_key WHERE key_hash = ? AND active = 1", (key_hash,)
+    ).fetchone()
+    if row:
+      self.cursor.execute(
+        "UPDATE api_key SET last_used_at = datetime('now') WHERE key_id = ?", (row[0],)
+      )
+      self.connection.commit()
+    return row is not None
+
+  def list_api_keys(self) -> list[dict]:
+    rows = self.cursor.execute(
+      "SELECT key_id, name, created_at, last_used_at, active FROM api_key ORDER BY key_id"
+    ).fetchall()
+    return [
+      {"key_id": r[0], "name": r[1], "created_at": r[2], "last_used_at": r[3], "active": bool(r[4])}
+      for r in rows
+    ]
+
+  def revoke_api_key(self, key_id: int) -> bool:
+    self.cursor.execute("UPDATE api_key SET active = 0 WHERE key_id = ?", (key_id,))
+    self.connection.commit()
+    return self.cursor.rowcount > 0
 
   def get_supported_forms(self) -> set[str]:
     rows = self.cursor.execute(

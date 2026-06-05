@@ -1,4 +1,5 @@
 import sqlite3
+import xml.etree.ElementTree as ET
 from typing import Any
 from http.client import HTTPMessage
 
@@ -20,7 +21,7 @@ def _require_fields(body: Any, *keys: str) -> tuple[dict | None, dict | None]:
 
 
 def _render(result: dict, fmt: str) -> dict | str:
-    if fmt not in ('md', 'html'):
+    if fmt not in ('md', 'html', 'xml'):
         return result
 
     fields = result.get('fields', [])
@@ -51,6 +52,23 @@ def _render(result: dict, fmt: str) -> dict | str:
         ]
         return f"# {meta}\n\n" + '\n'.join([h, sep] + data)
 
+    if fmt == 'xml':
+        root = ET.Element('filing')
+        for key in ('filing_id', 'ein', 'year', 'form_code', 'xml_filename', 'zip_filename'):
+            val = result.get(key)
+            if val is not None:
+                ET.SubElement(root, key).text = str(val)
+        fields_el = ET.SubElement(root, 'fields')
+        for f in fields:
+            field_el = ET.SubElement(fields_el, 'field')
+            ET.SubElement(field_el, 'part').text    = str(f['part']['number'])
+            ET.SubElement(field_el, 'section').text = f['section']['code'] if f['section']['code'] != 'NONE' else ''
+            ET.SubElement(field_el, 'line').text    = f['line']['number'] + (f['sub_letter'] or '')
+            ET.SubElement(field_el, 'description').text = f['box_label'] or f['line']['label'] or ''
+            ET.SubElement(field_el, 'value').text   = f['value'] or ''
+        ET.indent(root, space='  ')
+        return '<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(root, encoding='unicode'), 'application/xml'
+
     th  = ''.join(f'<th>{c}</th>' for c in cols)
     trs = ''.join(
         '<tr>' + ''.join(f'<td>{c}</td>' for c in row) + '</tr>'
@@ -64,8 +82,8 @@ def _render(result: dict, fmt: str) -> dict | str:
 
 
 class IRS990Router(Router):
-  def __init__(self, prefix: str = '/irs990', db: IRS990Database = None) -> None:
-    super().__init__(prefix)
+  def __init__(self, prefix: str = '/irs990', db: IRS990Database = None, secure_by_default: bool = False) -> None:
+    super().__init__(prefix, secure_by_default=secure_by_default)
     self.db = db
     self._register_routes()
 

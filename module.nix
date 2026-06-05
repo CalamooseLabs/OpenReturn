@@ -65,6 +65,12 @@ in {
   config = lib.mkIf cfg.enable {
     environment.systemPackages = [ cfg.package ];
 
+    # Clear any prior failed/rate-limited state before switch-to-configuration
+    # tries to restart the unit, so config changes always take effect immediately.
+    system.activationScripts.openreturn-reset-failed = lib.stringAfter [ "users" ] ''
+      systemctl reset-failed openreturn.service 2>/dev/null || true
+    '';
+
     networking.firewall.allowedTCPPorts = lib.mkIf cfg.openFirewall [ cfg.port ];
 
     users.users.${cfg.user} = {
@@ -80,7 +86,7 @@ in {
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" ];
 
-      restartTriggers = [ cfg.package ];
+      restartTriggers = [ cfg.package cfg.host (toString cfg.port) ];
 
       serviceConfig = {
         User = cfg.user;
@@ -97,8 +103,7 @@ in {
 
         Restart = "on-failure";
         RestartSec = "5s";
-        StartLimitIntervalSec = "60s";
-        StartLimitBurst = 5;
+        StartLimitIntervalSec = "0";
 
         # Hardening
         NoNewPrivileges = true;

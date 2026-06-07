@@ -20,7 +20,7 @@
     };
   };
   runtests = pkgs.writeShellScriptBin "runtests" ''
-    PYTHONPATH=src python3 -m unittest discover tests "''${@}"
+    PYTHONPATH=src pytest tests "''${@}"
   '';
   runserver = pkgs.writeShellScriptBin "runserver" ''
     python3 src/main.py "''${@}"
@@ -76,7 +76,7 @@ in
   pkgs.mkShell {
     buildInputs = [
       (inputs.zed-editor.packages.x86_64-linux.default zedSettings)
-      pkgs.python3
+      (pkgs.python3.withPackages (ps: [ ps.pytest ps.pytest-sugar ps.coverage ps.pytest-cov ]))
       pkgs.sql-formatter
       pkgs.ruff
       pkgs.claude-code

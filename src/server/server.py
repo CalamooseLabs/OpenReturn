@@ -1,5 +1,6 @@
 import json
 import re
+import threading
 import time
 import traceback
 from importlib.metadata import version, PackageNotFoundError
@@ -50,6 +51,8 @@ def _debug_sep(title: str = ''):
   else:
     print(f"  {_DIM}│{_R}")
 
+_RATE_WINDOW = 60.0  # seconds per rate-limit window
+
 class Server:
   def __init__(self, host: str = 'localhost', port: int = 8080, debug: bool = False, key_validator=None):
     self.host = host
@@ -61,6 +64,8 @@ class Server:
       'POST': {}
     }
     self.server: HTTPServer | None = None
+    self._rate_counters: dict[str, list] = {}  # raw_key → [count, window_start]
+    self._rate_lock = threading.Lock()
 
   def include_router(self, router: Router):
     for method in router.routes:
@@ -90,6 +95,22 @@ class Server:
     routes = self.routes
     debug = self.debug
     key_validator = self.key_validator
+    rate_counters = self._rate_counters
+    rate_lock = self._rate_lock
+
+    def _is_rate_limited(key: str, limit: int) -> bool:
+      if limit == -1:
+        return False
+      now = time.monotonic()
+      with rate_lock:
+        if key not in rate_counters:
+          rate_counters[key] = [0, now]
+        entry = rate_counters[key]
+        if now - entry[1] > _RATE_WINDOW:
+          entry[0] = 0
+          entry[1] = now
+        entry[0] += 1
+        return entry[0] > limit
 
     class RequestHandler(BaseHTTPRequestHandler):
       def _send_response(self, status_code: int, body: str | bytes, content_type: str = 'text/html', extra_headers: dict | None = None):
@@ -132,7 +153,9 @@ class Server:
               provided = auth_header[7:]
             if not provided:
               provided = self.headers.get('X-API-Key') or None
-            if not provided or not key_validator(provided):
+
+            rate_limit = key_validator(provided) if provided else None
+            if rate_limit is None:
               body = json.dumps({"error": "unauthorized"})
               self._send_response(401, body, 'application/json',
                                   {'WWW-Authenticate': 'Bearer realm="openreturn"'})
@@ -143,6 +166,18 @@ class Server:
                 print(f"  {_DIM}└─{_R}  {_RED}{_BOLD}401{_R}  {_DIM}{elapsed_ms:.1f}ms{_R}")
               else:
                 print(f"  {mc}{_BOLD}{method:<6}{_R}  {_CYAN}{path}{_R}  {_RED}401{_R}  {_DIM}{elapsed_ms:.1f}ms{_R}")
+              return
+            if _is_rate_limited(provided, rate_limit):
+              body = json.dumps({"error": "rate limit exceeded"})
+              self._send_response(429, body, 'application/json',
+                                  {'Retry-After': str(int(_RATE_WINDOW))})
+              elapsed_ms = (time.monotonic() - start) * 1000
+              mc = _method_color(method)
+              if debug:
+                _debug_sep()
+                print(f"  {_DIM}└─{_R}  {_RED}{_BOLD}429{_R}  {_DIM}{elapsed_ms:.1f}ms{_R}")
+              else:
+                print(f"  {mc}{_BOLD}{method:<6}{_R}  {_CYAN}{path}{_R}  {_RED}429{_R}  {_DIM}{elapsed_ms:.1f}ms{_R}")
               return
 
           body = None

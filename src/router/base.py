@@ -1,4 +1,5 @@
-from typing import Callable
+from typing import Callable, Any
+
 
 class Router:
   def __init__(self, prefix: str = '', template_dir: str = '', secure_by_default: bool = False):
@@ -24,6 +25,19 @@ class Router:
 
   def post(self, path: str, secured: bool | None = None):
     return self.route(path, 'POST', secured=secured)
+
+  @staticmethod
+  def _qp(query_params: dict, key: str) -> str | None:
+    return query_params.get(key, [None])[0]
+
+  @staticmethod
+  def _require_fields(body: Any, *keys: str) -> tuple[dict | None, dict | None]:
+    if not isinstance(body, dict):
+      return None, {"error": "JSON body required"}
+    missing = [k for k in keys if k not in body]
+    if missing:
+      return None, {"error": f"missing required fields: {missing}"}
+    return body, None
 
   def render_template(self, filename: str, **kwargs) -> str:
     if filename not in self._template_cache:

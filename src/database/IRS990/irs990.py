@@ -42,39 +42,53 @@ def _build_field(r: tuple) -> dict:
 
 
 class IRS990Database(Database):
-  def __init__(self, name="IRS990") -> None:
-    super().__init__(name, "IRS990", populate_guard="form")
+  def __init__(self, name="IRS990", path: str | None = None) -> None:
+    super().__init__(name, "IRS990", populate_guard="form", path=path)
     self._run_script("setup_api_keys.sql", "IRS990")
+    try:
+      self.cursor.execute(
+        "ALTER TABLE api_key ADD COLUMN rate_limit INTEGER NOT NULL DEFAULT -1"
+      )
+      self.connection.commit()  # pragma: no cover — only runs on pre-migration DBs
+    except Exception:
+      pass  # column already exists (fresh DB has it from setup_api_keys.sql)
 
   # --- API keys ---
 
-  def create_api_key(self, name: str) -> tuple[int, str]:
+  def create_api_key(self, name: str, rate_limit: int = -1) -> tuple[int, str]:
     raw = secrets.token_urlsafe(32)
     key_hash = hashlib.sha256(raw.encode()).hexdigest()
     self.cursor.execute(
-      "INSERT INTO api_key (name, key_hash) VALUES (?, ?)", (name, key_hash)
+      "INSERT INTO api_key (name, key_hash, rate_limit) VALUES (?, ?, ?)",
+      (name, key_hash, rate_limit)
     )
     self.connection.commit()
     return self.cursor.lastrowid, raw
 
-  def validate_api_key(self, raw: str) -> bool:
+  def validate_api_key(self, raw: str) -> int | None:
+    """
+    Returns the rate limit for a valid active key (-1 = no limit),
+    or None if the key is invalid or revoked.
+    """
     key_hash = hashlib.sha256(raw.encode()).hexdigest()
     row = self.cursor.execute(
-      "SELECT key_id FROM api_key WHERE key_hash = ? AND active = 1", (key_hash,)
+      "SELECT key_id, rate_limit FROM api_key WHERE key_hash = ? AND active = 1", (key_hash,)
     ).fetchone()
     if row:
       self.cursor.execute(
         "UPDATE api_key SET last_used_at = datetime('now') WHERE key_id = ?", (row[0],)
       )
       self.connection.commit()
-    return row is not None
+      return row[1]
+    return None
 
   def list_api_keys(self) -> list[dict]:
     rows = self.cursor.execute(
-      "SELECT key_id, name, created_at, last_used_at, active FROM api_key ORDER BY key_id"
+      "SELECT key_id, name, created_at, last_used_at, active, rate_limit FROM api_key ORDER BY key_id"
     ).fetchall()
     return [
-      {"key_id": r[0], "name": r[1], "created_at": r[2], "last_used_at": r[3], "active": bool(r[4])}
+      {"key_id": r[0], "name": r[1], "created_at": r[2], "last_used_at": r[3],
+       "active": bool(r[4]), "rate_limit": r[5]}
       for r in rows
     ]
 

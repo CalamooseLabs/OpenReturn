@@ -86,6 +86,59 @@ class TestIRS990ParserCleanTags(unittest.TestCase):
     def test_empty_dict(self):
         self.assertEqual(self.parser.cleanTags({}), {})
 
+    def test_upper_boundary_split(self):
+        # "XMLFile": when curr and prev are both upper but next is lower (F→i),
+        # the word splits: "XML" + "File"
+        self.assertEqual(self._split("XMLFile"), "XML File")
+
+    def test_upper_boundary_split_usa(self):
+        # "USAOrg": split at O (prev=A upper, curr=O upper, next=r lower)
+        self.assertEqual(self._split("USAOrg"), "USA Org")
+
+
+class TestIRS990ParserDict(unittest.TestCase):
+
+    def test_dict_returns_dict(self):
+        parser = IRS990Parser(VALID_990_XML)
+        result = parser.dict()
+        self.assertIsInstance(result, dict)
+
+    def test_dict_unlimited_depth_has_return_key(self):
+        parser = IRS990Parser(VALID_990_XML)
+        result = parser.dict()
+        self.assertIn("Return", result)
+
+    def test_dict_node_has_text_and_children(self):
+        parser = IRS990Parser(VALID_990_XML)
+        result = parser.dict()
+        root_node = result["Return"]
+        self.assertIn("text", root_node)
+        self.assertIn("children", root_node)
+
+    def test_dict_children_is_list(self):
+        parser = IRS990Parser(VALID_990_XML)
+        result = parser.dict()
+        self.assertIsInstance(result["Return"]["children"], list)
+
+    def test_dict_depth_1_has_no_grandchildren(self):
+        parser = IRS990Parser(VALID_990_XML)
+        result = parser.dict(depth=1)
+        root_children = result["Return"]["children"]
+        self.assertEqual(root_children, [])
+
+    def test_dict_depth_2_has_children(self):
+        parser = IRS990Parser(VALID_990_XML)
+        result = parser.dict(depth=2)
+        root_children = result["Return"]["children"]
+        self.assertGreater(len(root_children), 0)
+
+    def test_dict_strips_irs_namespace_from_tags(self):
+        parser = IRS990Parser(VALID_990_XML)
+        result = parser.dict()
+        # Top-level key should be plain "Return", not "{http://...}Return"
+        keys = list(result.keys())
+        self.assertFalse(any('{' in k for k in keys))
+
 
 if __name__ == "__main__":
     unittest.main()

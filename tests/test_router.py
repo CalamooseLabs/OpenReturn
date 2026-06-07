@@ -1,9 +1,11 @@
 import sys
 import os
 import io
+import shutil
 import zipfile
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
@@ -44,6 +46,7 @@ def _make_router() -> tuple[UploadRouter, MagicMock]:
     db.get_xpath_index.return_value = {
         "ReturnData/IRS990/ActivityOrMissionDesc": 1001,
     }
+    db.get_supported_forms.return_value = {"990", "990-EZ", "990-PF", "990-N", "990-T"}
     db.create_filing.return_value = "mock-filing-uuid"
     return UploadRouter(db=db), db
 
@@ -189,7 +192,9 @@ class TestUploadRouterProcessXml(unittest.TestCase):
 
     def test_valid_xml_calls_create_filing(self):
         self.router._process_xml(VALID_990_XML, "test.xml")
-        self.db.create_filing.assert_called_once_with("123456789", 2023, "990")
+        self.db.create_filing.assert_called_once_with(
+            "123456789", 2023, "990", xml_filename="test.xml", zip_filename=None
+        )
 
     def test_valid_xml_calls_store_reported_data(self):
         self.router._process_xml(VALID_990_XML, "test.xml")
@@ -293,6 +298,142 @@ class TestUploadRouterHandleUpload(unittest.TestCase):
         ).encode()
         result = self._call(body, boundary)
         self.assertIn("error", result)
+
+    def test_part_with_filename_but_no_header_separator_skipped(self):
+        """Line 115: part has filename= and .zip but no \\r\\n\\r\\n → continue."""
+        boundary = "testboundary1234"
+        # Craft a part that has filename= and .zip but no blank-line header separator
+        body = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="test.zip"\r\n'
+            f"--{boundary}--\r\n"
+        ).encode()
+        result = self._call(body, boundary)
+        self.assertIn("error", result)
+
+
+class TestUploadRouterUnsupportedForm(unittest.TestCase):
+    """Line 40: _process_xml returns 'skipped' for unsupported form codes."""
+
+    def test_unsupported_form_returns_skipped_status(self):
+        db = MagicMock()
+        db.get_xpath_index.return_value = {}
+        db.get_supported_forms.return_value = {"990-EZ"}  # 990 not in here
+        db.create_filing.return_value = "mock-uuid"
+        router = UploadRouter(db=db)
+        result = router._process_xml(VALID_990_XML, "test.xml")
+        self.assertEqual(result["status"], "skipped")
+
+    def test_unsupported_form_reason_mentions_form(self):
+        db = MagicMock()
+        db.get_xpath_index.return_value = {}
+        db.get_supported_forms.return_value = {"990-EZ"}
+        db.create_filing.return_value = "mock-uuid"
+        router = UploadRouter(db=db)
+        result = router._process_xml(VALID_990_XML, "test.xml")
+        self.assertIn("990", result["reason"])
+
+    def test_unsupported_form_does_not_call_db(self):
+        db = MagicMock()
+        db.get_xpath_index.return_value = {}
+        db.get_supported_forms.return_value = set()
+        db.create_filing.return_value = "mock-uuid"
+        router = UploadRouter(db=db)
+        router._process_xml(VALID_990_XML, "test.xml")
+        db.upsert_organization.assert_not_called()
+        db.create_filing.assert_not_called()
+
+
+class TestUploadRouterGetForm(unittest.TestCase):
+    """Line 115: GET /upload renders the upload.html template."""
+
+    def setUp(self):
+        self.router, self.db = _make_router()
+        self.handler = self.router.routes["GET"]["/upload"]
+
+    def test_get_upload_returns_string(self):
+        result = self.handler(query_params={}, body=None, headers=MagicMock())
+        self.assertIsInstance(result, str)
+
+    def test_get_upload_returns_html_content(self):
+        result = self.handler(query_params={}, body=None, headers=MagicMock())
+        self.assertIn("<", result)
+
+
+class TestUploadRouterHandleUploadException(unittest.TestCase):
+    """Lines 137-138: exceptions inside zf.open(name) are caught per-file."""
+
+    def setUp(self):
+        self.router, self.db = _make_router()
+        self.handler = self.router.routes["POST"]["/upload"]
+
+    def _call(self, body: bytes, boundary: str) -> dict:
+        headers = _mock_headers(f"multipart/form-data; boundary={boundary}")
+        return self.handler(query_params={}, body=body, headers=headers)
+
+    def test_process_xml_exception_does_not_propagate(self):
+        self.db.create_filing.side_effect = RuntimeError("db failure")
+        body, boundary = _make_upload_body({"filing.xml": VALID_990_XML})
+        result = self._call(body, boundary)
+        self.assertEqual(result["status"], "complete")
+
+    def test_process_xml_exception_counted_as_error(self):
+        self.db.create_filing.side_effect = RuntimeError("db failure")
+        body, boundary = _make_upload_body({"filing.xml": VALID_990_XML})
+        result = self._call(body, boundary)
+        self.assertEqual(result["errors"], 1)
+        self.assertEqual(result["stored"], 0)
+
+
+class TestProcessZipDir(unittest.TestCase):
+    """Lines 65-90, 95: process_zip_dir iterates a directory of ZIPs."""
+
+    _BAD_ZIP = os.path.join(os.path.dirname(__file__), 'data', 'zips', 'bad', 'sample_bad.zip')
+    _GOOD_ZIP = os.path.join(os.path.dirname(__file__), 'data', 'zips', 'good', 'sample.zip')
+
+    def setUp(self):
+        self.router, self.db = _make_router()
+        self.db.create_filing.return_value = "filing-uuid"
+
+    def test_empty_directory_returns_empty_list(self):
+        with tempfile.TemporaryDirectory() as td:
+            result = self.router.process_zip_dir(Path(td))
+        self.assertEqual(result, [])
+
+    def test_good_zip_processes_xml_files(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td)
+            shutil.copy(self._GOOD_ZIP, p / 'good.zip')
+            result = self.router.process_zip_dir(p)
+        self.assertGreater(len(result), 0)
+
+    def test_bad_zip_returns_error_result(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td)
+            (p / 'corrupt.zip').write_bytes(b'not a zip')
+            result = self.router.process_zip_dir(p)
+        self.assertEqual(result[0]["status"], "error")
+
+    def test_deflate64_zip_uses_unzip_fallback(self):
+        """Line 95: NotImplementedError from zf.open triggers subprocess unzip."""
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td)
+            shutil.copy(self._BAD_ZIP, p / 'deflate64.zip')
+            result = self.router.process_zip_dir(p)
+        # unzip extracts the XML and _process_xml is called — status won't be an unzip error
+        self.assertGreater(len(result), 0)
+        self.assertNotEqual(result[0].get("status"), "unzip_error")
+
+    def test_process_xml_exception_caught_per_file(self):
+        """Lines 86-87: exceptions from _process_xml are caught per-file."""
+        self.db.create_filing.side_effect = RuntimeError("db down")
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td)
+            shutil.copy(self._GOOD_ZIP, p / 'good.zip')
+            result = self.router.process_zip_dir(p)
+        self.assertGreater(len(result), 0)
+        # All results should have error status since create_filing raises
+        self.assertTrue(all(r["status"] == "error" for r in result))
 
 
 if __name__ == "__main__":

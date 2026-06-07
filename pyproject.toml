@@ -12,15 +12,20 @@ dependencies = [
 [project.scripts]
 openreturn = "main:main"
 openreturn-keys = "keys:main"
+openreturn-ingest = "ingest:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools]
-py-modules = ["main", "keys"]
+py-modules = ["main", "keys", "ingest", "console"]
 
 [tool.setuptools.package-data]
 "*" = ["*.sql", "*.html"]
 
 [tool.setuptools.package-dir]
 "" = "src"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--tb=short"

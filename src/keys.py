@@ -5,15 +5,8 @@ import argparse
 import sys
 from pathlib import Path
 
+from console import _B, _R, _DIM, _CYN, _GRN, _RED, _YLW
 from database.Score import ScoreDatabase
-
-_B    = '\033[1m'
-_R    = '\033[0m'
-_DIM  = '\033[2m'
-_CYAN = '\033[36m'
-_GRN  = '\033[32m'
-_RED  = '\033[31m'
-_YLW  = '\033[33m'
 
 
 def _require_db() -> ScoreDatabase:
@@ -25,12 +18,14 @@ def _require_db() -> ScoreDatabase:
 
 def cmd_create(args) -> int:
     db = _require_db()
-    key_id, raw = db.create_api_key(args.name)
+    key_id, raw = db.create_api_key(args.name, rate_limit=args.rate_limit)
     db.close()
+    limit_str = "unlimited" if args.rate_limit == -1 else f"{args.rate_limit} req/min"
     print(f"\n{_B}{_GRN}API key created{_R}")
     print(f"  ID:     {key_id}")
     print(f"  Name:   {args.name}")
-    print(f"  Key:    {_CYAN}{raw}{_R}")
+    print(f"  Limit:  {limit_str}")
+    print(f"  Key:    {_CYN}{raw}{_R}")
     print(f"  Header: {_DIM}Authorization: Bearer {raw}{_R}")
     print(f"\n  {_YLW}This key will not be shown again.{_R}\n")
     return 0
@@ -43,14 +38,18 @@ def cmd_list(args) -> int:
     if not keys:
         print("No API keys found.")
         return 0
-    id_w, name_w, created_w, used_w = 6, 24, 20, 20
-    header = f"  {'ID':<{id_w}}  {'Name':<{name_w}}  {'Created':<{created_w}}  {'Last Used':<{used_w}}  Status"
-    sep    = f"  {'─'*id_w}  {'─'*name_w}  {'─'*created_w}  {'─'*used_w}  ──────"
+    id_w, name_w, created_w, used_w, limit_w = 6, 24, 20, 20, 10
+    header = (f"  {'ID':<{id_w}}  {'Name':<{name_w}}  {'Created':<{created_w}}"
+              f"  {'Last Used':<{used_w}}  {'Limit':<{limit_w}}  Status")
+    sep    = (f"  {'─'*id_w}  {'─'*name_w}  {'─'*created_w}"
+              f"  {'─'*used_w}  {'─'*limit_w}  ──────")
     print(f"\n{header}\n{sep}")
     for k in keys:
         status = f"{_GRN}active{_R}" if k['active'] else f"{_RED}revoked{_R}"
         last   = k['last_used_at'] or '—'
-        print(f"  {k['key_id']:<{id_w}}  {k['name']:<{name_w}}  {k['created_at']:<{created_w}}  {last:<{used_w}}  {status}")
+        limit  = '∞' if k['rate_limit'] == -1 else f"{k['rate_limit']}/min"
+        print(f"  {k['key_id']:<{id_w}}  {k['name']:<{name_w}}  {k['created_at']:<{created_w}}"
+              f"  {last:<{used_w}}  {limit:<{limit_w}}  {status}")
     print()
     return 0
 
@@ -75,6 +74,8 @@ def main() -> int:
 
     p_create = sub.add_parser('create', help='Generate and store a new API key')
     p_create.add_argument('name', help='Human-readable label (e.g. "Dashboard", "CI pipeline")')
+    p_create.add_argument('--rate-limit', type=int, default=-1, dest='rate_limit',
+                          metavar='N', help='Max requests per minute (-1 = unlimited, default)')
 
     sub.add_parser('list', help='List all API keys')
 
@@ -86,5 +87,5 @@ def main() -> int:
     return dispatch[args.cmd](args)
 
 
-if __name__ == '__main__':
+if __name__ == '__main__':  # pragma: no cover
     sys.exit(main())

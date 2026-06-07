@@ -1,8 +1,8 @@
 from database.IRS990 import IRS990Database
 
 class ScoreDatabase(IRS990Database):
-  def __init__(self, name="IRS990") -> None:
-    super().__init__(name)
+  def __init__(self, name="IRS990", path: str | None = None) -> None:
+    super().__init__(name, path=path)
     self._run_script("setup.sql", "Score")
     if not self._table_has_rows("score_model"):
       self._run_script("populate.sql", "Score")

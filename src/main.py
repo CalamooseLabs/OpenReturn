@@ -5,9 +5,11 @@ import argparse
 import sys
 from pathlib import Path
 
+from console import _B, _R, _DIM, _CYN, _GRN, _YLW, _MAG, _RED
 from database.Score import ScoreDatabase
 from router.Upload import UploadRouter
-from router.IRS990 import IRS990Router
+from router.Org import OrgRouter
+from router.Filing import FilingRouter
 from router.Score import ScoreRouter
 from server import Server
 
@@ -27,21 +29,13 @@ _USER_TABLES: dict[str, list[str]] = {
   'organization_score_factor':['value_id', 'score_id', 'factor_id', 'raw_value', 'weighted_value'],
 }
 
-_B    = '\033[1m'
-_R    = '\033[0m'
-_DIM  = '\033[2m'
-_CYAN = '\033[36m'
-_GRN  = '\033[32m'
-_YLW  = '\033[33m'
-_MAG  = '\033[35m'
-_RED  = '\033[31m'
 
 def _dump_db(db: ScoreDatabase) -> None:
   cur = db.cursor
   cur.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
   all_tables = {row[0] for row in cur.fetchall()}
 
-  print(f"\n{_B}Database snapshot{_R}  {_CYAN}IRS990.db{_R}")
+  print(f"\n{_B}Database snapshot{_R}  {_CYN}IRS990.db{_R}")
   print(f"{_DIM}{'─' * 52}{_R}")
 
   # Reference tables — counts only
@@ -109,7 +103,7 @@ def main() -> int:
     if args.testing:
       if args.zip_dir:
         zip_dir = Path(args.zip_dir)
-        print(f"\n{_B}Ingesting ZIPs from{_R}  {_CYAN}{zip_dir}{_R}")
+        print(f"\n{_B}Ingesting ZIPs from{_R}  {_CYN}{zip_dir}{_R}")
         print(f"{_DIM}{'─' * 52}{_R}")
         results = upload_router.process_zip_dir(zip_dir)
         counts = {"stored": 0, "skipped": 0, "error": 0}
@@ -127,7 +121,8 @@ def main() -> int:
         key_validator=db.validate_api_key if args.auth else None,
     )
     app.include_router(upload_router)
-    app.include_router(IRS990Router(db=db, secure_by_default=True))
+    app.include_router(OrgRouter(db=db, secure_by_default=True))
+    app.include_router(FilingRouter(db=db, secure_by_default=True))
     app.include_router(ScoreRouter(db=db, secure_by_default=True))
     app.run()
 
@@ -135,5 +130,5 @@ def main() -> int:
     return 0
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     sys.exit(main())

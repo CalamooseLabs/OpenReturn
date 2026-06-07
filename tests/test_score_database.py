@@ -1,7 +1,6 @@
 import os
 import sys
 import sqlite3
-import tempfile
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
@@ -30,25 +29,34 @@ V1_FACTORS = [
 
 
 class ScoreDbTestCase(unittest.TestCase):
-    """Base: fresh ScoreDatabase + one seeded org per test method."""
+    """Base: ScoreDatabase initialized once per class, mutable rows cleared per test."""
 
     EIN_ALPHA = "111111111"
     EIN_BETA  = "222222222"
 
+    @classmethod
+    def setUpClass(cls):
+        cls.db = ScoreDatabase(path=":memory:")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.db.close()
+
     def setUp(self):
-        self._tmpdir = tempfile.TemporaryDirectory()
-        self._orig_cwd = os.getcwd()
-        os.chdir(self._tmpdir.name)
-        self.db = ScoreDatabase()
+        self.db.cursor.executescript("""
+            DELETE FROM organization_score_factor;
+            DELETE FROM organization_score;
+            DELETE FROM reported_data;
+            DELETE FROM filing;
+            DELETE FROM organization;
+            DELETE FROM api_key;
+        """)
         self.db.upsert_organization(self.EIN_ALPHA, "Alpha Org")
         self.db.upsert_organization(self.EIN_BETA, "Beta Org")
+        self.filing_alpha  = self.db.create_filing(self.EIN_ALPHA, 2023, "990")
+        self.filing_alpha2 = self.db.create_filing(self.EIN_ALPHA, 2022, "990")
+        self.filing_beta   = self.db.create_filing(self.EIN_BETA,  2023, "990")
         self.factors = self.db.get_factors(1)
-
-    def tearDown(self):
-        if self.db is not None:
-            self.db.close()
-        os.chdir(self._orig_cwd)
-        self._tmpdir.cleanup()
 
     def _factor_ids(self):
         """Return all factor_ids for model v1, in order."""
@@ -300,44 +308,46 @@ class TestGetFactors(ScoreDbTestCase):
 class TestCreateScore(ScoreDbTestCase):
 
     def test_returns_int(self):
-        result = self.db.create_score(self.EIN_ALPHA)
+        result = self.db.create_score(self.filing_alpha)
         self.assertIsInstance(result, int)
 
     def test_returns_positive_int(self):
-        result = self.db.create_score(self.EIN_ALPHA)
+        result = self.db.create_score(self.filing_alpha)
         self.assertGreater(result, 0)
 
     def test_creates_row_in_organization_score(self):
-        score_id = self.db.create_score(self.EIN_ALPHA)
+        score_id = self.db.create_score(self.filing_alpha)
         count = self.db.cursor.execute(
             "SELECT COUNT(*) FROM organization_score WHERE score_id = ?", (score_id,)
         ).fetchone()[0]
         self.assertEqual(count, 1)
 
     def test_row_has_correct_organization_id(self):
-        score_id = self.db.create_score(self.EIN_ALPHA)
+        score_id = self.db.create_score(self.filing_alpha)
         ein = self.db.cursor.execute(
-            "SELECT organization_id FROM organization_score WHERE score_id = ?", (score_id,)
+            "SELECT f.organization_id FROM organization_score os "
+            "JOIN filing f ON f.uuid = os.filing_id WHERE os.score_id = ?",
+            (score_id,)
         ).fetchone()[0]
         self.assertEqual(ein, self.EIN_ALPHA)
 
     def test_row_has_correct_model_id_for_v1(self):
         model_id = self.db.get_model_id(1)
-        score_id = self.db.create_score(self.EIN_ALPHA)
+        score_id = self.db.create_score(self.filing_alpha)
         stored_model_id = self.db.cursor.execute(
             "SELECT model_id FROM organization_score WHERE score_id = ?", (score_id,)
         ).fetchone()[0]
         self.assertEqual(stored_model_id, model_id)
 
     def test_total_score_is_null_initially(self):
-        score_id = self.db.create_score(self.EIN_ALPHA)
+        score_id = self.db.create_score(self.filing_alpha)
         total = self.db.cursor.execute(
             "SELECT total_score FROM organization_score WHERE score_id = ?", (score_id,)
         ).fetchone()[0]
         self.assertIsNone(total)
 
     def test_scored_at_is_populated(self):
-        score_id = self.db.create_score(self.EIN_ALPHA)
+        score_id = self.db.create_score(self.filing_alpha)
         scored_at = self.db.cursor.execute(
             "SELECT scored_at FROM organization_score WHERE score_id = ?", (score_id,)
         ).fetchone()[0]
@@ -346,51 +356,53 @@ class TestCreateScore(ScoreDbTestCase):
         self.assertGreater(len(scored_at), 0)
 
     def test_two_scores_for_same_org_have_different_ids(self):
-        id1 = self.db.create_score(self.EIN_ALPHA)
-        id2 = self.db.create_score(self.EIN_ALPHA)
+        id1 = self.db.create_score(self.filing_alpha)
+        id2 = self.db.create_score(self.filing_alpha2)
         self.assertNotEqual(id1, id2)
 
     def test_scores_for_different_orgs_have_different_ids(self):
-        id1 = self.db.create_score(self.EIN_ALPHA)
-        id2 = self.db.create_score(self.EIN_BETA)
+        id1 = self.db.create_score(self.filing_alpha)
+        id2 = self.db.create_score(self.filing_beta)
         self.assertNotEqual(id1, id2)
 
     def test_scores_for_different_orgs_store_correct_eins(self):
-        id1 = self.db.create_score(self.EIN_ALPHA)
-        id2 = self.db.create_score(self.EIN_BETA)
+        id1 = self.db.create_score(self.filing_alpha)
+        id2 = self.db.create_score(self.filing_beta)
         ein1 = self.db.cursor.execute(
-            "SELECT organization_id FROM organization_score WHERE score_id = ?", (id1,)
+            "SELECT f.organization_id FROM organization_score os "
+            "JOIN filing f ON f.uuid = os.filing_id WHERE os.score_id = ?", (id1,)
         ).fetchone()[0]
         ein2 = self.db.cursor.execute(
-            "SELECT organization_id FROM organization_score WHERE score_id = ?", (id2,)
+            "SELECT f.organization_id FROM organization_score os "
+            "JOIN filing f ON f.uuid = os.filing_id WHERE os.score_id = ?", (id2,)
         ).fetchone()[0]
         self.assertEqual(ein1, self.EIN_ALPHA)
         self.assertEqual(ein2, self.EIN_BETA)
 
     def test_default_model_version_is_1(self):
         model_id_v1 = self.db.get_model_id(1)
-        score_id = self.db.create_score(self.EIN_ALPHA)
+        score_id = self.db.create_score(self.filing_alpha)
         stored_model_id = self.db.cursor.execute(
             "SELECT model_id FROM organization_score WHERE score_id = ?", (score_id,)
         ).fetchone()[0]
         self.assertEqual(stored_model_id, model_id_v1)
 
     def test_explicit_model_version_1_works(self):
-        score_id = self.db.create_score(self.EIN_ALPHA, model_version=1)
+        score_id = self.db.create_score(self.filing_alpha, model_version=1)
         self.assertIsInstance(score_id, int)
 
     def test_unknown_model_version_raises_value_error(self):
         with self.assertRaises(ValueError):
-            self.db.create_score(self.EIN_ALPHA, model_version=999)
+            self.db.create_score(self.filing_alpha, model_version=999)
 
-    def test_nonexistent_ein_raises_integrity_error(self):
+    def test_nonexistent_filing_raises_integrity_error(self):
         with self.assertRaises(sqlite3.IntegrityError):
-            self.db.create_score("999999999")
+            self.db.create_score("00000000-0000-0000-0000-000000000000")
 
     def test_multiple_scores_increment_count(self):
-        self.db.create_score(self.EIN_ALPHA)
-        self.db.create_score(self.EIN_ALPHA)
-        self.db.create_score(self.EIN_BETA)
+        self.db.create_score(self.filing_alpha)
+        self.db.create_score(self.filing_alpha2)
+        self.db.create_score(self.filing_beta)
         count = self.db.cursor.execute(
             "SELECT COUNT(*) FROM organization_score"
         ).fetchone()[0]
@@ -405,7 +417,7 @@ class TestStoreFactorValues(ScoreDbTestCase):
 
     def setUp(self):
         super().setUp()
-        self.score_id = self.db.create_score(self.EIN_ALPHA)
+        self.score_id = self.db.create_score(self.filing_alpha)
         self.factors = self.db.get_factors(1)
 
     def _first_factor_id(self):
@@ -518,7 +530,7 @@ class TestStoreFactorValues(ScoreDbTestCase):
         self.assertIsNone(row[1])
 
     def test_does_not_affect_other_score(self):
-        other_score_id = self.db.create_score(self.EIN_BETA)
+        other_score_id = self.db.create_score(self.filing_beta)
         values = self._all_factor_values()
         self.db.store_factor_values(self.score_id, values)
         count = self.db.cursor.execute(
@@ -528,7 +540,7 @@ class TestStoreFactorValues(ScoreDbTestCase):
         self.assertEqual(count, 0)
 
     def test_separate_scores_store_independently(self):
-        other_score_id = self.db.create_score(self.EIN_BETA)
+        other_score_id = self.db.create_score(self.filing_beta)
         fid = self._first_factor_id()
         self.db.store_factor_values(self.score_id,    {fid: (0.30, 0.015)})
         self.db.store_factor_values(other_score_id,   {fid: (0.70, 0.035)})
@@ -552,7 +564,7 @@ class TestFinalizeScore(ScoreDbTestCase):
 
     def setUp(self):
         super().setUp()
-        self.score_id = self.db.create_score(self.EIN_ALPHA)
+        self.score_id = self.db.create_score(self.filing_alpha)
 
     def _get_total(self, score_id):
         return self.db.cursor.execute(
@@ -592,14 +604,15 @@ class TestFinalizeScore(ScoreDbTestCase):
         self.db.finalize_score(99999, 0.5)  # must not raise
 
     def test_only_affects_target_score(self):
-        other_id = self.db.create_score(self.EIN_BETA)
+        other_id = self.db.create_score(self.filing_beta)
         self.db.finalize_score(self.score_id, 0.80)
         self.assertIsNone(self._get_total(other_id))
 
     def test_does_not_change_organization_id(self):
         self.db.finalize_score(self.score_id, 0.70)
         ein = self.db.cursor.execute(
-            "SELECT organization_id FROM organization_score WHERE score_id = ?",
+            "SELECT f.organization_id FROM organization_score os "
+            "JOIN filing f ON f.uuid = os.filing_id WHERE os.score_id = ?",
             (self.score_id,),
         ).fetchone()[0]
         self.assertEqual(ein, self.EIN_ALPHA)
@@ -623,7 +636,7 @@ class TestGetScore(ScoreDbTestCase):
 
     def setUp(self):
         super().setUp()
-        self.score_id = self.db.create_score(self.EIN_ALPHA)
+        self.score_id = self.db.create_score(self.filing_alpha)
 
     def test_returns_none_for_nonexistent_score(self):
         result = self.db.get_score(99999)
@@ -639,7 +652,7 @@ class TestGetScore(ScoreDbTestCase):
 
     def test_organization_id_matches(self):
         result = self.db.get_score(self.score_id)
-        self.assertEqual(result["organization_id"], self.EIN_ALPHA)
+        self.assertEqual(result["ein"], self.EIN_ALPHA)
 
     def test_model_version_is_1(self):
         result = self.db.get_score(self.score_id)
@@ -739,7 +752,7 @@ class TestGetScore(ScoreDbTestCase):
                                    msg=f"weight mismatch for '{name}'")
 
     def test_returns_correct_score_among_multiple(self):
-        other_id = self.db.create_score(self.EIN_BETA)
+        other_id = self.db.create_score(self.filing_beta)
         self.db.finalize_score(self.score_id, 0.70)
         self.db.finalize_score(other_id, 0.90)
         result_a = self.db.get_score(self.score_id)
@@ -749,8 +762,8 @@ class TestGetScore(ScoreDbTestCase):
 
     def test_result_has_no_unexpected_keys(self):
         result = self.db.get_score(self.score_id)
-        expected_keys = {"score_id", "organization_id", "model_version",
-                         "total_score", "scored_at", "factors"}
+        expected_keys = {"score_id", "ein", "model_version", "filing_id",
+                         "year", "total_score", "scored_at", "factors"}
         self.assertEqual(set(result.keys()), expected_keys)
 
     def test_factor_null_raw_value_preserved(self):
@@ -767,20 +780,20 @@ class TestGetScore(ScoreDbTestCase):
 class TestScoreDatabaseIntegration(ScoreDbTestCase):
 
     def test_full_workflow_single_org(self):
-        score_id = self.db.create_score(self.EIN_ALPHA)
+        score_id = self.db.create_score(self.filing_alpha)
         values = self._all_factor_values(raw=1.0)
         self.db.store_factor_values(score_id, values)
         total = sum(wv for _, (_, wv) in values.items())
         self.db.finalize_score(score_id, total)
 
         result = self.db.get_score(score_id)
-        self.assertEqual(result["organization_id"], self.EIN_ALPHA)
+        self.assertEqual(result["ein"], self.EIN_ALPHA)
         self.assertEqual(result["model_version"], 1)
         self.assertAlmostEqual(result["total_score"], total)
         self.assertEqual(len(result["factors"]), 14)
 
     def test_full_workflow_total_equals_sum_of_weighted_values(self):
-        score_id = self.db.create_score(self.EIN_ALPHA)
+        score_id = self.db.create_score(self.filing_alpha)
         values = {f["factor_id"]: (f["weight"] * 2, f["weight"] * 2 * f["weight"])
                   for f in self.factors}
         self.db.store_factor_values(score_id, values)
@@ -792,8 +805,8 @@ class TestScoreDatabaseIntegration(ScoreDbTestCase):
         self.assertAlmostEqual(result["total_score"], computed_sum, places=10)
 
     def test_multiple_orgs_scores_are_independent(self):
-        sid_a = self.db.create_score(self.EIN_ALPHA)
-        sid_b = self.db.create_score(self.EIN_BETA)
+        sid_a = self.db.create_score(self.filing_alpha)
+        sid_b = self.db.create_score(self.filing_beta)
         self.db.finalize_score(sid_a, 0.60)
         self.db.finalize_score(sid_b, 0.40)
 
@@ -801,12 +814,12 @@ class TestScoreDatabaseIntegration(ScoreDbTestCase):
         result_b = self.db.get_score(sid_b)
         self.assertAlmostEqual(result_a["total_score"], 0.60)
         self.assertAlmostEqual(result_b["total_score"], 0.40)
-        self.assertEqual(result_a["organization_id"], self.EIN_ALPHA)
-        self.assertEqual(result_b["organization_id"], self.EIN_BETA)
+        self.assertEqual(result_a["ein"], self.EIN_ALPHA)
+        self.assertEqual(result_b["ein"], self.EIN_BETA)
 
     def test_multiple_scores_per_org_are_independent(self):
-        sid1 = self.db.create_score(self.EIN_ALPHA)
-        sid2 = self.db.create_score(self.EIN_ALPHA)
+        sid1 = self.db.create_score(self.filing_alpha)
+        sid2 = self.db.create_score(self.filing_alpha2)
         self.db.finalize_score(sid1, 0.55)
         self.db.finalize_score(sid2, 0.75)
 
@@ -816,8 +829,8 @@ class TestScoreDatabaseIntegration(ScoreDbTestCase):
         self.assertAlmostEqual(r2["total_score"], 0.75)
 
     def test_factor_values_for_two_scores_are_isolated(self):
-        sid1 = self.db.create_score(self.EIN_ALPHA)
-        sid2 = self.db.create_score(self.EIN_ALPHA)
+        sid1 = self.db.create_score(self.filing_alpha)
+        sid2 = self.db.create_score(self.filing_alpha2)
         fid = self.factors[0]["factor_id"]
         self.db.store_factor_values(sid1, {fid: (0.10, 0.005)})
         self.db.store_factor_values(sid2, {fid: (0.90, 0.045)})
@@ -833,14 +846,14 @@ class TestScoreDatabaseIntegration(ScoreDbTestCase):
         self.assertGreater(len(index), 0)
 
     def test_irs990_filing_coexists_with_scores(self):
-        filing_id = self.db.create_filing(self.EIN_ALPHA, 2023, "990")
-        score_id = self.db.create_score(self.EIN_ALPHA)
-        self.assertIsNotNone(filing_id)
+        score_id = self.db.create_score(self.filing_alpha)
+        self.assertIsNotNone(self.filing_alpha)
         self.assertIsNotNone(score_id)
 
     def test_score_inherits_org_created_via_irs990_methods(self):
         self.db.upsert_organization("333333333", "Gamma Org")
-        score_id = self.db.create_score("333333333")
+        filing_id = self.db.create_filing("333333333", 2023, "990")
+        score_id = self.db.create_score(filing_id)
         self.assertIsInstance(score_id, int)
 
     def test_weights_sum_to_1_across_all_factor_rows(self):
@@ -856,37 +869,143 @@ class TestScoreDatabaseIntegration(ScoreDbTestCase):
         self.assertEqual(count, 14)
 
     def test_score_persists_to_disk(self):
-        score_id = self.db.create_score(self.EIN_ALPHA)
-        self.db.finalize_score(score_id, 0.88)
-        self.db.close()
-
-        conn = sqlite3.connect("IRS990.db")
-        row = conn.execute(
-            "SELECT total_score FROM organization_score WHERE score_id = ?", (score_id,)
-        ).fetchone()
-        conn.close()
-        self.db = None  # prevent tearDown double-close
-
-        self.assertIsNotNone(row)
-        self.assertAlmostEqual(row[0], 0.88)
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as f:
+            tmp_path = f.name
+        try:
+            disk_db = ScoreDatabase(path=tmp_path)
+            disk_db.upsert_organization(self.EIN_ALPHA, "Alpha Org")
+            filing_id = disk_db.create_filing(self.EIN_ALPHA, 2023, "990")
+            score_id = disk_db.create_score(filing_id)
+            disk_db.finalize_score(score_id, 0.88)
+            disk_db.close()
+            conn = sqlite3.connect(tmp_path)
+            row = conn.execute(
+                "SELECT total_score FROM organization_score WHERE score_id = ?", (score_id,)
+            ).fetchone()
+            conn.close()
+            self.assertIsNotNone(row)
+            self.assertAlmostEqual(row[0], 0.88)
+        finally:
+            os.unlink(tmp_path)
 
     def test_factor_values_persist_to_disk(self):
-        score_id = self.db.create_score(self.EIN_ALPHA)
-        fid = self.factors[0]["factor_id"]
-        self.db.store_factor_values(score_id, {fid: (0.42, 0.021)})
-        self.db.close()
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as f:
+            tmp_path = f.name
+        try:
+            disk_db = ScoreDatabase(path=tmp_path)
+            disk_db.upsert_organization(self.EIN_ALPHA, "Alpha Org")
+            filing_id = disk_db.create_filing(self.EIN_ALPHA, 2023, "990")
+            score_id = disk_db.create_score(filing_id)
+            fid = disk_db.get_factors(1)[0]["factor_id"]
+            disk_db.store_factor_values(score_id, {fid: (0.42, 0.021)})
+            disk_db.close()
+            conn = sqlite3.connect(tmp_path)
+            row = conn.execute(
+                "SELECT raw_value FROM organization_score_factor "
+                "WHERE score_id = ? AND factor_id = ?",
+                (score_id, fid),
+            ).fetchone()
+            conn.close()
+            self.assertIsNotNone(row)
+            self.assertAlmostEqual(row[0], 0.42)
+        finally:
+            os.unlink(tmp_path)
 
-        conn = sqlite3.connect("IRS990.db")
-        row = conn.execute(
-            "SELECT raw_value FROM organization_score_factor "
-            "WHERE score_id = ? AND factor_id = ?",
-            (score_id, fid),
-        ).fetchone()
-        conn.close()
-        self.db = None  # prevent tearDown double-close
 
-        self.assertIsNotNone(row)
-        self.assertAlmostEqual(row[0], 0.42)
+# ---------------------------------------------------------------------------
+# list_scores / get_score_by_filing / get_score_by_ein_year
+# ---------------------------------------------------------------------------
+
+class TestScoreReadMethods(ScoreDbTestCase):
+
+    def _make_score(self, filing_id: str) -> int:
+        return self.db.create_score(filing_id, 1)
+
+    # --- list_scores ---
+
+    def test_list_scores_empty_when_none_created(self):
+        result = self.db.list_scores(self.EIN_ALPHA)
+        self.assertEqual(result, [])
+
+    def test_list_scores_returns_created_scores(self):
+        self._make_score(self.filing_alpha)
+        result = self.db.list_scores(self.EIN_ALPHA)
+        self.assertEqual(len(result), 1)
+
+    def test_list_scores_result_has_expected_keys(self):
+        self._make_score(self.filing_alpha)
+        row = self.db.list_scores(self.EIN_ALPHA)[0]
+        for key in ("score_id", "model_version", "filing_id", "year", "total_score", "scored_at"):
+            self.assertIn(key, row)
+
+    def test_list_scores_returns_only_matching_ein(self):
+        self._make_score(self.filing_alpha)
+        result = self.db.list_scores(self.EIN_BETA)
+        self.assertEqual(result, [])
+
+    def test_list_scores_multiple(self):
+        self._make_score(self.filing_alpha)
+        self._make_score(self.filing_alpha2)
+        result = self.db.list_scores(self.EIN_ALPHA)
+        self.assertEqual(len(result), 2)
+
+    def test_list_scores_filing_id_matches(self):
+        self._make_score(self.filing_alpha)
+        row = self.db.list_scores(self.EIN_ALPHA)[0]
+        self.assertEqual(row["filing_id"], self.filing_alpha)
+
+    # --- get_score_by_filing ---
+
+    def test_get_score_by_filing_not_found_returns_none(self):
+        result = self.db.get_score_by_filing("00000000-0000-0000-0000-000000000000")
+        self.assertIsNone(result)
+
+    def test_get_score_by_filing_found(self):
+        sid = self._make_score(self.filing_alpha)
+        result = self.db.get_score_by_filing(self.filing_alpha)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["score_id"], sid)
+
+    def test_get_score_by_filing_returns_score_dict(self):
+        self._make_score(self.filing_alpha)
+        result = self.db.get_score_by_filing(self.filing_alpha)
+        for key in ("score_id", "ein", "model_version", "filing_id", "year", "factors"):
+            self.assertIn(key, result)
+
+    def test_get_score_by_filing_wrong_filing_returns_none(self):
+        self._make_score(self.filing_alpha)
+        result = self.db.get_score_by_filing(self.filing_beta)
+        self.assertIsNone(result)
+
+    # --- get_score_by_ein_year ---
+
+    def test_get_score_by_ein_year_not_found_returns_none(self):
+        result = self.db.get_score_by_ein_year("999999999", 2023)
+        self.assertIsNone(result)
+
+    def test_get_score_by_ein_year_found(self):
+        sid = self._make_score(self.filing_alpha)
+        result = self.db.get_score_by_ein_year(self.EIN_ALPHA, 2023)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["score_id"], sid)
+
+    def test_get_score_by_ein_year_wrong_year_returns_none(self):
+        self._make_score(self.filing_alpha)
+        result = self.db.get_score_by_ein_year(self.EIN_ALPHA, 1999)
+        self.assertIsNone(result)
+
+    def test_get_score_by_ein_year_wrong_ein_returns_none(self):
+        self._make_score(self.filing_alpha)
+        result = self.db.get_score_by_ein_year(self.EIN_BETA, 2023)
+        self.assertIsNone(result)
+
+    def test_get_score_by_ein_year_returns_score_dict(self):
+        self._make_score(self.filing_alpha)
+        result = self.db.get_score_by_ein_year(self.EIN_ALPHA, 2023)
+        for key in ("score_id", "ein", "model_version", "filing_id", "year", "factors"):
+            self.assertIn(key, result)
 
 
 if __name__ == "__main__":

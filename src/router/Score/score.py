@@ -7,19 +7,6 @@ from database.Score import ScoreDatabase
 from scoring import ScoringEngine
 
 
-def _qp(query_params: dict, key: str) -> str | None:
-    return query_params.get(key, [None])[0]
-
-
-def _require_fields(body: Any, *keys: str) -> tuple[dict | None, dict | None]:
-    if not isinstance(body, dict):
-        return None, {"error": "JSON body required"}
-    missing = [k for k in keys if k not in body]
-    if missing:
-        return None, {"error": f"missing required fields: {missing}"}
-    return body, None
-
-
 class ScoreRouter(Router):
   def __init__(self, prefix: str = '/scores', db: ScoreDatabase = None, secure_by_default: bool = False) -> None:
     super().__init__(prefix, secure_by_default=secure_by_default)
@@ -33,7 +20,7 @@ class ScoreRouter(Router):
 
     @self.get('/factors')
     def get_factors(query_params: dict, body: Any, headers: HTTPMessage):
-      raw = _qp(query_params, 'version')
+      raw = self._qp(query_params, 'version')
       version = int(raw) if raw and raw.isdigit() else 1
       return {"model_version": version, "factors": self.db.get_factors(version)}
 
@@ -41,14 +28,14 @@ class ScoreRouter(Router):
 
     @self.get('')
     def list_scores(query_params: dict, body: Any, headers: HTTPMessage):
-      ein = _qp(query_params, 'ein')
+      ein = self._qp(query_params, 'ein')
       if not ein:
         return {"error": "missing query param: ein"}
       return {"ein": ein, "scores": self.db.list_scores(ein)}
 
     @self.get('/filing')
     def get_score_by_filing(query_params: dict, body: Any, headers: HTTPMessage):
-      filing_id = _qp(query_params, 'filing_id')
+      filing_id = self._qp(query_params, 'filing_id')
       if not filing_id:
         return {"error": "missing query param: filing_id"}
       score = self.db.get_score_by_filing(filing_id)
@@ -58,7 +45,7 @@ class ScoreRouter(Router):
 
     @self.get('/detail')
     def get_score(query_params: dict, body: Any, headers: HTTPMessage):
-      raw = _qp(query_params, 'score_id')
+      raw = self._qp(query_params, 'score_id')
       if not raw:
         return {"error": "missing query param: score_id"}
       try:
@@ -72,7 +59,7 @@ class ScoreRouter(Router):
 
     @self.post('')
     def create_score(query_params: dict, body: Any, headers: HTTPMessage):
-      data, err = _require_fields(body, 'filing_id')
+      data, err = self._require_fields(body, 'filing_id')
       if err:
         return err
       model_version = int(data.get('model_version', 1))
@@ -89,7 +76,7 @@ class ScoreRouter(Router):
       """
       Body: {score_id: int, values: [{factor_id, raw_value, weighted_value}, ...]}
       """
-      data, err = _require_fields(body, 'score_id', 'values')
+      data, err = self._require_fields(body, 'score_id', 'values')
       if err:
         return err
       if not isinstance(data['values'], list):
@@ -111,7 +98,7 @@ class ScoreRouter(Router):
 
     @self.post('/finalize')
     def finalize_score(query_params: dict, body: Any, headers: HTTPMessage):
-      data, err = _require_fields(body, 'score_id', 'total_score')
+      data, err = self._require_fields(body, 'score_id', 'total_score')
       if err:
         return err
       try:
@@ -124,7 +111,7 @@ class ScoreRouter(Router):
 
     @self.post('/calculate')
     def calculate_score(query_params: dict, body: Any, headers: HTTPMessage):
-      data, err = _require_fields(body, 'ein', 'year')
+      data, err = self._require_fields(body, 'ein', 'year')
       if err:
         return err
       try:
@@ -139,8 +126,8 @@ class ScoreRouter(Router):
 
     @self.get('/lookup')
     def lookup_score(query_params: dict, body: Any, headers: HTTPMessage):
-      ein  = _qp(query_params, 'ein')
-      year = _qp(query_params, 'year')
+      ein  = self._qp(query_params, 'ein')
+      year = self._qp(query_params, 'year')
       if not ein or not year:
         return {"error": "missing query params: ein, year"}
       try:

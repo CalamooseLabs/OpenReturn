@@ -1,7 +1,6 @@
 import sys
 import os
 import hashlib
-import tempfile
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
@@ -10,16 +9,17 @@ from database.IRS990 import IRS990Database
 
 
 class TestApiKeyBase(unittest.TestCase):
-    def setUp(self):
-        self._tmpdir = tempfile.TemporaryDirectory()
-        self._orig_cwd = os.getcwd()
-        os.chdir(self._tmpdir.name)
-        self.db = IRS990Database()
 
-    def tearDown(self):
-        self.db.close()
-        os.chdir(self._orig_cwd)
-        self._tmpdir.cleanup()
+    @classmethod
+    def setUpClass(cls):
+        cls.db = IRS990Database(path=":memory:")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.db.close()
+
+    def setUp(self):
+        self.db.cursor.executescript("DELETE FROM api_key;")
 
 
 class TestCreateApiKey(TestApiKeyBase):

@@ -93,7 +93,7 @@ in {
     users.groups.${cfg.group} = lib.mkIf (!cfg.runAsRoot) {};
 
     systemd.services.openreturn = {
-      description = "openreturn IRS 990 API server";
+      description = "OpenReturn API server";
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" ];
 

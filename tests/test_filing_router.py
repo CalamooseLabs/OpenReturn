@@ -2,15 +2,12 @@ import os
 import sys
 import sqlite3
 import unittest
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from router.IRS990 import IRS990Router
+from router.Filing import FilingRouter
 
-
-ORG_ALPHA = {"ein": "111111111", "name": "Alpha Org", "created_at": "2024-01-01", "updated_at": "2024-01-01"}
-ORG_BETA  = {"ein": "222222222", "name": "Beta Org",  "created_at": "2024-01-02", "updated_at": "2024-01-02"}
 
 FILING_ONE = {
     "filing_id": "uuid-abc-123", "year": 2023, "ein": "111111111",
@@ -34,14 +31,12 @@ REPORTED_ROW = {"xml_path": "ReturnData/IRS990/ActivityOrMissionDesc", "raw_valu
 
 def _make_router():
     db = MagicMock()
-    db.list_organizations.return_value = []
-    db.get_organization.return_value = None
     db.list_filings.return_value = []
     db.get_filing.return_value = None
     db.create_filing.return_value = "uuid-abc-123"
     db.get_reported_data.return_value = []
     db.get_filing_data_by_ein_year.return_value = None
-    return IRS990Router(db=db), db
+    return FilingRouter(db=db), db
 
 
 def _qp(**kwargs):
@@ -63,224 +58,49 @@ def _call(router, method, path, query_params=None, body=None):
 # Route registration
 # ---------------------------------------------------------------------------
 
-class TestIRS990RouterRegistration(unittest.TestCase):
+class TestFilingRouterRegistration(unittest.TestCase):
 
     def setUp(self):
         self.router, _ = _make_router()
 
-    def test_get_organizations_registered(self):
-        self.assertIn("/irs990/organizations", self.router.routes["GET"])
-
-    def test_get_organizations_detail_registered(self):
-        self.assertIn("/irs990/organizations/detail", self.router.routes["GET"])
-
-    def test_post_organizations_registered(self):
-        self.assertIn("/irs990/organizations", self.router.routes["POST"])
-
     def test_get_filings_registered(self):
-        self.assertIn("/irs990/filings", self.router.routes["GET"])
+        self.assertIn("/filings", self.router.routes["GET"])
 
     def test_get_filings_detail_registered(self):
-        self.assertIn("/irs990/filings/detail", self.router.routes["GET"])
-
-    def test_post_filings_registered(self):
-        self.assertIn("/irs990/filings", self.router.routes["POST"])
+        self.assertIn("/filings/detail", self.router.routes["GET"])
 
     def test_get_filings_data_registered(self):
-        self.assertIn("/irs990/filings/data", self.router.routes["GET"])
+        self.assertIn("/filings/data", self.router.routes["GET"])
 
     def test_get_filings_lookup_registered(self):
-        self.assertIn("/irs990/filings/lookup", self.router.routes["GET"])
+        self.assertIn("/filings/lookup", self.router.routes["GET"])
 
-    def test_get_organizations_full_registered(self):
-        self.assertIn("/irs990/organizations/full", self.router.routes["GET"])
+    def test_post_filings_registered(self):
+        self.assertIn("/filings", self.router.routes["POST"])
 
     def test_post_filings_data_registered(self):
-        self.assertIn("/irs990/filings/data", self.router.routes["POST"])
+        self.assertIn("/filings/data", self.router.routes["POST"])
 
     def test_custom_prefix_applied(self):
-        router, _ = _make_router()
-        router2 = IRS990Router(prefix='/api/irs990', db=MagicMock())
-        self.assertIn("/api/irs990/organizations", router2.routes["GET"])
+        router2 = FilingRouter(prefix='/api/filings', db=MagicMock())
+        self.assertIn("/api/filings", router2.routes["GET"])
 
     def test_no_unexpected_get_routes(self):
         expected = {
-            "/irs990/organizations",
-            "/irs990/organizations/detail",
-            "/irs990/organizations/full",
-            "/irs990/filings",
-            "/irs990/filings/detail",
-            "/irs990/filings/data",
-            "/irs990/filings/lookup",
+            "/filings",
+            "/filings/detail",
+            "/filings/data",
+            "/filings/lookup",
         }
         self.assertEqual(set(self.router.routes["GET"].keys()), expected)
 
     def test_no_unexpected_post_routes(self):
-        expected = {
-            "/irs990/organizations",
-            "/irs990/filings",
-            "/irs990/filings/data",
-        }
+        expected = {"/filings", "/filings/data"}
         self.assertEqual(set(self.router.routes["POST"].keys()), expected)
 
 
 # ---------------------------------------------------------------------------
-# GET /irs990/organizations
-# ---------------------------------------------------------------------------
-
-class TestListOrganizations(unittest.TestCase):
-
-    def setUp(self):
-        self.router, self.db = _make_router()
-
-    def _call(self, **qp):
-        return _call(self.router, "GET", "/irs990/organizations", _qp(**qp) if qp else {})
-
-    def test_returns_dict(self):
-        result = self._call()
-        self.assertIsInstance(result, dict)
-
-    def test_returns_organizations_key(self):
-        result = self._call()
-        self.assertIn("organizations", result)
-
-    def test_organizations_is_list(self):
-        result = self._call()
-        self.assertIsInstance(result["organizations"], list)
-
-    def test_calls_list_organizations(self):
-        self._call()
-        self.db.list_organizations.assert_called_once_with()
-
-    def test_empty_list_when_no_orgs(self):
-        result = self._call()
-        self.assertEqual(result["organizations"], [])
-
-    def test_returns_orgs_from_db(self):
-        self.db.list_organizations.return_value = [ORG_ALPHA, ORG_BETA]
-        result = self._call()
-        self.assertEqual(result["organizations"], [ORG_ALPHA, ORG_BETA])
-
-    def test_count_matches_db(self):
-        self.db.list_organizations.return_value = [ORG_ALPHA, ORG_BETA]
-        result = self._call()
-        self.assertEqual(len(result["organizations"]), 2)
-
-
-# ---------------------------------------------------------------------------
-# GET /irs990/organizations/detail
-# ---------------------------------------------------------------------------
-
-class TestGetOrganization(unittest.TestCase):
-
-    def setUp(self):
-        self.router, self.db = _make_router()
-
-    def _call(self, **qp):
-        return _call(self.router, "GET", "/irs990/organizations/detail", _qp(**qp) if qp else {})
-
-    def test_missing_ein_returns_error(self):
-        result = self._call()
-        self.assertIn("error", result)
-
-    def test_missing_ein_error_mentions_param(self):
-        result = self._call()
-        self.assertIn("ein", result["error"])
-
-    def test_not_found_returns_error(self):
-        self.db.get_organization.return_value = None
-        result = self._call(ein="999999999")
-        self.assertIn("error", result)
-
-    def test_not_found_error_contains_ein(self):
-        result = self._call(ein="999999999")
-        self.assertIn("999999999", result["error"])
-
-    def test_found_returns_org_dict(self):
-        self.db.get_organization.return_value = ORG_ALPHA
-        result = self._call(ein="111111111")
-        self.assertEqual(result, ORG_ALPHA)
-
-    def test_calls_get_organization_with_ein(self):
-        self._call(ein="111111111")
-        self.db.get_organization.assert_called_once_with("111111111")
-
-    def test_found_has_ein_field(self):
-        self.db.get_organization.return_value = ORG_ALPHA
-        result = self._call(ein="111111111")
-        self.assertEqual(result["ein"], "111111111")
-
-    def test_found_has_name_field(self):
-        self.db.get_organization.return_value = ORG_ALPHA
-        result = self._call(ein="111111111")
-        self.assertEqual(result["name"], "Alpha Org")
-
-
-# ---------------------------------------------------------------------------
-# POST /irs990/organizations
-# ---------------------------------------------------------------------------
-
-class TestUpsertOrganization(unittest.TestCase):
-
-    def setUp(self):
-        self.router, self.db = _make_router()
-        self.db.get_organization.return_value = ORG_ALPHA
-
-    def _call(self, body=None):
-        return _call(self.router, "POST", "/irs990/organizations", body=body)
-
-    def test_valid_body_calls_upsert(self):
-        self._call({"ein": "111111111", "name": "Alpha Org"})
-        self.db.upsert_organization.assert_called_once_with("111111111", "Alpha Org")
-
-    def test_valid_body_returns_org(self):
-        result = self._call({"ein": "111111111", "name": "Alpha Org"})
-        self.assertEqual(result, ORG_ALPHA)
-
-    def test_calls_get_organization_after_upsert(self):
-        self._call({"ein": "111111111", "name": "Alpha Org"})
-        self.db.get_organization.assert_called_once_with("111111111")
-
-    def test_missing_ein_returns_error(self):
-        result = self._call({"name": "Alpha Org"})
-        self.assertIn("error", result)
-
-    def test_missing_ein_error_names_field(self):
-        result = self._call({"name": "Alpha Org"})
-        self.assertIn("ein", result["error"])
-
-    def test_missing_name_returns_error(self):
-        result = self._call({"ein": "111111111"})
-        self.assertIn("error", result)
-
-    def test_missing_name_error_names_field(self):
-        result = self._call({"ein": "111111111"})
-        self.assertIn("name", result["error"])
-
-    def test_string_body_returns_error(self):
-        result = self._call("not a dict")
-        self.assertIn("error", result)
-
-    def test_none_body_returns_error(self):
-        result = self._call(None)
-        self.assertIn("error", result)
-
-    def test_list_body_returns_error(self):
-        result = self._call([{"ein": "111111111"}])
-        self.assertIn("error", result)
-
-    def test_integrity_error_returns_error(self):
-        self.db.upsert_organization.side_effect = sqlite3.IntegrityError("constraint")
-        result = self._call({"ein": "111111111", "name": "Alpha Org"})
-        self.assertIn("error", result)
-
-    def test_integrity_error_does_not_raise(self):
-        self.db.upsert_organization.side_effect = sqlite3.IntegrityError("constraint")
-        self._call({"ein": "111111111", "name": "Alpha Org"})  # must not raise
-
-
-# ---------------------------------------------------------------------------
-# GET /irs990/filings
+# GET /filings
 # ---------------------------------------------------------------------------
 
 class TestListFilings(unittest.TestCase):
@@ -289,7 +109,7 @@ class TestListFilings(unittest.TestCase):
         self.router, self.db = _make_router()
 
     def _call(self, **qp):
-        return _call(self.router, "GET", "/irs990/filings", _qp(**qp) if qp else {})
+        return _call(self.router, "GET", "/filings", _qp(**qp) if qp else {})
 
     def test_missing_ein_returns_error(self):
         result = self._call()
@@ -327,7 +147,7 @@ class TestListFilings(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# GET /irs990/filings/detail
+# GET /filings/detail
 # ---------------------------------------------------------------------------
 
 class TestGetFiling(unittest.TestCase):
@@ -336,7 +156,7 @@ class TestGetFiling(unittest.TestCase):
         self.router, self.db = _make_router()
 
     def _call(self, **qp):
-        return _call(self.router, "GET", "/irs990/filings/detail", _qp(**qp) if qp else {})
+        return _call(self.router, "GET", "/filings/detail", _qp(**qp) if qp else {})
 
     def test_missing_filing_id_returns_error(self):
         result = self._call()
@@ -381,7 +201,7 @@ class TestGetFiling(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# POST /irs990/filings
+# POST /filings
 # ---------------------------------------------------------------------------
 
 class TestCreateFiling(unittest.TestCase):
@@ -390,7 +210,7 @@ class TestCreateFiling(unittest.TestCase):
         self.router, self.db = _make_router()
 
     def _call(self, body=None):
-        return _call(self.router, "POST", "/irs990/filings", body=body)
+        return _call(self.router, "POST", "/filings", body=body)
 
     def test_valid_body_returns_filing_id(self):
         result = self._call({"ein": "111111111", "year": 2023, "form_code": "990"})
@@ -448,7 +268,7 @@ class TestCreateFiling(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# GET /irs990/filings/data
+# GET /filings/data
 # ---------------------------------------------------------------------------
 
 class TestGetReportedData(unittest.TestCase):
@@ -458,7 +278,7 @@ class TestGetReportedData(unittest.TestCase):
         self.db.get_filing.return_value = FILING_ONE_FULL
 
     def _call(self, **qp):
-        return _call(self.router, "GET", "/irs990/filings/data", _qp(**qp) if qp else {})
+        return _call(self.router, "GET", "/filings/data", _qp(**qp) if qp else {})
 
     def test_missing_filing_id_returns_error(self):
         result = self._call()
@@ -514,7 +334,7 @@ class TestGetReportedData(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# POST /irs990/filings/data
+# POST /filings/data
 # ---------------------------------------------------------------------------
 
 class TestStoreReportedData(unittest.TestCase):
@@ -523,7 +343,7 @@ class TestStoreReportedData(unittest.TestCase):
         self.router, self.db = _make_router()
 
     def _call(self, body=None):
-        return _call(self.router, "POST", "/irs990/filings/data", body=body)
+        return _call(self.router, "POST", "/filings/data", body=body)
 
     def test_valid_body_returns_filing_id(self):
         result = self._call({"filing_id": "uuid-abc-123", "values": {"1": "foo", "2": "bar"}})
@@ -580,128 +400,7 @@ class TestStoreReportedData(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# GET /irs990/organizations/full
-# ---------------------------------------------------------------------------
-
-class TestGetOrganizationFull(unittest.TestCase):
-
-    def setUp(self):
-        self.router, self.db = _make_router()
-
-    def _call(self, **qp):
-        return _call(self.router, "GET", "/irs990/organizations/full", _qp(**qp) if qp else {})
-
-    def test_missing_ein_returns_error(self):
-        result = self._call()
-        self.assertIn("error", result)
-
-    def test_missing_ein_error_mentions_param(self):
-        result = self._call()
-        self.assertIn("ein", result["error"])
-
-    def test_org_not_found_returns_error(self):
-        result = self._call(ein="999999999")
-        self.assertIn("error", result)
-
-    def test_org_not_found_error_contains_ein(self):
-        result = self._call(ein="999999999")
-        self.assertIn("999999999", result["error"])
-
-    def test_calls_get_organization_with_ein(self):
-        self._call(ein="111111111")
-        self.db.get_organization.assert_called_once_with("111111111")
-
-    def test_found_calls_list_filings_with_ein(self):
-        self.db.get_organization.return_value = ORG_ALPHA
-        self._call(ein="111111111")
-        self.db.list_filings.assert_called_once_with("111111111")
-
-    def test_not_found_does_not_call_list_filings(self):
-        self._call(ein="999999999")
-        self.db.list_filings.assert_not_called()
-
-    def test_found_includes_org_ein(self):
-        self.db.get_organization.return_value = ORG_ALPHA
-        result = self._call(ein="111111111")
-        self.assertEqual(result["ein"], "111111111")
-
-    def test_found_includes_org_name(self):
-        self.db.get_organization.return_value = ORG_ALPHA
-        result = self._call(ein="111111111")
-        self.assertEqual(result["name"], "Alpha Org")
-
-    def test_found_includes_filings_key(self):
-        self.db.get_organization.return_value = ORG_ALPHA
-        result = self._call(ein="111111111")
-        self.assertIn("filings", result)
-
-    def test_filings_is_list(self):
-        self.db.get_organization.return_value = ORG_ALPHA
-        result = self._call(ein="111111111")
-        self.assertIsInstance(result["filings"], list)
-
-    def test_empty_filings_when_none(self):
-        self.db.get_organization.return_value = ORG_ALPHA
-        result = self._call(ein="111111111")
-        self.assertEqual(result["filings"], [])
-
-    def test_filing_count_matches_db(self):
-        self.db.get_organization.return_value = ORG_ALPHA
-        self.db.list_filings.return_value = [dict(FILING_ONE), dict(FILING_ONE)]
-        result = self._call(ein="111111111")
-        self.assertEqual(len(result["filings"]), 2)
-
-    def test_each_filing_has_links(self):
-        self.db.get_organization.return_value = ORG_ALPHA
-        self.db.list_filings.return_value = [dict(FILING_ONE)]
-        result = self._call(ein="111111111")
-        self.assertIn("links", result["filings"][0])
-
-    def test_links_has_detail_key(self):
-        self.db.get_organization.return_value = ORG_ALPHA
-        self.db.list_filings.return_value = [dict(FILING_ONE)]
-        result = self._call(ein="111111111")
-        self.assertIn("detail", result["filings"][0]["links"])
-
-    def test_links_has_data_key(self):
-        self.db.get_organization.return_value = ORG_ALPHA
-        self.db.list_filings.return_value = [dict(FILING_ONE)]
-        result = self._call(ein="111111111")
-        self.assertIn("data", result["filings"][0]["links"])
-
-    def test_links_has_lookup_key(self):
-        self.db.get_organization.return_value = ORG_ALPHA
-        self.db.list_filings.return_value = [dict(FILING_ONE)]
-        result = self._call(ein="111111111")
-        self.assertIn("lookup", result["filings"][0]["links"])
-
-    def test_detail_link_contains_filing_id(self):
-        self.db.get_organization.return_value = ORG_ALPHA
-        self.db.list_filings.return_value = [dict(FILING_ONE)]
-        result = self._call(ein="111111111")
-        self.assertIn("uuid-abc-123", result["filings"][0]["links"]["detail"])
-
-    def test_lookup_link_contains_ein(self):
-        self.db.get_organization.return_value = ORG_ALPHA
-        self.db.list_filings.return_value = [dict(FILING_ONE)]
-        result = self._call(ein="111111111")
-        self.assertIn("111111111", result["filings"][0]["links"]["lookup"])
-
-    def test_lookup_link_contains_year(self):
-        self.db.get_organization.return_value = ORG_ALPHA
-        self.db.list_filings.return_value = [dict(FILING_ONE)]
-        result = self._call(ein="111111111")
-        self.assertIn("2023", result["filings"][0]["links"]["lookup"])
-
-    def test_data_link_contains_filing_id(self):
-        self.db.get_organization.return_value = ORG_ALPHA
-        self.db.list_filings.return_value = [dict(FILING_ONE)]
-        result = self._call(ein="111111111")
-        self.assertIn("uuid-abc-123", result["filings"][0]["links"]["data"])
-
-
-# ---------------------------------------------------------------------------
-# GET /irs990/filings/lookup
+# GET /filings/lookup
 # ---------------------------------------------------------------------------
 
 class TestLookupFilingByEinYear(unittest.TestCase):
@@ -710,7 +409,7 @@ class TestLookupFilingByEinYear(unittest.TestCase):
         self.router, self.db = _make_router()
 
     def _call(self, **qp):
-        return _call(self.router, "GET", "/irs990/filings/lookup", _qp(**qp) if qp else {})
+        return _call(self.router, "GET", "/filings/lookup", _qp(**qp) if qp else {})
 
     def test_missing_ein_returns_error(self):
         result = self._call(year="2023")
@@ -791,7 +490,7 @@ class TestLookupFilingByEinYear(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# GET /irs990/filings/data — format parameter
+# GET /filings/data — format parameter
 # ---------------------------------------------------------------------------
 
 class TestGetReportedDataFormat(unittest.TestCase):
@@ -801,7 +500,7 @@ class TestGetReportedDataFormat(unittest.TestCase):
         self.db.get_filing.return_value = FILING_ONE_FULL
 
     def _call(self, **qp):
-        return _call(self.router, "GET", "/irs990/filings/data", _qp(**qp) if qp else {})
+        return _call(self.router, "GET", "/filings/data", _qp(**qp) if qp else {})
 
     def test_default_format_returns_dict(self):
         result = self._call(filing_id="uuid-abc-123")

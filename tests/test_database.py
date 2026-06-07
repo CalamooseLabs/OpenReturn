@@ -1,6 +1,5 @@
 import sys
 import os
-import tempfile
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
@@ -9,16 +8,19 @@ from database.IRS990 import IRS990Database
 
 
 class TestIRS990Database(unittest.TestCase):
-    def setUp(self):
-        self._tmpdir = tempfile.TemporaryDirectory()
-        self._orig_cwd = os.getcwd()
-        os.chdir(self._tmpdir.name)
-        self.db = IRS990Database()
 
-    def tearDown(self):
-        self.db.close()
-        os.chdir(self._orig_cwd)
-        self._tmpdir.cleanup()
+    @classmethod
+    def setUpClass(cls):
+        cls.db = IRS990Database(path=":memory:")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.db.close()
+
+    def setUp(self):
+        self.db.cursor.executescript(
+            "DELETE FROM reported_data; DELETE FROM filing; DELETE FROM organization;"
+        )
 
     # --- get_xpath_index ---
 
@@ -150,6 +152,149 @@ class TestIRS990Database(unittest.TestCase):
         self.db.upsert_organization("123456789", "Test Org")
         filing_id = self.db.create_filing("123456789", 2023, "990")
         self.db.store_reported_data(filing_id, {})  # should not raise
+
+
+# --- list_organizations ---
+
+class TestIRS990DatabaseListMethods(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.db = IRS990Database(path=":memory:")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.db.close()
+
+    def setUp(self):
+        self.db.cursor.executescript(
+            "DELETE FROM reported_data; DELETE FROM filing; DELETE FROM organization;"
+        )
+
+    def test_list_organizations_empty(self):
+        result = self.db.list_organizations()
+        self.assertEqual(result, [])
+
+    def test_list_organizations_returns_inserted(self):
+        self.db.upsert_organization("111111111", "Alpha Org")
+        result = self.db.list_organizations()
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["ein"], "111111111")
+
+    def test_list_organizations_multiple(self):
+        self.db.upsert_organization("111111111", "Alpha Org")
+        self.db.upsert_organization("222222222", "Beta Org")
+        result = self.db.list_organizations()
+        self.assertEqual(len(result), 2)
+
+    def test_list_organizations_has_expected_keys(self):
+        self.db.upsert_organization("111111111", "Alpha Org")
+        result = self.db.list_organizations()
+        self.assertIn("ein", result[0])
+        self.assertIn("name", result[0])
+        self.assertIn("created_at", result[0])
+        self.assertIn("updated_at", result[0])
+
+    # --- get_organization ---
+
+    def test_get_organization_found(self):
+        self.db.upsert_organization("111111111", "Alpha Org")
+        result = self.db.get_organization("111111111")
+        self.assertIsNotNone(result)
+        self.assertEqual(result["ein"], "111111111")
+        self.assertEqual(result["name"], "Alpha Org")
+
+    def test_get_organization_not_found_returns_none(self):
+        result = self.db.get_organization("999999999")
+        self.assertIsNone(result)
+
+    # --- list_filings ---
+
+    def test_list_filings_empty(self):
+        self.db.upsert_organization("111111111", "Alpha Org")
+        result = self.db.list_filings("111111111")
+        self.assertEqual(result, [])
+
+    def test_list_filings_returns_inserted(self):
+        self.db.upsert_organization("111111111", "Alpha Org")
+        self.db.create_filing("111111111", 2023, "990")
+        result = self.db.list_filings("111111111")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["year"], 2023)
+        self.assertEqual(result[0]["form_code"], "990")
+
+    def test_list_filings_has_expected_keys(self):
+        self.db.upsert_organization("111111111", "Alpha Org")
+        self.db.create_filing("111111111", 2023, "990")
+        result = self.db.list_filings("111111111")
+        for key in ("filing_id", "year", "form_code", "created_at"):
+            self.assertIn(key, result[0])
+
+    def test_list_filings_only_returns_own_org(self):
+        self.db.upsert_organization("111111111", "Alpha Org")
+        self.db.upsert_organization("222222222", "Beta Org")
+        self.db.create_filing("111111111", 2023, "990")
+        self.db.create_filing("222222222", 2023, "990")
+        result = self.db.list_filings("111111111")
+        self.assertEqual(len(result), 1)
+
+    # --- get_filing ---
+
+    def test_get_filing_found(self):
+        self.db.upsert_organization("111111111", "Alpha Org")
+        fid = self.db.create_filing("111111111", 2023, "990")
+        result = self.db.get_filing(fid)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["filing_id"], fid)
+        self.assertEqual(result["ein"], "111111111")
+
+    def test_get_filing_not_found_returns_none(self):
+        result = self.db.get_filing("00000000-0000-0000-0000-000000000000")
+        self.assertIsNone(result)
+
+    def test_get_filing_has_expected_keys(self):
+        self.db.upsert_organization("111111111", "Alpha Org")
+        fid = self.db.create_filing("111111111", 2023, "990")
+        result = self.db.get_filing(fid)
+        for key in ("filing_id", "year", "ein", "form_code", "created_at"):
+            self.assertIn(key, result)
+
+    # --- get_filing_data_by_ein_year ---
+
+    def test_get_filing_data_by_ein_year_not_found_returns_none(self):
+        result = self.db.get_filing_data_by_ein_year("999999999", 2023)
+        self.assertIsNone(result)
+
+    def test_get_filing_data_by_ein_year_found(self):
+        self.db.upsert_organization("111111111", "Alpha Org")
+        self.db.create_filing("111111111", 2023, "990")
+        result = self.db.get_filing_data_by_ein_year("111111111", 2023)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["ein"], "111111111")
+        self.assertEqual(result["year"], 2023)
+
+    def test_get_filing_data_by_ein_year_includes_fields(self):
+        self.db.upsert_organization("111111111", "Alpha Org")
+        self.db.create_filing("111111111", 2023, "990")
+        result = self.db.get_filing_data_by_ein_year("111111111", 2023)
+        self.assertIn("fields", result)
+        self.assertIsInstance(result["fields"], list)
+
+    def test_get_filing_data_by_ein_year_wrong_year_returns_none(self):
+        self.db.upsert_organization("111111111", "Alpha Org")
+        self.db.create_filing("111111111", 2023, "990")
+        result = self.db.get_filing_data_by_ein_year("111111111", 2022)
+        self.assertIsNone(result)
+
+    # --- get_supported_forms ---
+
+    def test_get_supported_forms_returns_set(self):
+        result = self.db.get_supported_forms()
+        self.assertIsInstance(result, set)
+
+    def test_get_supported_forms_contains_990(self):
+        result = self.db.get_supported_forms()
+        self.assertIn("990", result)
 
 
 if __name__ == "__main__":

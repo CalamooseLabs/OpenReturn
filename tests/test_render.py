@@ -5,7 +5,7 @@ import xml.etree.ElementTree as ET
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from router.IRS990.irs990 import _render
+from router.Filing.filing import _render
 
 
 _FIELD = {

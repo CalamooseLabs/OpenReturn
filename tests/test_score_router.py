@@ -82,11 +82,11 @@ class TestScoreRouterRegistration(unittest.TestCase):
         self.assertIn("/api/scores/factors", router2.routes["GET"])
 
     def test_no_unexpected_get_routes(self):
-        expected = {"/scores/factors", "/scores", "/scores/detail"}
+        expected = {"/scores/factors", "/scores", "/scores/filing", "/scores/detail", "/scores/lookup"}
         self.assertEqual(set(self.router.routes["GET"].keys()), expected)
 
     def test_no_unexpected_post_routes(self):
-        expected = {"/scores", "/scores/factors", "/scores/finalize"}
+        expected = {"/scores", "/scores/factors", "/scores/finalize", "/scores/calculate"}
         self.assertEqual(set(self.router.routes["POST"].keys()), expected)
 
 
@@ -283,44 +283,44 @@ class TestCreateScore(unittest.TestCase):
         return _call(self.router, "POST", "/scores", body=body)
 
     def test_valid_body_returns_score_id(self):
-        result = self._call({"ein": "111111111"})
+        result = self._call({"filing_id": "test-filing-uuid"})
         self.assertIn("score_id", result)
 
     def test_score_id_matches_db_return(self):
-        result = self._call({"ein": "111111111"})
+        result = self._call({"filing_id": "test-filing-uuid"})
         self.assertEqual(result["score_id"], 7)
 
-    def test_returns_ein_in_response(self):
-        result = self._call({"ein": "111111111"})
-        self.assertEqual(result["ein"], "111111111")
+    def test_returns_filing_id_in_response(self):
+        result = self._call({"filing_id": "test-filing-uuid"})
+        self.assertEqual(result["filing_id"], "test-filing-uuid")
 
     def test_returns_model_version_in_response(self):
-        result = self._call({"ein": "111111111"})
+        result = self._call({"filing_id": "test-filing-uuid"})
         self.assertIn("model_version", result)
 
     def test_default_model_version_is_1(self):
-        result = self._call({"ein": "111111111"})
+        result = self._call({"filing_id": "test-filing-uuid"})
         self.assertEqual(result["model_version"], 1)
 
     def test_calls_create_score_with_default_version(self):
-        self._call({"ein": "111111111"})
-        self.db.create_score.assert_called_once_with("111111111", 1)
+        self._call({"filing_id": "test-filing-uuid"})
+        self.db.create_score.assert_called_once_with("test-filing-uuid", 1)
 
     def test_explicit_model_version_passed_to_db(self):
-        self._call({"ein": "111111111", "model_version": 2})
-        self.db.create_score.assert_called_once_with("111111111", 2)
+        self._call({"filing_id": "test-filing-uuid", "model_version": 2})
+        self.db.create_score.assert_called_once_with("test-filing-uuid", 2)
 
     def test_explicit_model_version_in_response(self):
-        result = self._call({"ein": "111111111", "model_version": 2})
+        result = self._call({"filing_id": "test-filing-uuid", "model_version": 2})
         self.assertEqual(result["model_version"], 2)
 
-    def test_missing_ein_returns_error(self):
+    def test_missing_filing_id_returns_error(self):
         result = self._call({"model_version": 1})
         self.assertIn("error", result)
 
-    def test_missing_ein_error_names_field(self):
+    def test_missing_filing_id_error_names_field(self):
         result = self._call({"model_version": 1})
-        self.assertIn("ein", result["error"])
+        self.assertIn("filing_id", result["error"])
 
     def test_empty_body_returns_error(self):
         result = self._call({})
@@ -336,21 +336,21 @@ class TestCreateScore(unittest.TestCase):
 
     def test_value_error_unknown_version_returns_error(self):
         self.db.create_score.side_effect = ValueError("Score model version 99 not found")
-        result = self._call({"ein": "111111111", "model_version": 99})
+        result = self._call({"filing_id": "test-filing-uuid", "model_version": 99})
         self.assertIn("error", result)
 
     def test_value_error_does_not_raise(self):
         self.db.create_score.side_effect = ValueError("Score model version 99 not found")
-        self._call({"ein": "111111111", "model_version": 99})  # must not raise
+        self._call({"filing_id": "test-filing-uuid", "model_version": 99})  # must not raise
 
-    def test_integrity_error_unknown_ein_returns_error(self):
+    def test_integrity_error_unknown_filing_returns_error(self):
         self.db.create_score.side_effect = sqlite3.IntegrityError("fk violation")
-        result = self._call({"ein": "999999999"})
+        result = self._call({"filing_id": "nonexistent-uuid"})
         self.assertIn("error", result)
 
     def test_integrity_error_does_not_raise(self):
         self.db.create_score.side_effect = sqlite3.IntegrityError("fk violation")
-        self._call({"ein": "999999999"})  # must not raise
+        self._call({"filing_id": "nonexistent-uuid"})  # must not raise
 
 
 # ---------------------------------------------------------------------------
@@ -551,6 +551,169 @@ class TestFinalizeScore(unittest.TestCase):
     def test_non_numeric_total_score_does_not_call_db(self):
         self._call({"score_id": 7, "total_score": "not-a-number"})
         self.db.finalize_score.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# GET /scores/filing
+# ---------------------------------------------------------------------------
+
+class TestGetScoreByFiling(unittest.TestCase):
+
+    def setUp(self):
+        self.router, self.db = _make_router()
+
+    def _call(self, **qp):
+        return _call(self.router, "GET", "/scores/filing", _qp(**qp) if qp else {})
+
+    def test_missing_filing_id_returns_error(self):
+        result = self._call()
+        self.assertIn("error", result)
+
+    def test_missing_filing_id_error_mentions_param(self):
+        result = self._call()
+        self.assertIn("filing_id", result["error"])
+
+    def test_not_found_returns_error(self):
+        self.db.get_score_by_filing.return_value = None
+        result = self._call(filing_id="nonexistent-uuid")
+        self.assertIn("error", result)
+
+    def test_not_found_error_contains_filing_id(self):
+        self.db.get_score_by_filing.return_value = None
+        result = self._call(filing_id="nonexistent-uuid")
+        self.assertIn("nonexistent-uuid", result["error"])
+
+    def test_found_returns_score(self):
+        self.db.get_score_by_filing.return_value = SCORE_STUB
+        result = self._call(filing_id="test-uuid")
+        self.assertEqual(result, SCORE_STUB)
+
+    def test_calls_get_score_by_filing_with_id(self):
+        self._call(filing_id="test-uuid")
+        self.db.get_score_by_filing.assert_called_once_with("test-uuid")
+
+
+# ---------------------------------------------------------------------------
+# POST /scores/calculate
+# ---------------------------------------------------------------------------
+
+class TestCalculateScore(unittest.TestCase):
+
+    def setUp(self):
+        self.router, self.db = _make_router()
+
+    def _call(self, body=None):
+        return _call(self.router, "POST", "/scores/calculate", body=body)
+
+    def test_missing_ein_returns_error(self):
+        result = self._call({"year": 2023})
+        self.assertIn("error", result)
+
+    def test_missing_year_returns_error(self):
+        result = self._call({"ein": "111111111"})
+        self.assertIn("error", result)
+
+    def test_empty_body_returns_error(self):
+        result = self._call({})
+        self.assertIn("error", result)
+
+    def test_none_body_returns_error(self):
+        result = self._call(None)
+        self.assertIn("error", result)
+
+    def test_valid_body_calls_engine_calculate(self):
+        from unittest.mock import patch
+        with patch.object(self.router.engine, 'calculate', return_value={"score": 0.8}) as mock_calc:
+            result = self._call({"ein": "111111111", "year": 2023})
+        mock_calc.assert_called_once_with("111111111", 2023, 1)
+
+    def test_value_error_returns_error_dict(self):
+        from unittest.mock import patch
+        with patch.object(self.router.engine, 'calculate', side_effect=ValueError("no filing")):
+            result = self._call({"ein": "111111111", "year": 2023})
+        self.assertIn("error", result)
+
+    def test_integrity_error_returns_error_dict(self):
+        from unittest.mock import patch
+        with patch.object(self.router.engine, 'calculate', side_effect=sqlite3.IntegrityError("fk")):
+            result = self._call({"ein": "111111111", "year": 2023})
+        self.assertIn("error", result)
+
+    def test_custom_model_version_passed_to_engine(self):
+        from unittest.mock import patch
+        with patch.object(self.router.engine, 'calculate', return_value={"score": 0.5}) as mock_calc:
+            self._call({"ein": "111111111", "year": 2023, "model_version": 2})
+        mock_calc.assert_called_once_with("111111111", 2023, 2)
+
+    def test_year_cast_to_int(self):
+        from unittest.mock import patch
+        with patch.object(self.router.engine, 'calculate', return_value={"score": 0.5}) as mock_calc:
+            self._call({"ein": "111111111", "year": "2023"})
+        args = mock_calc.call_args[0]
+        self.assertEqual(args[1], 2023)
+
+    def test_successful_calculate_returns_result(self):
+        from unittest.mock import patch
+        expected = {"score_id": 5, "total_score": 0.8}
+        with patch.object(self.router.engine, 'calculate', return_value=expected):
+            result = self._call({"ein": "111111111", "year": 2023})
+        self.assertEqual(result, expected)
+
+
+# ---------------------------------------------------------------------------
+# GET /scores/lookup
+# ---------------------------------------------------------------------------
+
+class TestLookupScore(unittest.TestCase):
+
+    def setUp(self):
+        self.router, self.db = _make_router()
+
+    def _call(self, **qp):
+        return _call(self.router, "GET", "/scores/lookup", _qp(**qp) if qp else {})
+
+    def test_missing_ein_returns_error(self):
+        result = self._call(year="2023")
+        self.assertIn("error", result)
+
+    def test_missing_year_returns_error(self):
+        result = self._call(ein="111111111")
+        self.assertIn("error", result)
+
+    def test_missing_both_returns_error(self):
+        result = self._call()
+        self.assertIn("error", result)
+
+    def test_non_integer_year_returns_error(self):
+        result = self._call(ein="111111111", year="notanint")
+        self.assertIn("error", result)
+
+    def test_not_found_returns_error(self):
+        self.db.get_score_by_ein_year.return_value = None
+        result = self._call(ein="111111111", year="2023")
+        self.assertIn("error", result)
+
+    def test_not_found_error_contains_ein_and_year(self):
+        self.db.get_score_by_ein_year.return_value = None
+        result = self._call(ein="111111111", year="2023")
+        self.assertIn("111111111", result["error"])
+        self.assertIn("2023", result["error"])
+
+    def test_found_returns_score(self):
+        self.db.get_score_by_ein_year.return_value = SCORE_STUB
+        result = self._call(ein="111111111", year="2023")
+        self.assertEqual(result, SCORE_STUB)
+
+    def test_calls_get_score_by_ein_year_with_correct_args(self):
+        self.db.get_score_by_ein_year.return_value = SCORE_STUB
+        self._call(ein="111111111", year="2023")
+        self.db.get_score_by_ein_year.assert_called_once_with("111111111", 2023)
+
+    def test_year_cast_to_int(self):
+        self.db.get_score_by_ein_year.return_value = SCORE_STUB
+        self._call(ein="111111111", year="2022")
+        args = self.db.get_score_by_ein_year.call_args[0]
+        self.assertIsInstance(args[1], int)
 
 
 if __name__ == "__main__":

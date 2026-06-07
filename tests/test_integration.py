@@ -6,6 +6,7 @@ Integration tests covering three levels:
 """
 import io
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -181,19 +182,23 @@ class TestUnzipperToParser(unittest.TestCase):
 
 class TestPipelineEndToEnd(unittest.TestCase):
 
-    def setUp(self):
-        self._tmpdir = tempfile.mkdtemp()
-        self._orig_cwd = os.getcwd()
-        os.chdir(self._tmpdir)
-        self.db = IRS990Database()
+    @classmethod
+    def setUpClass(cls):
+        cls.db = IRS990Database(path=":memory:")
+        cls._tmpdir = tempfile.mkdtemp()
 
-    def tearDown(self):
-        self.db.close()
-        os.chdir(self._orig_cwd)
-        import shutil; shutil.rmtree(self._tmpdir, ignore_errors=True)
+    @classmethod
+    def tearDownClass(cls):
+        cls.db.close()
+        shutil.rmtree(cls._tmpdir, ignore_errors=True)
+
+    def setUp(self):
+        self.db.cursor.executescript(
+            "DELETE FROM reported_data; DELETE FROM filing; DELETE FROM organization;"
+        )
 
     def _zip(self, name='test.zip', **files):
-        return _make_zip(self._tmpdir, name, files)
+        return _make_zip(self.__class__._tmpdir, name, files)
 
     def _run(self, zip_path):
         return _run_pipeline(zip_path, self.db)
@@ -256,7 +261,7 @@ class TestPipelineEndToEnd(unittest.TestCase):
             None
         )
         self.assertIsNotNone(mission_row)
-        self.assertEqual(mission_row['raw_value'], "Test mission")
+        self.assertEqual(mission_row['value'], "Test mission")
 
     def test_pipeline_fields_stored_count_matches_db(self):
         results = self._run(self._zip(**{'filing.xml': VALID_990_XML}))
@@ -364,15 +369,6 @@ class TestZipFixtures(unittest.TestCase):
     All tests skip automatically when no ZIPs are present.
     """
 
-    def setUp(self):
-        self._tmpdir = tempfile.mkdtemp()
-        self._orig_cwd = os.getcwd()
-        os.chdir(self._tmpdir)
-
-    def tearDown(self):
-        os.chdir(self._orig_cwd)
-        import shutil; shutil.rmtree(self._tmpdir, ignore_errors=True)
-
     # --- Good ZIPs ---
 
     def test_good_zips_open_without_error(self):
@@ -447,7 +443,7 @@ class TestZipFixtures(unittest.TestCase):
         zips = _find_zips(FIXTURE_ZIPS_DIR)
         if not zips:
             self.skipTest("No fixture ZIPs in tests/data/zips/")
-        db = IRS990Database()
+        db = IRS990Database(path=":memory:")
         for zip_path in zips:
             with self.subTest(zip=zip_path.name):
                 results = _run_pipeline(str(zip_path), db)
@@ -460,7 +456,7 @@ class TestZipFixtures(unittest.TestCase):
         zips = _find_zips(FIXTURE_ZIPS_DIR)
         if not zips:
             self.skipTest("No fixture ZIPs in tests/data/zips/")
-        db = IRS990Database()
+        db = IRS990Database(path=":memory:")
         for zip_path in zips:
             with self.subTest(zip=zip_path.name):
                 results = _run_pipeline(str(zip_path), db)
@@ -532,7 +528,7 @@ class TestZipFixtures(unittest.TestCase):
         zips = _find_zips(FIXTURE_BAD_ZIPS_DIR)
         if not zips:
             self.skipTest("No fixture ZIPs in tests/data/zips/bad/")
-        db = IRS990Database()
+        db = IRS990Database(path=":memory:")
         for zip_path in zips:
             with self.subTest(zip=zip_path.name):
                 results = _run_pipeline(str(zip_path), db)

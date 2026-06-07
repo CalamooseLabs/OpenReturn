@@ -42,7 +42,7 @@ def _build_field(r: tuple) -> dict:
 
 
 class IRS990Database(Database):
-  def __init__(self, name="IRS990", path: str | None = None) -> None:
+  def __init__(self, name="OpenReturn", path: str | None = None) -> None:
     super().__init__(name, "IRS990", populate_guard="form", path=path)
     self._run_script("setup_api_keys.sql", "IRS990")
     try:
@@ -97,6 +97,22 @@ class IRS990Database(Database):
     self.connection.commit()
     return self.cursor.rowcount > 0
 
+  _INGEST_INDEXES = [
+    ("idx_reported_data_filing", "reported_data (filing_id)"),
+    ("idx_reported_data_field",  "reported_data (field_id)"),
+    ("idx_filing_org",           "filing (organization_id)"),
+  ]
+
+  def drop_ingest_indexes(self) -> None:
+    for name, _ in self._INGEST_INDEXES:
+      self.cursor.execute(f"DROP INDEX IF EXISTS {name}")
+    self.connection.commit()
+
+  def restore_ingest_indexes(self) -> None:
+    for name, cols in self._INGEST_INDEXES:
+      self.cursor.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {cols}")
+    self.connection.commit()
+
   def get_supported_forms(self) -> set[str]:
     rows = self.cursor.execute(
       "SELECT code FROM form WHERE supported = 1"
@@ -128,7 +144,6 @@ class IRS990Database(Database):
       "INSERT OR IGNORE INTO organization (ein, name) VALUES (?, ?)",
       (ein, name)
     )
-    self.connection.commit()
 
   def list_filings(self, ein: str) -> list[dict]:
     rows = self.cursor.execute(
@@ -166,12 +181,17 @@ class IRS990Database(Database):
     filing_id = str(uuid.uuid4())
     self.cursor.execute(
       """
-      INSERT INTO filing (uuid, year, organization_id, form_code, xml_filename, zip_filename)
+      INSERT OR IGNORE INTO filing (uuid, year, organization_id, form_code, xml_filename, zip_filename)
       VALUES (?, ?, ?, ?, ?, ?)
       """,
       (filing_id, year, ein, form_code, xml_filename, zip_filename)
     )
-    self.connection.commit()
+    if self.cursor.rowcount == 0:
+      row = self.cursor.execute(
+        "SELECT uuid FROM filing WHERE organization_id = ? AND year = ? AND form_code = ?",
+        (ein, year, form_code)
+      ).fetchone()
+      return row[0]
     return filing_id
 
   def get_reported_data(self, filing_id: str) -> list[dict]:
@@ -183,7 +203,6 @@ class IRS990Database(Database):
       "INSERT OR IGNORE INTO reported_data (filing_id, field_id, raw_value) VALUES (?, ?, ?)",
       [(filing_id, field_id, value) for field_id, value in values.items()]
     )
-    self.connection.commit()
 
   def get_filing_data_by_ein_year(self, ein: str, year: int) -> dict | None:
     row = self.cursor.execute(

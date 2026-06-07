@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 
 _PATHS: dict[str, str] = {
     'prog':       'ReturnData/IRS990/TotalFunctionalExpensesGrp/ProgramServicesAmt',
@@ -22,22 +23,13 @@ _PATHS: dict[str, str] = {
     'accts_pay':  'ReturnData/IRS990/AccountsPayableAccrExpnssGrp/EOYAmt',
 }
 
-# (direction, lo, hi) — lo=worst, hi=best for 'higher'; lo=best, hi=worst for 'lower'
-_BENCHMARKS: dict[str, tuple[str, float, float]] = {
-    'Program Expense':             ('higher', 0.60, 0.85),
-    'Admin Expense':               ('lower',  0.10, 0.30),
-    'Fundraising Expense':         ('lower',  0.05, 0.30),
-    'Fundraising Efficiency':      ('lower',  0.05, 0.35),
-    'Program Expense Growth':      ('higher', -0.20, 0.20),
-    'Assets to Liabilities Ratio': ('lower',  0.10, 0.75),
-    'Debt to Equity Ratio':        ('lower',  0.10, 2.00),
-    'Working Capital Ratio':       ('higher', 0.00, 0.50),
-    'Government Reliance':         ('lower',  0.00, 0.75),
-    'Excess/Deficit at Year End':  ('higher', 0.90, 1.10),
-    '% Gift is of Revenue':        ('higher', 0.40, 0.95),
-    'Dependence on Gifts/Grants':  ('higher', 0.50, 1.20),
-    'Return on Investments':       ('higher', 0.00, 0.10),
-    'Admin Cost Ratio':            ('lower',  0.10, 0.40),
+FORMULA_TYPES = {'ratio', 'ratio_positive', 'growth', 'working_capital', 'sum_ratio'}
+FORMULA_INPUT_COUNTS = {
+    'ratio':           2,
+    'ratio_positive':  2,
+    'growth':          2,
+    'working_capital': 4,
+    'sum_ratio':       3,
 }
 
 
@@ -55,8 +47,8 @@ class ScoringEngine:
 
         factor_results: dict[int, tuple[float | None, float]] = {}
         for f in factors:
-            raw = self._compute_factor(f['name'], vals)
-            normalized = self._normalize(f['name'], raw)
+            raw = self._compute_factor(f, vals)
+            normalized = self._normalize(f, raw)
             weighted = normalized * f['weight']
             factor_results[f['factor_id']] = (raw, weighted)
 
@@ -82,75 +74,45 @@ class ScoringEngine:
     def _v(self, vals: dict[str, float], key: str) -> float | None:
         return vals.get(_PATHS[key])
 
-    def _compute_factor(self, name: str, vals: dict[str, float]) -> float | None:
-        v = lambda k: self._v(vals, k)
+    def _compute_factor(self, factor: dict, vals: dict[str, float]) -> float | None:
+        """Compute a raw factor value from filing data using the factor's formula_type and inputs."""
+        formula_type = factor['formula_type']
+        keys = json.loads(factor['inputs'])
+        inputs = [self._v(vals, k) for k in keys]
 
-        if name == 'Program Expense':
-            prog, total = v('prog'), v('total_exp')
-            return prog / total if total else None
+        if formula_type == 'ratio':
+            n, d = inputs[0], inputs[1]
+            return n / d if d else None
 
-        if name == 'Admin Expense':
-            admin, total = v('admin'), v('total_exp')
-            return admin / total if total else None
+        if formula_type == 'ratio_positive':
+            n, d = inputs[0], inputs[1]
+            return n / d if d and d > 0 else None
 
-        if name == 'Fundraising Expense':
-            fund, total = v('fund'), v('total_exp')
-            return fund / total if total else None
-
-        if name == 'Fundraising Efficiency':
-            fund, contrib = v('fund'), v('contrib')
-            return fund / contrib if contrib else None
-
-        if name == 'Program Expense Growth':
-            cy, py = v('cy_grants'), v('py_grants')
+        if formula_type == 'growth':
+            cy, py = inputs[0], inputs[1]
             return cy / py - 1.0 if py and py != 0 else None
 
-        if name == 'Assets to Liabilities Ratio':
-            liab, assets = v('liabilities'), v('assets')
-            return liab / assets if assets else None
-
-        if name == 'Debt to Equity Ratio':
-            liab, equity = v('liabilities'), v('equity')
-            return liab / equity if equity and equity > 0 else None
-
-        if name == 'Working Capital Ratio':
-            cash = (v('cash') or 0.0) + (v('savings') or 0.0)
-            payable = v('accts_pay') or 0.0
-            exp = v('cy_exp')
+        if formula_type == 'working_capital':
+            cash    = (inputs[0] or 0.0) + (inputs[1] or 0.0)
+            payable = inputs[2] or 0.0
+            exp     = inputs[3]
             return (cash - payable) / exp if exp else None
 
-        if name == 'Government Reliance':
-            gov, contrib = v('gov_grants'), v('contrib')
-            return gov / contrib if contrib else None
-
-        if name == 'Excess/Deficit at Year End':
-            rev, exp = v('cy_rev'), v('cy_exp')
-            return rev / exp if exp else None
-
-        if name == '% Gift is of Revenue':
-            contrib, rev = v('contrib'), v('cy_rev')
-            return contrib / rev if rev else None
-
-        if name == 'Dependence on Gifts/Grants':
-            contrib, exp = v('contrib'), v('cy_exp')
-            return contrib / exp if exp else None
-
-        if name == 'Return on Investments':
-            inc, inv = v('invest_inc'), v('invest_val')
-            return inc / inv if inv else None
-
-        if name == 'Admin Cost Ratio':
-            admin, fund, total = v('admin'), v('fund'), v('total_exp')
-            if total and admin is not None and fund is not None:
-                return (admin + fund) / total
+        if formula_type == 'sum_ratio':
+            a, b, c = inputs[0], inputs[1], inputs[2]
+            if c and a is not None and b is not None:
+                return (a + b) / c
             return None
 
         return None
 
-    def _normalize(self, name: str, raw: float | None) -> float:
+    def _normalize(self, factor: dict, raw: float | None) -> float:
+        """Map a raw factor value to [0, 1] using the factor's benchmark range."""
         if raw is None:
             return 0.0
-        direction, lo, hi = _BENCHMARKS[name]
+        direction = factor['direction']
+        lo = factor['benchmark_lo']
+        hi = factor['benchmark_hi']
         span = hi - lo
         if span == 0:
             return 0.0

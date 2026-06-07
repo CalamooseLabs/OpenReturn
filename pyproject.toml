@@ -13,12 +13,13 @@ dependencies = [
 openreturn = "main:main"
 openreturn-keys = "keys:main"
 openreturn-ingest = "ingest:main"
+openreturn-models = "models:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools]
-py-modules = ["main", "keys", "ingest", "console"]
+py-modules = ["main", "keys", "ingest", "console", "models"]
 
 [tool.setuptools.package-data]
 "*" = ["*.sql", "*.html"]

@@ -11,6 +11,7 @@ class Router:
     }
     self.template_dir = template_dir
     self._template_cache: dict[str, str] = {}
+    self._fallback = None
 
   def route(self, path: str, method: str = 'GET', secured: bool | None = None):
     def decorator(func: Callable):
@@ -38,6 +39,10 @@ class Router:
     if missing:
       return None, {"error": f"missing required fields: {missing}"}
     return body, None
+
+  def set_fallback(self, handler: Callable):
+    self._fallback = handler
+    return handler
 
   def render_template(self, filename: str, **kwargs) -> str:
     if filename not in self._template_cache:

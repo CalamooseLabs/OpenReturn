@@ -51,7 +51,21 @@ def _debug_sep(title: str = ''):
   else:
     print(f"  {_DIM}│{_R}")
 
-_RATE_WINDOW = 60.0  # seconds per rate-limit window
+_RATE_WINDOW = 60.0   # seconds per rate-limit window
+_MAX_BODY_SIZE = 50 * 1024 * 1024  # 50 MB hard limit on request body
+
+
+def _404_html(method: str, path: str) -> str:
+  return (
+    '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">'
+    '<title>404 Not Found</title>'
+    '<style>body{font-family:system-ui,sans-serif;margin:4rem auto;max-width:600px;color:#333}'
+    'code{background:#f4f4f4;padding:.2em .4em;border-radius:3px}</style></head>'
+    '<body><h1>404 Not Found</h1>'
+    f'<p><code>{method} {path}</code> is not a registered route.</p>'
+    '</body></html>'
+  )
+
 
 class Server:
   def __init__(self, host: str = 'localhost', port: int = 8080, debug: bool = False, key_validator=None):
@@ -66,10 +80,17 @@ class Server:
     self.server: HTTPServer | None = None
     self._rate_counters: dict[str, list] = {}  # raw_key → [count, window_start]
     self._rate_lock = threading.Lock()
+    self._fallback = None
+
+  def set_fallback(self, handler: Callable):
+    self._fallback = handler
+    return handler
 
   def include_router(self, router: Router):
     for method in router.routes:
       self.routes[method].update(router.routes[method])
+    if getattr(router, '_fallback', None) is not None:
+      self._fallback = router._fallback
 
   def route(self, path: str, method: str = 'GET'):
     def decorator(func: Callable):
@@ -97,6 +118,7 @@ class Server:
     key_validator = self.key_validator
     rate_counters = self._rate_counters
     rate_lock = self._rate_lock
+    fallback = self._fallback
 
     def _is_rate_limited(key: str, limit: int) -> bool:
       if limit == -1:
@@ -137,6 +159,46 @@ class Server:
           for key, val in self.headers.items():
             _debug_line(key, val)
 
+        # Read request body once before routing so the fallback can also receive it
+        body = None
+        if method == 'POST':
+          try:
+            content_length = int(self.headers.get('Content-Length', 0))
+          except ValueError:
+            self._send_response(400, json.dumps({"error": "invalid Content-Length"}), 'application/json')
+            return
+          if content_length > _MAX_BODY_SIZE:
+            self._send_response(413, json.dumps({"error": "request body too large"}), 'application/json')
+            return
+          raw_body = self.rfile.read(content_length)
+          content_type_hdr = self.headers.get('Content-Type', '')
+
+          if debug:
+            _debug_sep('request body')
+            _debug_line('content-length', f'{content_length} bytes')
+
+          if 'multipart/form-data' in content_type_hdr:
+            body = raw_body
+            if debug:
+              _debug_line('type', 'multipart/form-data (binary)')
+          else:
+            body = raw_body.decode('utf-8')
+            try:
+              body = json.loads(body)
+              if debug:
+                _debug_line('type', 'application/json')
+                for line in json.dumps(body, indent=2).splitlines():
+                  print(f"  {_DIM}│{_R}    {line}")
+            except json.JSONDecodeError:
+              if debug:
+                _debug_line('type', 'text/plain')
+                snippet = body[:200] + ('…' if len(body) > 200 else '')
+                _debug_line('body', snippet)
+        elif debug and query_params:
+          _debug_sep('query params')
+          for k, v in query_params.items():
+            _debug_line(k, ', '.join(v))
+
         status = 404
         result_body: str | None = None
 
@@ -156,8 +218,8 @@ class Server:
 
             rate_limit = key_validator(provided) if provided else None
             if rate_limit is None:
-              body = json.dumps({"error": "unauthorized"})
-              self._send_response(401, body, 'application/json',
+              err_body = json.dumps({"error": "unauthorized"})
+              self._send_response(401, err_body, 'application/json',
                                   {'WWW-Authenticate': 'Bearer realm="openreturn"'})
               elapsed_ms = (time.monotonic() - start) * 1000
               mc = _method_color(method)
@@ -168,8 +230,8 @@ class Server:
                 print(f"  {mc}{_BOLD}{method:<6}{_R}  {_CYAN}{path}{_R}  {_RED}401{_R}  {_DIM}{elapsed_ms:.1f}ms{_R}")
               return
             if _is_rate_limited(provided, rate_limit):
-              body = json.dumps({"error": "rate limit exceeded"})
-              self._send_response(429, body, 'application/json',
+              err_body = json.dumps({"error": "rate limit exceeded"})
+              self._send_response(429, err_body, 'application/json',
                                   {'Retry-After': str(int(_RATE_WINDOW))})
               elapsed_ms = (time.monotonic() - start) * 1000
               mc = _method_color(method)
@@ -179,39 +241,6 @@ class Server:
               else:
                 print(f"  {mc}{_BOLD}{method:<6}{_R}  {_CYAN}{path}{_R}  {_RED}429{_R}  {_DIM}{elapsed_ms:.1f}ms{_R}")
               return
-
-          body = None
-          if method == 'POST':
-            content_length = int(self.headers.get('Content-Length', 0))
-            raw_body = self.rfile.read(content_length)
-            content_type_hdr = self.headers.get('Content-Type', '')
-
-            if debug:
-              _debug_sep('request body')
-              _debug_line('content-length', f'{content_length} bytes')
-
-            if 'multipart/form-data' in content_type_hdr:
-              body = raw_body
-              if debug:
-                _debug_line('type', 'multipart/form-data (binary)')
-            else:
-              body = raw_body.decode('utf-8')
-              try:
-                body = json.loads(body)
-                if debug:
-                  _debug_line('type', 'application/json')
-                  for line in json.dumps(body, indent=2).splitlines():
-                    print(f"  {_DIM}│{_R}    {line}")
-              except json.JSONDecodeError:
-                if debug:
-                  _debug_line('type', 'text/plain')
-                  snippet = body[:200] + ('…' if len(body) > 200 else '')
-                  _debug_line('body', snippet)
-
-          elif debug and query_params:
-            _debug_sep('query params')
-            for k, v in query_params.items():
-              _debug_line(k, ', '.join(v))
 
           try:
             result = handler(query_params=query_params, body=body, headers=self.headers)
@@ -227,7 +256,7 @@ class Server:
             status = 200
           except Exception as e:
             tb = traceback.format_exc()
-            self._send_response(500, f"Internal Server Error: {str(e)}")
+            self._send_response(500, "Internal Server Error")
             status = 500
             if debug:
               _debug_sep('exception')
@@ -235,8 +264,39 @@ class Server:
                 print(f"  {_DIM}│{_R}  {_RED}{line}{_R}")
             else:
               print(f"  {_RED}ERROR{_R}  {_DIM}{str(e)}{_R}")
+
+        elif fallback is not None:
+          if debug:
+            _debug_sep(f'fallback → {fallback.__name__}')
+          try:
+            result = fallback(query_params=query_params, body=body, headers=self.headers)
+            if isinstance(result, dict):
+              result_body = json.dumps(result)
+              self._send_response(200, result_body, 'application/json')
+            elif isinstance(result, tuple):
+              result_body, content_type = result
+              self._send_response(200, result_body, content_type)
+            else:
+              result_body = str(result)
+              self._send_response(200, result_body)
+            status = 200
+          except Exception as e:
+            tb = traceback.format_exc()
+            self._send_response(500, "Internal Server Error")
+            status = 500
+            if debug:
+              _debug_sep('exception')
+              for line in tb.strip().splitlines():
+                print(f"  {_DIM}│{_R}  {_RED}{line}{_R}")
+            else:
+              print(f"  {_RED}ERROR{_R}  {_DIM}{str(e)}{_R}")
+
         else:
-          self._send_response(404, "Not Found")
+          accept = self.headers.get('Accept', '')
+          if 'text/html' in accept:
+            self._send_response(404, _404_html(method, path), 'text/html; charset=utf-8')
+          else:
+            self._send_response(404, json.dumps({"error": "not found", "path": path}), 'application/json')
 
         elapsed_ms = (time.monotonic() - start) * 1000
         sc = _status_color(status)

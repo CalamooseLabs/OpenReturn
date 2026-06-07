@@ -323,11 +323,11 @@ class TestPipelineEndToEnd(unittest.TestCase):
         count = self.db.cursor.execute("SELECT COUNT(*) FROM filing").fetchone()[0]
         self.assertEqual(count, 2)
 
-    def test_pipeline_same_xml_twice_creates_two_filings(self):
-        # Two filings for same org/year — both get unique UUIDs
+    def test_pipeline_same_xml_twice_is_idempotent(self):
+        # Same org/year/form_code deduplicates to one filing
         self._run(self._zip(**{'a.xml': VALID_990_XML, 'b.xml': VALID_990_XML}))
         count = self.db.cursor.execute("SELECT COUNT(*) FROM filing").fetchone()[0]
-        self.assertEqual(count, 2)
+        self.assertEqual(count, 1)
 
     def test_pipeline_same_xml_twice_creates_one_org(self):
         self._run(self._zip(**{'a.xml': VALID_990_XML, 'b.xml': VALID_990_XML}))

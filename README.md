@@ -87,6 +87,33 @@ python3 src/main.py --auth                               # require API key on al
 python3 src/main.py --testing --zip-dir /path/to/zips   # ingest ZIPs, dump DB state, exit
 ```
 
+## API Keys
+
+When `--auth` is enabled (or `services.openreturn.auth = true` in NixOS), all routes marked as secured require an API key. Manage keys with the `openreturn-keys` CLI from the server's data directory (where `IRS990.db` lives).
+
+```bash
+# Create a key (unlimited by default)
+openreturn-keys create "Dashboard"
+
+# Create a key with a rate limit
+openreturn-keys create "CI pipeline" --rate-limit 60   # 60 req/min
+
+# List all keys
+openreturn-keys list
+
+# Revoke a key by ID
+openreturn-keys revoke 3
+```
+
+Include the key in requests using either header:
+
+```
+Authorization: Bearer <key>
+X-API-Key: <key>
+```
+
+**Rate limits** are enforced per key using a fixed 60-second window. When the limit is exceeded the server returns `429 Too Many Requests` with a `Retry-After: 60` header. A limit of `-1` (the default) means unlimited.
+
 ## Routes
 
 ### Upload — `POST /upload`

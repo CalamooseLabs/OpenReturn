@@ -42,6 +42,8 @@ class Unzipper:
     for root, _, filenames in os.walk(self._tmpdir):
       for filename in filenames:
         abs_path = os.path.join(root, filename)
+        if os.path.islink(abs_path):
+          continue
         rel_path = os.path.relpath(abs_path, self._tmpdir)
         self.files.append(rel_path)
         self._paths.append(abs_path)

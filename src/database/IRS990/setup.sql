@@ -1,3 +1,4 @@
+PRAGMA page_size=8192;
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS organization (
@@ -80,7 +81,8 @@ CREATE TABLE IF NOT EXISTS filing (
   xml_source_url TEXT,
   xml_filename TEXT,
   zip_filename TEXT,
-  FOREIGN KEY (organization_id) REFERENCES organization (ein)
+  FOREIGN KEY (organization_id) REFERENCES organization (ein),
+  UNIQUE (organization_id, year, form_code)
 );
 
 CREATE TABLE IF NOT EXISTS reported_data (

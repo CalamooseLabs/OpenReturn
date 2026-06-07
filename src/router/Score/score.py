@@ -62,8 +62,8 @@ class ScoreRouter(Router):
       data, err = self._require_fields(body, 'filing_id')
       if err:
         return err
-      model_version = int(data.get('model_version', 1))
       try:
+        model_version = int(data.get('model_version', 1))
         score_id = self.db.create_score(data['filing_id'], model_version)
       except ValueError as e:
         return {"error": str(e)}
@@ -138,3 +138,16 @@ class ScoreRouter(Router):
       if score is None:
         return {"error": f"no score found for EIN {ein} year {year}"}
       return score
+
+    @self.get('/compare')
+    def compare_scores(query_params: dict, body: Any, headers: HTTPMessage):
+      ein  = self._qp(query_params, 'ein')
+      year = self._qp(query_params, 'year')
+      if not ein or not year:
+        return {"error": "missing query params: ein, year"}
+      try:
+        year_int = int(year)
+      except ValueError:
+        return {"error": "year must be an integer"}
+      scores = self.db.compare_scores(ein, year_int)
+      return {"ein": ein, "year": year_int, "scores": scores}

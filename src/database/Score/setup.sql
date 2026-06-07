@@ -3,6 +3,7 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS score_model (
   model_id INTEGER PRIMARY KEY AUTOINCREMENT,
   version INTEGER NOT NULL UNIQUE,
+  description TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -11,6 +12,11 @@ CREATE TABLE IF NOT EXISTS score_factor (
   model_id INTEGER NOT NULL REFERENCES score_model (model_id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   weight REAL NOT NULL,
+  formula_type TEXT NOT NULL DEFAULT 'ratio',
+  inputs TEXT NOT NULL DEFAULT '[]',
+  direction TEXT NOT NULL DEFAULT 'higher',
+  benchmark_lo REAL NOT NULL DEFAULT 0.0,
+  benchmark_hi REAL NOT NULL DEFAULT 1.0,
   formula_description TEXT,
   UNIQUE (model_id, name)
 );

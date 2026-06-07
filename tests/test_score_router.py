@@ -81,8 +81,12 @@ class TestScoreRouterRegistration(unittest.TestCase):
         router2 = ScoreRouter(prefix='/api/scores', db=MagicMock())
         self.assertIn("/api/scores/factors", router2.routes["GET"])
 
+    def test_get_compare_registered(self):
+        self.assertIn("/scores/compare", self.router.routes["GET"])
+
     def test_no_unexpected_get_routes(self):
-        expected = {"/scores/factors", "/scores", "/scores/filing", "/scores/detail", "/scores/lookup"}
+        expected = {"/scores/factors", "/scores", "/scores/filing", "/scores/detail",
+                    "/scores/lookup", "/scores/compare"}
         self.assertEqual(set(self.router.routes["GET"].keys()), expected)
 
     def test_no_unexpected_post_routes(self):
@@ -714,6 +718,77 @@ class TestLookupScore(unittest.TestCase):
         self._call(ein="111111111", year="2022")
         args = self.db.get_score_by_ein_year.call_args[0]
         self.assertIsInstance(args[1], int)
+
+
+# ---------------------------------------------------------------------------
+# GET /scores/compare
+# ---------------------------------------------------------------------------
+
+class TestCompareScores(unittest.TestCase):
+
+    def setUp(self):
+        self.router, self.db = _make_router()
+        self.db.compare_scores = MagicMock(return_value=[])
+
+    def _call(self, **qp):
+        return _call(self.router, "GET", "/scores/compare", _qp(**qp) if qp else {})
+
+    def test_missing_ein_returns_error(self):
+        result = self._call(year="2023")
+        self.assertIn("error", result)
+
+    def test_missing_year_returns_error(self):
+        result = self._call(ein="111111111")
+        self.assertIn("error", result)
+
+    def test_missing_both_returns_error(self):
+        result = self._call()
+        self.assertIn("error", result)
+
+    def test_non_integer_year_returns_error(self):
+        result = self._call(ein="111111111", year="notanint")
+        self.assertIn("error", result)
+
+    def test_returns_ein_in_response(self):
+        result = self._call(ein="111111111", year="2023")
+        self.assertEqual(result["ein"], "111111111")
+
+    def test_returns_year_as_int_in_response(self):
+        result = self._call(ein="111111111", year="2023")
+        self.assertEqual(result["year"], 2023)
+
+    def test_returns_scores_key(self):
+        result = self._call(ein="111111111", year="2023")
+        self.assertIn("scores", result)
+
+    def test_scores_is_list(self):
+        result = self._call(ein="111111111", year="2023")
+        self.assertIsInstance(result["scores"], list)
+
+    def test_calls_compare_scores_with_correct_args(self):
+        self._call(ein="111111111", year="2023")
+        self.db.compare_scores.assert_called_once_with("111111111", 2023)
+
+    def test_empty_scores_when_no_matches(self):
+        result = self._call(ein="111111111", year="2023")
+        self.assertEqual(result["scores"], [])
+
+    def test_returns_scores_from_db(self):
+        stub = [
+            {"score_id": 1, "model_version": 1, "total_score": 0.70, "scored_at": "2024-01-01"},
+            {"score_id": 2, "model_version": 2, "total_score": 0.75, "scored_at": "2024-01-02"},
+        ]
+        self.db.compare_scores.return_value = stub
+        result = self._call(ein="111111111", year="2023")
+        self.assertEqual(result["scores"], stub)
+
+    def test_score_count_matches_db(self):
+        self.db.compare_scores.return_value = [
+            {"score_id": 1, "model_version": 1, "total_score": 0.70, "scored_at": "2024-01-01"},
+            {"score_id": 2, "model_version": 2, "total_score": 0.75, "scored_at": "2024-01-02"},
+        ]
+        result = self._call(ein="111111111", year="2023")
+        self.assertEqual(len(result["scores"]), 2)
 
 
 if __name__ == "__main__":

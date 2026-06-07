@@ -9,22 +9,22 @@ from database.Score import ScoreDatabase
 from database.IRS990 import IRS990Database
 
 
-# Canonical v1 factor data: (name, weight, formula_description)
+# Canonical v1 factor data: (name, weight, formula_type, direction, lo, hi, formula_description)
 V1_FACTORS = [
-    ("Program Expense",             0.05, "Average Program Expenses ÷ Average Total Expenses"),
-    ("Admin Expense",               0.05, "Average Administrative Expenses ÷ Average Total Expenses"),
-    ("Fundraising Expense",         0.05, "Average Fundraising Expenses ÷ Average Total Expenses"),
-    ("Fundraising Efficiency",      0.10, "Average Fundraising Expenses ÷ Average Total Contributions"),
-    ("Program Expense Growth",      0.05, "(Yn / Y0)^(1/(n+1)) - 1"),
-    ("Assets to Liabilities Ratio", 0.15, "Total Liabilities ÷ Total Assets"),
-    ("Debt to Equity Ratio",        0.10, "Total Liabilities ÷ Equity"),
-    ("Working Capital Ratio",       0.10, "Working Capital ÷ Average Total Expenses"),
-    ("Government Reliance",         0.05, "Gov. Grants ÷ Total Contributions"),
-    ("Excess/Deficit at Year End",  0.05, "Total Revenue ÷ Total Expenses"),
-    ("% Gift is of Revenue",        0.05, "Gift or Ask Amount ÷ Total Contributions"),
-    ("Dependence on Gifts/Grants",  0.10, "Total Contributions ÷ Total Expenses"),
-    ("Return on Investments",       0.05, "Investment Income ÷ Investment Made"),
-    ("Admin Cost Ratio",            0.05, "(Total Fundraising + General and Admin Expense) ÷ Total Expenses"),
+    ("Program Expense",             0.05, "ratio",          "higher",  0.60,  0.85, "Average Program Expenses ÷ Average Total Expenses"),
+    ("Admin Expense",               0.05, "ratio",          "lower",   0.10,  0.30, "Average Administrative Expenses ÷ Average Total Expenses"),
+    ("Fundraising Expense",         0.05, "ratio",          "lower",   0.05,  0.30, "Average Fundraising Expenses ÷ Average Total Expenses"),
+    ("Fundraising Efficiency",      0.10, "ratio",          "lower",   0.05,  0.35, "Average Fundraising Expenses ÷ Average Total Contributions"),
+    ("Program Expense Growth",      0.05, "growth",         "higher", -0.20,  0.20, "(Yn / Y0)^(1/(n+1)) - 1"),
+    ("Assets to Liabilities Ratio", 0.15, "ratio",          "lower",   0.10,  0.75, "Total Liabilities ÷ Total Assets"),
+    ("Debt to Equity Ratio",        0.10, "ratio_positive", "lower",   0.10,  2.00, "Total Liabilities ÷ Equity"),
+    ("Working Capital Ratio",       0.10, "working_capital","higher",  0.00,  0.50, "Working Capital ÷ Average Total Expenses"),
+    ("Government Reliance",         0.05, "ratio",          "lower",   0.00,  0.75, "Gov. Grants ÷ Total Contributions"),
+    ("Excess/Deficit at Year End",  0.05, "ratio",          "higher",  0.90,  1.10, "Total Revenue ÷ Total Expenses"),
+    ("% Gift is of Revenue",        0.05, "ratio",          "higher",  0.40,  0.95, "Gift or Ask Amount ÷ Total Contributions"),
+    ("Dependence on Gifts/Grants",  0.10, "ratio",          "higher",  0.50,  1.20, "Total Contributions ÷ Total Expenses"),
+    ("Return on Investments",       0.05, "ratio",          "higher",  0.00,  0.10, "Investment Income ÷ Investment Made"),
+    ("Admin Cost Ratio",            0.05, "sum_ratio",      "lower",   0.10,  0.40, "(Total Fundraising + General and Admin Expense) ÷ Total Expenses"),
 ]
 
 
@@ -216,7 +216,11 @@ class TestGetFactors(ScoreDbTestCase):
             self.assertIn("formula_description", f)
 
     def test_factor_has_no_extra_keys(self):
-        expected_keys = {"factor_id", "name", "weight", "formula_description"}
+        expected_keys = {
+            "factor_id", "name", "weight",
+            "formula_type", "inputs", "direction",
+            "benchmark_lo", "benchmark_hi", "formula_description",
+        }
         for f in self.factors:
             self.assertEqual(set(f.keys()), expected_keys)
 
@@ -243,17 +247,17 @@ class TestGetFactors(ScoreDbTestCase):
 
     def test_all_expected_names_present(self):
         names = {f["name"] for f in self.factors}
-        for expected_name, _, _ in V1_FACTORS:
+        for expected_name, *_ in V1_FACTORS:
             self.assertIn(expected_name, names)
 
     def test_factor_names_match_expected_exactly(self):
         names = [f["name"] for f in self.factors]
-        expected_names = [name for name, _, _ in V1_FACTORS]
+        expected_names = [name for name, *_ in V1_FACTORS]
         self.assertEqual(sorted(names), sorted(expected_names))
 
     def test_factor_weights_match_expected(self):
         by_name = {f["name"]: f["weight"] for f in self.factors}
-        for name, weight, _ in V1_FACTORS:
+        for name, weight, *_ in V1_FACTORS:
             self.assertAlmostEqual(by_name[name], weight, places=10,
                                    msg=f"Weight mismatch for '{name}'")
 
@@ -264,7 +268,7 @@ class TestGetFactors(ScoreDbTestCase):
 
     def test_formula_descriptions_match_expected(self):
         by_name = {f["name"]: f["formula_description"] for f in self.factors}
-        for name, _, formula in V1_FACTORS:
+        for name, _, _ft, _dir, _lo, _hi, formula in V1_FACTORS:
             self.assertEqual(by_name[name], formula,
                              msg=f"Formula mismatch for '{name}'")
 
@@ -738,7 +742,7 @@ class TestGetScore(ScoreDbTestCase):
         self.db.store_factor_values(self.score_id, values)
         result = self.db.get_score(self.score_id)
         by_name = {f["name"]: f for f in result["factors"]}
-        for name, weight, _ in V1_FACTORS:
+        for name, weight, *_ in V1_FACTORS:
             self.assertAlmostEqual(by_name[name]["weighted_value"], weight,
                                    msg=f"weighted_value mismatch for '{name}'")
 
@@ -747,7 +751,7 @@ class TestGetScore(ScoreDbTestCase):
         self.db.store_factor_values(self.score_id, values)
         result = self.db.get_score(self.score_id)
         by_name = {f["name"]: f["weight"] for f in result["factors"]}
-        for name, weight, _ in V1_FACTORS:
+        for name, weight, *_ in V1_FACTORS:
             self.assertAlmostEqual(by_name[name], weight,
                                    msg=f"weight mismatch for '{name}'")
 
@@ -857,7 +861,7 @@ class TestScoreDatabaseIntegration(ScoreDbTestCase):
         self.assertIsInstance(score_id, int)
 
     def test_weights_sum_to_1_across_all_factor_rows(self):
-        total = sum(w for _, w, _ in V1_FACTORS)
+        total = sum(w for _, w, *_ in V1_FACTORS)
         self.assertAlmostEqual(total, 1.0, places=10)
 
     def test_score_model_row_count_after_init(self):
@@ -867,6 +871,10 @@ class TestScoreDatabaseIntegration(ScoreDbTestCase):
     def test_score_factor_row_count_after_init(self):
         count = self.db.cursor.execute("SELECT COUNT(*) FROM score_factor").fetchone()[0]
         self.assertEqual(count, 14)
+
+    def test_weights_sum_to_1_v1_factors_constant(self):
+        total = sum(w for _, w, *_ in V1_FACTORS)
+        self.assertAlmostEqual(total, 1.0, places=10)
 
     def test_score_persists_to_disk(self):
         import tempfile
@@ -1006,6 +1014,136 @@ class TestScoreReadMethods(ScoreDbTestCase):
         result = self.db.get_score_by_ein_year(self.EIN_ALPHA, 2023)
         for key in ("score_id", "ein", "model_version", "filing_id", "year", "factors"):
             self.assertIn(key, result)
+
+
+# ---------------------------------------------------------------------------
+# get_factors — new formula columns
+# ---------------------------------------------------------------------------
+
+class TestGetFactorsNewColumns(ScoreDbTestCase):
+
+    def test_each_factor_has_formula_type_key(self):
+        for f in self.factors:
+            self.assertIn("formula_type", f)
+
+    def test_each_factor_has_inputs_key(self):
+        for f in self.factors:
+            self.assertIn("inputs", f)
+
+    def test_each_factor_has_direction_key(self):
+        for f in self.factors:
+            self.assertIn("direction", f)
+
+    def test_each_factor_has_benchmark_lo_key(self):
+        for f in self.factors:
+            self.assertIn("benchmark_lo", f)
+
+    def test_each_factor_has_benchmark_hi_key(self):
+        for f in self.factors:
+            self.assertIn("benchmark_hi", f)
+
+    def test_formula_types_are_valid_strings(self):
+        valid = {'ratio', 'ratio_positive', 'growth', 'working_capital', 'sum_ratio'}
+        for f in self.factors:
+            self.assertIn(f["formula_type"], valid,
+                          msg=f"Invalid formula_type for '{f['name']}'")
+
+    def test_inputs_are_json_arrays(self):
+        import json
+        for f in self.factors:
+            parsed = json.loads(f["inputs"])
+            self.assertIsInstance(parsed, list,
+                                  msg=f"inputs is not a JSON array for '{f['name']}'")
+            self.assertGreater(len(parsed), 0)
+
+    def test_directions_are_valid(self):
+        for f in self.factors:
+            self.assertIn(f["direction"], ('higher', 'lower'),
+                          msg=f"Invalid direction for '{f['name']}'")
+
+    def test_benchmark_lo_less_than_hi(self):
+        for f in self.factors:
+            self.assertLess(f["benchmark_lo"], f["benchmark_hi"],
+                            msg=f"lo >= hi for '{f['name']}'")
+
+    def test_formula_types_match_expected(self):
+        by_name = {f["name"]: f["formula_type"] for f in self.factors}
+        for name, _, ft, *_ in V1_FACTORS:
+            self.assertEqual(by_name[name], ft, msg=f"formula_type mismatch for '{name}'")
+
+    def test_directions_match_expected(self):
+        by_name = {f["name"]: f["direction"] for f in self.factors}
+        for name, _, _ft, direction, *_ in V1_FACTORS:
+            self.assertEqual(by_name[name], direction, msg=f"direction mismatch for '{name}'")
+
+    def test_benchmark_lo_matches_expected(self):
+        by_name = {f["name"]: f["benchmark_lo"] for f in self.factors}
+        for name, _, _ft, _dir, lo, *_ in V1_FACTORS:
+            self.assertAlmostEqual(by_name[name], lo, msg=f"benchmark_lo mismatch for '{name}'")
+
+    def test_benchmark_hi_matches_expected(self):
+        by_name = {f["name"]: f["benchmark_hi"] for f in self.factors}
+        for name, _, _ft, _dir, _lo, hi, *_ in V1_FACTORS:
+            self.assertAlmostEqual(by_name[name], hi, msg=f"benchmark_hi mismatch for '{name}'")
+
+
+# ---------------------------------------------------------------------------
+# compare_scores
+# ---------------------------------------------------------------------------
+
+class TestCompareScores(ScoreDbTestCase):
+
+    def test_returns_empty_list_when_no_scores(self):
+        result = self.db.compare_scores(self.EIN_ALPHA, 2023)
+        self.assertEqual(result, [])
+
+    def test_returns_list(self):
+        self.db.create_score(self.filing_alpha)
+        result = self.db.compare_scores(self.EIN_ALPHA, 2023)
+        self.assertIsInstance(result, list)
+
+    def test_returns_one_entry_for_one_score(self):
+        self.db.create_score(self.filing_alpha)
+        result = self.db.compare_scores(self.EIN_ALPHA, 2023)
+        self.assertEqual(len(result), 1)
+
+    def test_result_has_expected_keys(self):
+        self.db.create_score(self.filing_alpha)
+        row = self.db.compare_scores(self.EIN_ALPHA, 2023)[0]
+        for key in ("score_id", "model_version", "total_score", "scored_at"):
+            self.assertIn(key, row)
+
+    def test_model_version_is_1(self):
+        self.db.create_score(self.filing_alpha)
+        row = self.db.compare_scores(self.EIN_ALPHA, 2023)[0]
+        self.assertEqual(row["model_version"], 1)
+
+    def test_total_score_is_none_before_finalization(self):
+        self.db.create_score(self.filing_alpha)
+        row = self.db.compare_scores(self.EIN_ALPHA, 2023)[0]
+        self.assertIsNone(row["total_score"])
+
+    def test_total_score_reflects_finalized_value(self):
+        score_id = self.db.create_score(self.filing_alpha)
+        self.db.finalize_score(score_id, 0.77)
+        row = self.db.compare_scores(self.EIN_ALPHA, 2023)[0]
+        self.assertAlmostEqual(row["total_score"], 0.77)
+
+    def test_filters_by_ein(self):
+        self.db.create_score(self.filing_alpha)
+        result = self.db.compare_scores(self.EIN_BETA, 2023)
+        self.assertEqual(result, [])
+
+    def test_filters_by_year(self):
+        self.db.create_score(self.filing_alpha)
+        result = self.db.compare_scores(self.EIN_ALPHA, 2022)
+        self.assertEqual(result, [])
+
+    def test_does_not_include_different_ein(self):
+        self.db.create_score(self.filing_alpha)
+        self.db.create_score(self.filing_beta)
+        result = self.db.compare_scores(self.EIN_ALPHA, 2023)
+        self.assertEqual(len(result), 1)
 
 
 if __name__ == "__main__":

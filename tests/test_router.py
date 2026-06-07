@@ -288,6 +288,12 @@ class TestUploadRouterHandleUpload(unittest.TestCase):
         result = self._call(body, boundary)
         self.assertIn("error", result)
 
+    def test_multipart_without_boundary_returns_error(self):
+        """Line 107: Content-Type is multipart/form-data but missing boundary= param."""
+        headers = _mock_headers("multipart/form-data")  # no boundary=
+        result = self.handler(query_params={}, body=b"--stuff\r\n...", headers=headers)
+        self.assertIn("error", result)
+
     def test_no_zip_in_multipart_returns_error(self):
         boundary = "testboundary1234"
         body = (
@@ -434,6 +440,36 @@ class TestProcessZipDir(unittest.TestCase):
         self.assertGreater(len(result), 0)
         # All results should have error status since create_filing raises
         self.assertTrue(all(r["status"] == "error" for r in result))
+
+
+class TestRouterSetFallback(unittest.TestCase):
+
+    def test_set_fallback_stores_handler(self):
+        router = Router(prefix='')
+
+        def fb(**_):
+            return "fallback"
+
+        router.set_fallback(fb)
+        self.assertIs(router._fallback, fb)
+
+    def test_set_fallback_returns_handler(self):
+        router = Router(prefix='')
+
+        def fb(**_):
+            return "fallback"
+
+        result = router.set_fallback(fb)
+        self.assertIs(result, fb)
+
+    def test_set_fallback_as_decorator(self):
+        router = Router(prefix='')
+
+        @router.set_fallback
+        def fb(**_):
+            return "fallback"
+
+        self.assertIs(router._fallback, fb)
 
 
 if __name__ == "__main__":

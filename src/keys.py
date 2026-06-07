@@ -10,8 +10,8 @@ from database.Score import ScoreDatabase
 
 
 def _require_db() -> ScoreDatabase:
-    if not Path('IRS990.db').exists():
-        print("IRS990.db not found — run openreturn-keys from the server's data directory.", file=sys.stderr)
+    if not Path('OpenReturn.db').exists():
+        print("OpenReturn.db not found — run openreturn-keys from the server's data directory.", file=sys.stderr)
         sys.exit(1)
     return ScoreDatabase()
 

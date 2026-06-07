@@ -508,9 +508,9 @@ class TestServer500Error(unittest.TestCase):
         _, _, body = _get(f'{self._live.url}/boom')
         self.assertIn('Internal Server Error', body)
 
-    def test_handler_exception_body_includes_message(self):
+    def test_handler_exception_body_does_not_leak_details(self):
         _, _, body = _get(f'{self._live.url}/boom')
-        self.assertIn('intentional failure', body)
+        self.assertNotIn('intentional failure', body)
 
 
 class TestServer500ErrorDebug(unittest.TestCase):
@@ -755,6 +755,326 @@ class TestServerStringResponse(unittest.TestCase):
     def test_string_response_content_type_is_html(self):
         _, headers, _ = _get(f'{self._live.url}/html')
         self.assertIn('text/html', headers.get('Content-Type', ''))
+
+
+# ---------------------------------------------------------------------------
+# 12. _404_html helper
+# ---------------------------------------------------------------------------
+
+class TestServer404Html(unittest.TestCase):
+
+    def test_returns_string(self):
+        html = server_module._404_html('GET', '/missing')
+        self.assertIsInstance(html, str)
+
+    def test_contains_method_and_path(self):
+        html = server_module._404_html('POST', '/api/data')
+        self.assertIn('POST', html)
+        self.assertIn('/api/data', html)
+
+    def test_contains_doctype(self):
+        html = server_module._404_html('GET', '/')
+        self.assertIn('<!DOCTYPE html>', html)
+
+
+# ---------------------------------------------------------------------------
+# 13. Custom 404 — JSON vs HTML based on Accept header
+# ---------------------------------------------------------------------------
+
+class TestServerCustom404(unittest.TestCase):
+
+    def setUp(self):
+        srv = Server(host='127.0.0.1', port=0)
+        self._ctx = _LiveServer(srv)
+        self._live = self._ctx.__enter__()
+
+    def tearDown(self):
+        self._ctx.__exit__(None, None, None)
+
+    def test_json_404_has_error_and_path(self):
+        _, _, body = _get(f'{self._live.url}/nonexistent')
+        data = json.loads(body)
+        self.assertIn('error', data)
+        self.assertEqual(data['path'], '/nonexistent')
+
+    def test_html_404_status_is_404(self):
+        req = urllib.request.Request(f'{self._live.url}/nonexistent',
+                                     headers={'Accept': 'text/html'})
+        try:
+            urllib.request.urlopen(req)
+            self.fail("expected HTTPError")
+        except urllib.error.HTTPError as e:
+            self.assertEqual(e.code, 404)
+
+    def test_html_404_content_type_is_html(self):
+        req = urllib.request.Request(f'{self._live.url}/nonexistent',
+                                     headers={'Accept': 'text/html'})
+        try:
+            urllib.request.urlopen(req)
+        except urllib.error.HTTPError as e:
+            self.assertIn('text/html', e.headers.get('Content-Type', ''))
+
+    def test_html_404_body_contains_doctype(self):
+        req = urllib.request.Request(f'{self._live.url}/nonexistent',
+                                     headers={'Accept': 'text/html'})
+        try:
+            urllib.request.urlopen(req)
+        except urllib.error.HTTPError as e:
+            self.assertIn('<!DOCTYPE html>', e.read().decode())
+
+
+# ---------------------------------------------------------------------------
+# 14. Fallback handler
+# ---------------------------------------------------------------------------
+
+class TestServerFallback(unittest.TestCase):
+
+    def setUp(self):
+        self._srv = Server(host='127.0.0.1', port=0)
+
+        @self._srv.get('/known')
+        def known(**_):
+            return {"registered": True}
+
+        @self._srv.set_fallback
+        def catch_all(query_params, body, headers):
+            return {"fallback": True}
+
+        self._ctx = _LiveServer(self._srv)
+        self._live = self._ctx.__enter__()
+
+    def tearDown(self):
+        self._ctx.__exit__(None, None, None)
+
+    def test_registered_route_unaffected(self):
+        status, _, body = _get(f'{self._live.url}/known')
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body)['registered'])
+
+    def test_unknown_path_returns_200(self):
+        status, _, _ = _get(f'{self._live.url}/anything/at/all')
+        self.assertEqual(status, 200)
+
+    def test_unknown_path_returns_fallback_body(self):
+        _, _, body = _get(f'{self._live.url}/unknown')
+        self.assertTrue(json.loads(body)['fallback'])
+
+    def test_fallback_tuple_response(self):
+        srv = Server(host='127.0.0.1', port=0)
+
+        @srv.set_fallback
+        def fb_tuple(**_):
+            return ("<p>custom</p>", "text/html")
+
+        with _LiveServer(srv) as live:
+            _, headers, body = _get(f'{live.url}/any')
+        self.assertIn('text/html', headers.get('Content-Type', ''))
+        self.assertIn('custom', body)
+
+    def test_fallback_string_response(self):
+        srv = Server(host='127.0.0.1', port=0)
+
+        @srv.set_fallback
+        def fb_str(**_):
+            return "plain string"
+
+        with _LiveServer(srv) as live:
+            _, _, body = _get(f'{live.url}/any')
+        self.assertEqual(body, "plain string")
+
+    def test_fallback_post_receives_body(self):
+        received = []
+        srv = Server(host='127.0.0.1', port=0)
+
+        @srv.set_fallback
+        def fb(query_params, body, headers):
+            received.append(body)
+            return {"ok": True}
+
+        with _LiveServer(srv) as live:
+            payload = json.dumps({"x": 1}).encode()
+            _post(f'{live.url}/whatever', payload, 'application/json')
+        self.assertEqual(received[-1], {"x": 1})
+
+    def test_fallback_exception_returns_500(self):
+        srv = Server(host='127.0.0.1', port=0)
+
+        @srv.set_fallback
+        def fb_boom(**_):
+            raise RuntimeError("fallback failure")
+
+        with _LiveServer(srv) as live:
+            status, _, _ = _get(f'{live.url}/unknown')
+        self.assertEqual(status, 500)
+
+    def test_fallback_debug_mode_returns_200(self):
+        srv = Server(host='127.0.0.1', port=0, debug=True)
+
+        @srv.set_fallback
+        def fb_debug(**_):
+            return {"debug_fallback": True}
+
+        with _LiveServer(srv) as live:
+            status, _, _ = _get(f'{live.url}/unknown')
+        self.assertEqual(status, 200)
+
+    def test_fallback_debug_exception_returns_500(self):
+        srv = Server(host='127.0.0.1', port=0, debug=True)
+
+        @srv.set_fallback
+        def fb_debug_err(**_):
+            raise ValueError("debug fallback error")
+
+        with _LiveServer(srv) as live:
+            status, _, _ = _get(f'{live.url}/unknown')
+        self.assertEqual(status, 500)
+
+
+# ---------------------------------------------------------------------------
+# 15. include_router picks up router._fallback (line 92)
+# ---------------------------------------------------------------------------
+
+class TestServerRouterFallback(unittest.TestCase):
+
+    def test_include_router_sets_server_fallback(self):
+        router = Router(prefix='')
+
+        @router.set_fallback
+        def fb(**_):
+            return {"from": "router"}
+
+        srv = Server()
+        srv.include_router(router)
+        self.assertIs(srv._fallback, fb)
+
+    def test_router_fallback_called_for_unknown_path(self):
+        router = Router(prefix='')
+
+        @router.set_fallback
+        def fb(**_):
+            return {"from": "router"}
+
+        srv = Server(host='127.0.0.1', port=0)
+        srv.include_router(router)
+        with _LiveServer(srv) as live:
+            status, _, body = _get(f'{live.url}/no/such/path')
+        self.assertEqual(status, 200)
+        self.assertIn('from', json.loads(body))
+
+
+# ---------------------------------------------------------------------------
+# 16. Invalid Content-Length → 400
+# ---------------------------------------------------------------------------
+
+class TestServerContentLengthValidation(unittest.TestCase):
+
+    def setUp(self):
+        srv = Server(host='127.0.0.1', port=0)
+
+        @srv.post('/data')
+        def data(body, **_):
+            return {"ok": True}
+
+        self._ctx = _LiveServer(srv)
+        self._live = self._ctx.__enter__()
+        self._host = '127.0.0.1'
+        self._port = int(self._live.url.rsplit(':', 1)[-1])
+
+    def tearDown(self):
+        self._ctx.__exit__(None, None, None)
+
+    def _send_bad_cl(self, bad_value: str) -> tuple[int, str]:
+        import socket
+        with socket.create_connection((self._host, self._port)) as s:
+            req = (
+                f"POST /data HTTP/1.1\r\n"
+                f"Host: {self._host}:{self._port}\r\n"
+                f"Content-Type: application/json\r\n"
+                f"Content-Length: {bad_value}\r\n"
+                f"Connection: close\r\n\r\n"
+            )
+            s.sendall(req.encode())
+            response = b""
+            while True:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                response += chunk
+        first_line = response.decode('utf-8', errors='replace').split('\r\n')[0]
+        body_start = response.find(b'\r\n\r\n')
+        body = response[body_start + 4:].decode('utf-8', errors='replace') if body_start != -1 else ''
+        return int(first_line.split()[1]), body
+
+    def test_non_numeric_content_length_returns_400(self):
+        status, _ = self._send_bad_cl('abc')
+        self.assertEqual(status, 400)
+
+    def test_float_content_length_returns_400(self):
+        status, _ = self._send_bad_cl('1.5')
+        self.assertEqual(status, 400)
+
+    def test_400_body_has_error_key(self):
+        _, body = self._send_bad_cl('not-a-number')
+        self.assertIn('error', json.loads(body))
+
+
+# ---------------------------------------------------------------------------
+# 17. Oversized body → 413 Request Entity Too Large
+# ---------------------------------------------------------------------------
+
+class TestServerBodySizeLimit(unittest.TestCase):
+
+    def setUp(self):
+        srv = Server(host='127.0.0.1', port=0)
+
+        @srv.post('/data')
+        def data(body, **_):
+            return {"ok": True}
+
+        self._ctx = _LiveServer(srv)
+        self._live = self._ctx.__enter__()
+        self._host = '127.0.0.1'
+        self._port = int(self._live.url.rsplit(':', 1)[-1])
+
+    def tearDown(self):
+        self._ctx.__exit__(None, None, None)
+
+    def _send_claimed_size(self, claimed_bytes: int) -> tuple[int, str]:
+        import socket
+        with socket.create_connection((self._host, self._port)) as s:
+            req = (
+                f"POST /data HTTP/1.1\r\n"
+                f"Host: {self._host}:{self._port}\r\n"
+                f"Content-Type: application/json\r\n"
+                f"Content-Length: {claimed_bytes}\r\n"
+                f"Connection: close\r\n\r\n"
+            )
+            s.sendall(req.encode())
+            response = b""
+            while True:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                response += chunk
+        first_line = response.decode('utf-8', errors='replace').split('\r\n')[0]
+        body_start = response.find(b'\r\n\r\n')
+        body = response[body_start + 4:].decode('utf-8', errors='replace') if body_start != -1 else ''
+        return int(first_line.split()[1]), body
+
+    def test_body_over_limit_returns_413(self):
+        over_limit = server_module._MAX_BODY_SIZE + 1
+        status, _ = self._send_claimed_size(over_limit)
+        self.assertEqual(status, 413)
+
+    def test_normal_body_not_rejected(self):
+        """A legitimately-sized body does not trigger 413."""
+        status, _, _ = _post(f'{self._live.url}/data', b'{}', 'application/json')
+        self.assertNotEqual(status, 413)
+
+    def test_413_body_has_error_key(self):
+        over_limit = server_module._MAX_BODY_SIZE + 1
+        _, body = self._send_claimed_size(over_limit)
+        self.assertIn('error', json.loads(body))
 
 
 if __name__ == '__main__':

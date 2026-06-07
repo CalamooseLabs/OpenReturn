@@ -270,5 +270,39 @@ class TestUnzipperFallback(UnzipperTestCase):
         self.assertIn(path, str(ctx.exception))
 
 
+class TestUnzipperSymlinkProtection(unittest.TestCase):
+    """Symlinks in the extracted tmpdir must be skipped to prevent symlink attacks."""
+
+    def _zip(self, **files) -> str:
+        import tempfile, zipfile
+        tmp = tempfile.mktemp(suffix='.zip')
+        with zipfile.ZipFile(tmp, 'w') as zf:
+            for name, content in files.items():
+                zf.writestr(name, content)
+        return tmp
+
+    def test_symlinks_excluded_from_file_list(self):
+        path = self._zip(**{'real.xml': '<data/>'})
+        try:
+            with patch('unzipper.unzipper.zf.is_zipfile', return_value=False), \
+                 patch('unzipper.unzipper.os.path.islink', return_value=True):
+                uz = Unzipper(path)
+            self.assertEqual(len(uz.files), 0)
+            uz.close()
+        finally:
+            os.unlink(path)
+
+    def test_non_symlinks_still_included(self):
+        path = self._zip(**{'real.xml': '<data/>'})
+        try:
+            with patch('unzipper.unzipper.zf.is_zipfile', return_value=False), \
+                 patch('unzipper.unzipper.os.path.islink', return_value=False):
+                uz = Unzipper(path)
+            self.assertEqual(len(uz.files), 1)
+            uz.close()
+        finally:
+            os.unlink(path)
+
+
 if __name__ == '__main__':
     unittest.main()

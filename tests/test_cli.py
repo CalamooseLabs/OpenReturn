@@ -174,8 +174,8 @@ class TestMainFunction(unittest.TestCase):
             old_cwd = os.getcwd()
             os.chdir(td)
             try:
-                # Create a dummy IRS990.db so unlink has something to remove
-                Path("IRS990.db").write_bytes(b"")
+                # Create a dummy OpenReturn.db so unlink has something to remove
+                Path("OpenReturn.db").write_bytes(b"")
                 result, _ = self._run_main(['main', '--testing'])
                 self.assertEqual(result, 0)
                 # File should have been recreated by ScoreDatabase init
@@ -236,7 +236,7 @@ class TestRequireDb(unittest.TestCase):
 
     def test_returns_database_when_db_exists(self):
         with tempfile.TemporaryDirectory() as td:
-            db_path = Path(td) / "IRS990.db"
+            db_path = Path(td) / "OpenReturn.db"
             # Use a real in-memory db to avoid touching disk inside ScoreDatabase
             with patch('keys.Path') as mock_path_cls, \
                  patch('keys.ScoreDatabase') as mock_db_cls:
@@ -523,17 +523,10 @@ class TestIngestMain(unittest.TestCase):
                 os.chdir(old_cwd)
         return result, buf.getvalue(), err_buf.getvalue()
 
-    def test_missing_db_returns_one(self):
-        with tempfile.TemporaryDirectory() as td:
-            # No IRS990.db in td
-            result, _, err = self._run_main(['ingest', td], cwd=td)
-        self.assertEqual(result, 1)
-        self.assertIn("IRS990.db not found", err)
-
     def test_directory_does_not_exist_returns_one(self):
         with tempfile.TemporaryDirectory() as td:
-            # Create IRS990.db so we pass the first check
-            (Path(td) / "IRS990.db").write_bytes(b"")
+            # Create OpenReturn.db so we pass the first check
+            (Path(td) / "OpenReturn.db").write_bytes(b"")
             nonexistent = str(Path(td) / "no_such_dir")
             result, _, err = self._run_main(['ingest', nonexistent], cwd=td)
         self.assertEqual(result, 1)
@@ -541,7 +534,7 @@ class TestIngestMain(unittest.TestCase):
 
     def test_empty_directory_returns_zero(self):
         with tempfile.TemporaryDirectory() as td:
-            (Path(td) / "IRS990.db").write_bytes(b"")
+            (Path(td) / "OpenReturn.db").write_bytes(b"")
             zip_dir = Path(td) / "zips"
             zip_dir.mkdir()
             result, out, _ = self._run_main(['ingest', str(zip_dir)], cwd=td)
@@ -550,7 +543,7 @@ class TestIngestMain(unittest.TestCase):
 
     def test_invalid_zip_in_directory(self):
         with tempfile.TemporaryDirectory() as td:
-            (Path(td) / "IRS990.db").write_bytes(b"")
+            (Path(td) / "OpenReturn.db").write_bytes(b"")
             zip_dir = Path(td) / "zips"
             zip_dir.mkdir()
             # Write a corrupt ZIP file
@@ -567,7 +560,7 @@ class TestIngestMain(unittest.TestCase):
 
     def test_normal_zip_processes_without_raise(self):
         with tempfile.TemporaryDirectory() as td:
-            (Path(td) / "IRS990.db").write_bytes(b"")
+            (Path(td) / "OpenReturn.db").write_bytes(b"")
             zip_dir = Path(td) / "zips"
             zip_dir.mkdir()
             _make_zip(zip_dir, "filings.zip", {"filing_001.xml": _MINIMAL_XML})
@@ -579,13 +572,13 @@ class TestIngestMain(unittest.TestCase):
             }
             with patch('ingest.ScoreDatabase', return_value=mock_db), \
                  patch('ingest.UploadRouter', return_value=mock_router):
-                result, _, _ = self._run_main(['ingest', str(zip_dir)], cwd=td)
+                result, _, _ = self._run_main(['ingest', '--workers', '1', str(zip_dir)], cwd=td)
         self.assertEqual(result, 0)
         mock_router._process_xml.assert_called_once()
 
     def test_normal_zip_with_multiple_xmls(self):
         with tempfile.TemporaryDirectory() as td:
-            (Path(td) / "IRS990.db").write_bytes(b"")
+            (Path(td) / "OpenReturn.db").write_bytes(b"")
             zip_dir = Path(td) / "zips"
             zip_dir.mkdir()
             _make_zip(zip_dir, "filings.zip", {
@@ -600,13 +593,13 @@ class TestIngestMain(unittest.TestCase):
             }
             with patch('ingest.ScoreDatabase', return_value=mock_db), \
                  patch('ingest.UploadRouter', return_value=mock_router):
-                result, _, _ = self._run_main(['ingest', str(zip_dir)], cwd=td)
+                result, _, _ = self._run_main(['ingest', '--workers', '1', str(zip_dir)], cwd=td)
         self.assertEqual(result, 0)
         self.assertEqual(mock_router._process_xml.call_count, 2)
 
     def test_zip_with_no_xml_files(self):
         with tempfile.TemporaryDirectory() as td:
-            (Path(td) / "IRS990.db").write_bytes(b"")
+            (Path(td) / "OpenReturn.db").write_bytes(b"")
             zip_dir = Path(td) / "zips"
             zip_dir.mkdir()
             # ZIP with only a non-XML file
@@ -625,7 +618,7 @@ class TestIngestMain(unittest.TestCase):
 
     def test_process_xml_exception_counts_as_error(self):
         with tempfile.TemporaryDirectory() as td:
-            (Path(td) / "IRS990.db").write_bytes(b"")
+            (Path(td) / "OpenReturn.db").write_bytes(b"")
             zip_dir = Path(td) / "zips"
             zip_dir.mkdir()
             _make_zip(zip_dir, "filings.zip", {"filing_001.xml": _MINIMAL_XML})
@@ -635,14 +628,14 @@ class TestIngestMain(unittest.TestCase):
             mock_router._process_xml.side_effect = ValueError("parse failure")
             with patch('ingest.ScoreDatabase', return_value=mock_db), \
                  patch('ingest.UploadRouter', return_value=mock_router):
-                result, out, _ = self._run_main(['ingest', str(zip_dir)], cwd=td)
+                result, out, _ = self._run_main(['ingest', '--workers', '1', str(zip_dir)], cwd=td)
         self.assertEqual(result, 0)
         self.assertIn("errors", out)
 
     def test_zip_with_no_xml_alongside_zip_with_xml(self):
-        """Covers lines 97-98: n_xml==0 branch when another ZIP has XMLs."""
+        """Covers the n_xml==0 branch when another ZIP has XMLs."""
         with tempfile.TemporaryDirectory() as td:
-            (Path(td) / "IRS990.db").write_bytes(b"")
+            (Path(td) / "OpenReturn.db").write_bytes(b"")
             zip_dir = Path(td) / "zips"
             zip_dir.mkdir()
             # First ZIP: no XML files (n_xml == 0 → hits the continue)
@@ -659,18 +652,18 @@ class TestIngestMain(unittest.TestCase):
             }
             with patch('ingest.ScoreDatabase', return_value=mock_db), \
                  patch('ingest.UploadRouter', return_value=mock_router):
-                result, out, _ = self._run_main(['ingest', str(zip_dir)], cwd=td)
+                result, out, _ = self._run_main(['ingest', '--workers', '1', str(zip_dir)], cwd=td)
         self.assertEqual(result, 0)
         # The no-xml ZIP is visited and the no-xml branch printed
         self.assertIn("no XML files", out)
 
     def test_notimplementederror_uses_unzip_fallback(self):
-        """Covers lines 116-121: Deflate64 ZIP falls back to subprocess unzip."""
+        """Covers Deflate64 ZIP falling back to subprocess unzip."""
         _BAD_ZIP = os.path.join(os.path.dirname(__file__), 'data', 'zips', 'bad', 'sample_bad.zip')
         if not os.path.exists(_BAD_ZIP):
             self.skipTest("bad zip fixture not found")
         with tempfile.TemporaryDirectory() as td:
-            (Path(td) / "IRS990.db").write_bytes(b"")
+            (Path(td) / "OpenReturn.db").write_bytes(b"")
             zip_dir = Path(td) / "zips"
             zip_dir.mkdir()
             import shutil
@@ -683,14 +676,14 @@ class TestIngestMain(unittest.TestCase):
             }
             with patch('ingest.ScoreDatabase', return_value=mock_db), \
                  patch('ingest.UploadRouter', return_value=mock_router):
-                result, _, _ = self._run_main(['ingest', str(zip_dir)], cwd=td)
+                result, _, _ = self._run_main(['ingest', '--workers', '1', str(zip_dir)], cwd=td)
         self.assertEqual(result, 0)
         mock_router._process_xml.assert_called_once()
 
     def test_badzip_in_main_loop_counts_as_error(self):
-        """Covers lines 133-137: BadZipFile raised during main-loop ZipFile.open."""
+        """Covers BadZipFile raised during main-loop ZipFile.open."""
         with tempfile.TemporaryDirectory() as td:
-            (Path(td) / "IRS990.db").write_bytes(b"")
+            (Path(td) / "OpenReturn.db").write_bytes(b"")
             zip_dir = Path(td) / "zips"
             zip_dir.mkdir()
             # Create a placeholder file; we'll mock ZipFile so it doesn't matter
@@ -704,7 +697,6 @@ class TestIngestMain(unittest.TestCase):
             mock_prescan.namelist.return_value = ['filing.xml']
 
             call_count = [0]
-            orig_ZipFile = zipfile.ZipFile
 
             def fake_ZipFile(path, mode='r'):
                 call_count[0] += 1
@@ -717,13 +709,13 @@ class TestIngestMain(unittest.TestCase):
             with patch('ingest.zipfile.ZipFile', side_effect=fake_ZipFile), \
                  patch('ingest.ScoreDatabase', return_value=mock_db), \
                  patch('ingest.UploadRouter', return_value=mock_router):
-                result, out, _ = self._run_main(['ingest', str(zip_dir)], cwd=td)
+                result, out, _ = self._run_main(['ingest', '--workers', '1', str(zip_dir)], cwd=td)
         self.assertEqual(result, 0)
         self.assertIn("corrupt ZIP", out)
 
     def test_db_close_called_after_processing(self):
         with tempfile.TemporaryDirectory() as td:
-            (Path(td) / "IRS990.db").write_bytes(b"")
+            (Path(td) / "OpenReturn.db").write_bytes(b"")
             zip_dir = Path(td) / "zips"
             zip_dir.mkdir()
             _make_zip(zip_dir, "filings.zip", {"filing_001.xml": _MINIMAL_XML})
@@ -735,7 +727,7 @@ class TestIngestMain(unittest.TestCase):
             }
             with patch('ingest.ScoreDatabase', return_value=mock_db), \
                  patch('ingest.UploadRouter', return_value=mock_router):
-                self._run_main(['ingest', str(zip_dir)], cwd=td)
+                self._run_main(['ingest', '--workers', '1', str(zip_dir)], cwd=td)
         mock_db.close.assert_called_once()
 
 

@@ -100,6 +100,18 @@ class TestIRS990Database(unittest.TestCase):
         id2 = self.db.create_filing("123456789", 2023, "990")
         self.assertNotEqual(id1, id2)
 
+    def test_create_filing_idempotent_on_duplicate(self):
+        self.db.upsert_organization("123456789", "Test Org")
+        id1 = self.db.create_filing("123456789", 2023, "990")
+        id2 = self.db.create_filing("123456789", 2023, "990")
+        self.assertEqual(id1, id2)
+
+    def test_create_filing_allows_different_form_same_year(self):
+        self.db.upsert_organization("123456789", "Test Org")
+        id1 = self.db.create_filing("123456789", 2023, "990")
+        id2 = self.db.create_filing("123456789", 2023, "990EZ")
+        self.assertNotEqual(id1, id2)
+
     # --- store_reported_data ---
 
     def test_store_reported_data_inserts_rows(self):

@@ -10,3 +10,7 @@ build
 result
 GIT_COMMIT_MSG
 CLAUDE.md
+.coverage
+.coveragerc
+.coveragerc*
+.claude/

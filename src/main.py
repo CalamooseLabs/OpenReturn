@@ -35,7 +35,7 @@ def _dump_db(db: ScoreDatabase) -> None:
   cur.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
   all_tables = {row[0] for row in cur.fetchall()}
 
-  print(f"\n{_B}Database snapshot{_R}  {_CYN}IRS990.db{_R}")
+  print(f"\n{_B}Database snapshot{_R}  {_CYN}OpenReturn.db{_R}")
   print(f"{_DIM}{'─' * 52}{_R}")
 
   # Reference tables — counts only
@@ -92,13 +92,14 @@ def main() -> int:
     parser.add_argument('--host',    default='localhost',  help='Bind host (default: localhost)')
     parser.add_argument('--port',    type=int, default=8080, help='Bind port (default: 8080)')
     parser.add_argument('--auth',    action='store_true', help='Require API key authentication (manage keys with openreturn-keys)')
+    parser.add_argument('--workers', type=int, default=None, help='Parallel XML parser processes for --zip-dir ingestion (default: CPU count)')
     args = parser.parse_args()
 
     if args.testing:
-      Path("IRS990.db").unlink(missing_ok=True)
+      Path("OpenReturn.db").unlink(missing_ok=True)
 
     db = ScoreDatabase()
-    upload_router = UploadRouter(db=db, secure_by_default=True)
+    upload_router = UploadRouter(db=db, secure_by_default=True, workers=args.workers)
 
     if args.testing:
       if args.zip_dir:

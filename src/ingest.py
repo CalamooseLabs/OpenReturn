@@ -19,6 +19,8 @@ _INSERT_REPORTED_DATA = (
     "INSERT OR IGNORE INTO reported_data (filing_id, field_id, raw_value) VALUES (?, ?, ?)"
 )
 
+_DATA_ROWS_PER_FLUSH = 500_000  # flush + WAL checkpoint every ~500 k data rows mid-ZIP
+
 
 def _bar(done: int, total: int, width: int = 35) -> str:
     pct = done / total if total else 0
@@ -289,7 +291,14 @@ def cmd_ingest(args) -> int:
                             end='', flush=True,
                         )
 
+                    if len(pending_data) >= _DATA_ROWS_PER_FLUSH:
+                        _flush_zip(db, pending_orgs, pending_filings, filing_key_to_uuid, pending_data)
+                        pending_orgs.clear()
+                        pending_filings.clear()
+                        pending_data.clear()
+
                 _flush_zip(db, pending_orgs, pending_filings, filing_key_to_uuid, pending_data)
+                db.cursor.execute("PRAGMA wal_checkpoint(RESTART)")
 
                 bar = _bar(done, total_xmls)
                 err_color = _RED if per['error'] else _DIM

@@ -1,6 +1,7 @@
 import io
 import os
 import subprocess
+import xml.etree.ElementTree as ET
 import zipfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import Any
@@ -19,6 +20,9 @@ from parser.IRS990 import IRS990Parser
 _xpath_index:     dict[str, int] = {}
 _supported_forms: set[str]       = set()
 _zip_cache:       dict[str, zipfile.ZipFile] = {}
+_xpath_compiled:  dict[str, int] = {}  # precomputed find-string → field_id
+
+_NS = {'irs': 'http://www.irs.gov/efile'}
 
 _EIN_PATH  = "ReturnHeader/Filer/EIN"
 _NAME_PATH = "ReturnHeader/Filer/BusinessName/BusinessNameLine1Txt"
@@ -26,10 +30,21 @@ _YEAR_PATH = "ReturnHeader/TaxYr"
 _FORM_PATH = "ReturnHeader/ReturnTypeCd"
 
 
+def _build_find(path: str) -> str:
+  return "./" + "/".join(f"irs:{c}" for c in path.split("/"))
+
+
+_EIN_FIND  = _build_find(_EIN_PATH)
+_NAME_FIND = _build_find(_NAME_PATH)
+_YEAR_FIND = _build_find(_YEAR_PATH)
+_FORM_FIND = _build_find(_FORM_PATH)
+
+
 def _worker_init(xpath_index: dict, supported_forms: set) -> None:
-  global _xpath_index, _supported_forms
+  global _xpath_index, _supported_forms, _xpath_compiled
   _xpath_index     = xpath_index
   _supported_forms = supported_forms
+  _xpath_compiled  = {_build_find(p): fid for p, fid in xpath_index.items()}
 
 
 def _parse_xml_task(task: tuple) -> dict:
@@ -45,11 +60,18 @@ def _parse_xml_task(task: tuple) -> dict:
         ['unzip', '-p', '--', zip_path_str, filename], capture_output=True
       )
       xml_bytes = proc.stdout
-    parser    = IRS990Parser(xml_bytes.decode('utf-8'))
-    ein       = parser.getElem(_EIN_PATH)
-    name      = parser.getElem(_NAME_PATH)
-    year      = parser.getElem(_YEAR_PATH)
-    form_code = parser.getElem(_FORM_PATH)
+
+    root = ET.fromstring(xml_bytes)
+
+    ein_e  = root.find(_EIN_FIND,  _NS)
+    name_e = root.find(_NAME_FIND, _NS)
+    year_e = root.find(_YEAR_FIND, _NS)
+    form_e = root.find(_FORM_FIND, _NS)
+
+    ein       = ein_e.text  if ein_e  is not None else None
+    name      = name_e.text if name_e is not None else None
+    year      = year_e.text if year_e is not None else None
+    form_code = form_e.text if form_e is not None else None
 
     if not all([ein, name, year, form_code]):
       missing = [k for k, v in {"EIN": ein, "name": name, "year": year, "form": form_code}.items() if not v]
@@ -61,10 +83,10 @@ def _parse_xml_task(task: tuple) -> dict:
               "status": "skipped", "reason": f"unsupported form type: {form_code}"}
 
     values: dict[int, str] = {}
-    for xpath, field_id in _xpath_index.items():
-      value = parser.getElem(xpath)
-      if value is not None:
-        values[field_id] = value
+    for find_str, field_id in _xpath_compiled.items():
+      elem = root.find(find_str, _NS)
+      if elem is not None and elem.text:
+        values[field_id] = elem.text
 
     return {
       "file":         filename,

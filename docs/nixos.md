@@ -112,7 +112,7 @@ services.openreturn = {
 When `models` is non-empty, the module creates `openreturn-register-models.service`:
 
 - **Type = oneshot, RemainAfterExit = true** — runs once, stays "active" so the API server knows it completed
-- Runs **before** `openreturn.service`; the API server will not start until registration is done
+- Runs **after** `openreturn-migrate.service` and **before** `openreturn.service`; the API server will not start until registration is done
 - For each model, runs `openreturn models register --skip-existing <toml-file>` — if the version is already in the database the step is silently skipped, making redeployment safe
 - Uses the same user, group, and `dataDir` as the main service
 
@@ -124,6 +124,19 @@ Model versions are immutable once registered — changing a factor's formula wit
 2. Run `nixos-rebuild switch`
 
 The registration service will register the new version. The old version remains in the database and any scores computed under it are preserved. Use `GET /scores/compare?ein=...&year=...` to see results under both versions side by side.
+
+## Systemd Service Chain
+
+The module creates up to four services that run in dependency order before the API server starts:
+
+| Service | What it does |
+|---------|-------------|
+| `openreturn-init.service` | Initializes the database schema and seeds form definitions (990, 990-EZ, 990-N, 990-PF, 990-T). No-op if already initialized. |
+| `openreturn-migrate.service` | Applies any pending schema migrations from the migration log. Safe to run on every deploy. |
+| `openreturn-register-models.service` | Registers scoring models declared in `cfg.models`. Only present when `models != []`. |
+| `openreturn.service` | The HTTP API server. Starts only after all of the above complete. |
+
+All three setup services use `Type = oneshot; RemainAfterExit = true` so systemd treats them as "active" once complete and only re-runs them if the unit is explicitly reset.
 
 ## Security Hardening
 

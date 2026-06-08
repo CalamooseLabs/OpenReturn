@@ -4,7 +4,7 @@ class IRS990Parser(Parser):
   namespace =  {'irs': 'http://www.irs.gov/efile'}
   nsFind = "/irs:"
 
-  supportedForms = ["990", "990PF", "990T"]
+  supportedForms = ["990", "990EZ", "990N", "990PF", "990T"]
 
   def __init__(self, xmlstr: str) -> None:
     super().__init__(xmlstr, self.namespace, self.nsFind)

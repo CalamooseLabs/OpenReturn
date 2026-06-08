@@ -17,6 +17,30 @@ nix develop
 
 All commands below assume the dev shell is active.
 
+## Database Initialization and Migrations
+
+Before starting the server for the first time, initialize the database:
+
+```bash
+# Create OpenReturn.db with the full schema and seed data (990/990EZ/990N/990PF/990T)
+python3 src/cli.py init
+
+# Apply any pending schema migrations (safe to run on every deploy)
+python3 src/cli.py migrate
+
+# List migration status without applying
+python3 src/cli.py migrate --list
+```
+
+Both commands default to `./OpenReturn.db` and accept an explicit path:
+
+```bash
+python3 src/cli.py init    --db /var/lib/openreturn/OpenReturn.db
+python3 src/cli.py migrate --db /var/lib/openreturn/OpenReturn.db
+```
+
+`init` is idempotent — it skips inserts if the database already exists and is populated. `migrate` tracks applied migrations in a `migration` table and never re-runs the same migration.
+
 ## Running the Server
 
 ```bash

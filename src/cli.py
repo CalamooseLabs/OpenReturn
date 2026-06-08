@@ -22,6 +22,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(prog='openreturn', description='OpenReturn — IRS 990 API server')
     sub = parser.add_subparsers(dest='command', required=True)
 
+    # ── init ─────────────────────────────────────────────────────────────────
+    init_p = sub.add_parser('init', help='Initialize the database schema and seed data')
+    init_p.add_argument('--db', default=None, help='Path to OpenReturn.db (defaults to ./OpenReturn.db)')
+
+    # ── migrate ──────────────────────────────────────────────────────────────
+    migrate_p = sub.add_parser('migrate', help='Apply pending database migrations')
+    migrate_p.add_argument('--db', default=None, help='Path to OpenReturn.db (defaults to ./OpenReturn.db)')
+    migrate_p.add_argument('--list', action='store_true', help='List migrations and their status without applying')
+
     # ── serve ────────────────────────────────────────────────────────────────
     serve_p = sub.add_parser('serve', help='Start the API server')
     serve_p.add_argument('--debug',   action='store_true', help='Verbose request/response logging')
@@ -72,6 +81,14 @@ def main() -> int:
                         help='Path to OpenReturn.db (defaults to ./OpenReturn.db)')
 
     args = parser.parse_args()
+
+    if args.command == 'init':
+        from db import cmd_init
+        return cmd_init(args) or 0
+
+    if args.command == 'migrate':
+        from db import cmd_migrate
+        return cmd_migrate(args) or 0
 
     if args.command == 'serve':
         from main import cmd_serve

@@ -10,6 +10,7 @@ src/
   server/        → Server (wraps HTTPServer, wires routers to routes)
   scoring/       → ScoringEngine
   unzipper/      → Unzipper (ZIP file iterator)
+  db.py          → Database init/migrate CLI commands
   ingest.py      → Bulk ZIP ingestion CLI
   models.py      → Scoring model registration CLI
   keys.py        → API key management CLI
@@ -28,11 +29,11 @@ SQLite connection manager. Opens (or creates) a `.db` file and runs setup/popula
 
 - `_run_script(path)` — executes a SQL file relative to the **subclass's** `__file__`, not the project root. SQL assets must live alongside the subpackage that uses them.
 - `begin_bulk_load()` / `end_bulk_load()` — toggle WAL mode, a 512 MB page cache, and a 10 GB mmap for high-throughput ingest. Call these around large batch operations.
-- `populate_guard` — a flag used by subclasses to make `populate.sql` idempotent (`INSERT OR IGNORE`).
+- `populate_guard` — optional table name; when set, `populate.sql` only runs if that table is empty (used for performance-sensitive subclasses).
 
 ### `IRS990Database` (`src/database/IRS990/irs990.py`)
 
-Extends `Database`. Runs `setup.sql` (schema) then `populate.sql` (~3900 `INSERT OR IGNORE` statements covering all form fields, parts, sections, and states) on first instantiation. Subsequent startups skip the inserts because the rows already exist — but the SQL still executes, so **first-run startup is slow** (~seconds) if the database file doesn't exist yet.
+Extends `Database`. Runs `setup.sql` (schema) then `populate.sql` on **every startup**. The ~4200 `INSERT OR IGNORE` statements cover all five supported form types (990, 990-EZ, 990-N, 990-PF, 990-T), their parts/sections/lines/fields, states, and data types. First-run startup is slow (~seconds) because all rows are new; subsequent startups are fast because `INSERT OR IGNORE` skips existing rows instantly. The `UPDATE form SET supported=1 …` statement in `populate.sql` also runs on every startup, ensuring new form types are enabled in databases created before they were added.
 
 Key methods:
 
@@ -86,7 +87,7 @@ Extends `Parser` with the IRS namespace (`http://www.irs.gov/efile`).
 
 - `cleanTags()` — CamelCase tag names split into space-separated words.
 - `dict()` — `tree()` with namespace stripping.
-- `supportedForms` — `{'990', '990PF', '990T'}`. Defined but not enforced at parse time; the ingest layer checks `get_supported_forms()` from the DB instead.
+- `supportedForms` — `{'990', '990EZ', '990N', '990PF', '990T'}`. Defined but not enforced at parse time; the ingest layer checks `get_supported_forms()` from the DB instead.
 
 ---
 
@@ -184,9 +185,15 @@ See [Scoring Models](../scoring/models.md) for the full list of formula types an
 
 ## CLI Tools
 
-| Binary | Source | Purpose |
-|--------|--------|---------|
-| `openreturn` | `src/main.py` | Start the API server |
-| `openreturn-ingest` | `src/ingest.py` | Bulk-ingest ZIP archives |
-| `openreturn-keys` | `src/keys.py` | Manage API keys |
-| `openreturn-models` | `src/models.py` | Register and list scoring models |
+All commands are dispatched through `src/cli.py` (the unified `openreturn` binary). Each subcommand delegates to a dedicated module.
+
+| Subcommand | Dispatch module | Purpose |
+|------------|----------------|---------|
+| `openreturn init` | `src/db.py` → `cmd_init` | Initialize database schema and seed data |
+| `openreturn migrate` | `src/db.py` → `cmd_migrate` | Apply pending schema migrations |
+| `openreturn serve` | `src/main.py` → `cmd_serve` | Start the API server |
+| `openreturn ingest` | `src/ingest.py` → `cmd_ingest` | Bulk-ingest ZIP archives |
+| `openreturn keys` | `src/keys.py` | Manage API keys |
+| `openreturn models` | `src/models.py` | Register and list scoring models |
+
+`cmd_init` opens the database (triggering `populate.sql` on first run via `populate_guard="form"`), prints form/field counts, and closes. `cmd_migrate` discovers `.sql` files in `src/database/IRS990/migrations/`, compares against the `migration` tracking table, and applies anything pending in filename order.

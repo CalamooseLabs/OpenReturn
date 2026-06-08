@@ -16,7 +16,7 @@ openreturn = "cli:main"
 where = ["src"]
 
 [tool.setuptools]
-py-modules = ["cli", "main", "keys", "ingest", "console", "models"]
+py-modules = ["cli", "main", "keys", "ingest", "console", "models", "db"]
 
 [tool.setuptools.package-data]
 "*" = ["*.sql", "*.html"]

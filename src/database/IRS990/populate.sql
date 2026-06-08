@@ -1,4 +1,4 @@
-INSERT INTO
+INSERT OR IGNORE INTO
   state
 VALUES
   ('AL', 'Alabama'),
@@ -52,7 +52,7 @@ VALUES
   ('WI', 'Wisconsin'),
   ('WY', 'Wyoming');
 
-INSERT INTO
+INSERT OR IGNORE INTO
   form (code, name, description, supported)
 VALUES
   (
@@ -65,23 +65,23 @@ VALUES
     "990EZ",
     "990-EZ",
     "Used by medium sized organizations.",
-    0
+    1
   ),
   (
     "990N",
     "990-N",
     "Used by small sized organizations.",
-    0
+    1
   ),
-  ("990PF", "990-PF", "Used by private foundations.", 0),
+  ("990PF", "990-PF", "Used by private foundations.", 1),
   (
     "990T",
     "990-T",
     "Used by organizations with unrelated business income.",
-    0
+    1
   );
 
-INSERT INTO
+INSERT OR IGNORE INTO
   data_type
 VALUES
   ('CURRENCY', 'Monetary amount in USD'),
@@ -91,7 +91,7 @@ VALUES
   ('DATE', 'Calendar date'),
   ('PERCENT', 'Percentage value');
 
-INSERT INTO
+INSERT OR IGNORE INTO
   part (part_id, form_code, part_number, part_name)
 VALUES
   (1, "990", 'I', 'Summary'),
@@ -137,7 +137,7 @@ VALUES
     'Financial Statements and Reporting'
   );
 
-INSERT INTO
+INSERT OR IGNORE INTO
   section (section_id, part_id, section_code, section_name)
 VALUES
   -- Part I
@@ -176,7 +176,7 @@ VALUES
 -- =======================
 -- PART I — SUMMARY
 -- =======================
-INSERT INTO
+INSERT OR IGNORE INTO
   line (
     line_id,
     section_id,
@@ -308,7 +308,7 @@ VALUES
 -- Part I fields (lines with Prior Year / Current Year columns)
 -- Lines 8-19: columns A=Prior Year, B=Current Year
 -- Lines 20-22: columns A=Beginning of Year, B=End of Year
-INSERT INTO
+INSERT OR IGNORE INTO
   field (
     line_id,
     sub_letter,
@@ -651,7 +651,7 @@ VALUES
 -- Columns: A=Total, B=Related/Exempt, C=Unrelated Business, D=Excluded
 -- =======================
 -- Section A: Contributions
-INSERT INTO
+INSERT OR IGNORE INTO
   line (
     line_id,
     section_id,
@@ -705,7 +705,7 @@ VALUES
     'CURRENCY'
   );
 
-INSERT INTO
+INSERT OR IGNORE INTO
   field (
     line_id,
     sub_letter,
@@ -781,7 +781,7 @@ VALUES
   );
 
 -- Section B: Program Service Revenue (lines 2a-2e are named entries, 2f=all other, 2g=total)
-INSERT INTO
+INSERT OR IGNORE INTO
   line (
     line_id,
     section_id,
@@ -808,7 +808,7 @@ VALUES
 -- Lines 2a-2e: sub_letter a-e, each with columns A-D
 -- Line 2f: all other program service revenue
 -- Line 2g: total
-INSERT INTO
+INSERT OR IGNORE INTO
   field (
     line_id,
     sub_letter,
@@ -1027,7 +1027,7 @@ VALUES
   );
 
 -- Section C: Other Revenue
-INSERT INTO
+INSERT OR IGNORE INTO
   line (
     line_id,
     section_id,
@@ -1111,7 +1111,7 @@ VALUES
   );
 
 -- Section D: Total Revenue (line 12)
-INSERT INTO
+INSERT OR IGNORE INTO
   line (
     line_id,
     section_id,
@@ -1122,7 +1122,7 @@ INSERT INTO
 VALUES
   (8040, 804, '12', 'Total revenue', 'CURRENCY');
 
-INSERT INTO
+INSERT OR IGNORE INTO
   field (
     line_id,
     sub_letter,
@@ -1749,7 +1749,7 @@ VALUES
 -- PART IX — STATEMENT OF FUNCTIONAL EXPENSES
 -- Columns: A=Total, B=Program Services, C=Management & General, D=Fundraising
 -- =======================
-INSERT INTO
+INSERT OR IGNORE INTO
   line (
     line_id,
     section_id,
@@ -1938,7 +1938,7 @@ VALUES
     'CURRENCY'
   );
 
-INSERT INTO
+INSERT OR IGNORE INTO
   field (
     line_id,
     sub_letter,
@@ -3113,7 +3113,7 @@ VALUES
 -- PART X — BALANCE SHEET
 -- Columns: A=Beginning of Year (BOY), B=End of Year (EOY)
 -- =======================
-INSERT INTO
+INSERT OR IGNORE INTO
   line (
     line_id,
     section_id,
@@ -3347,7 +3347,7 @@ VALUES
     'CURRENCY'
   );
 
-INSERT INTO
+INSERT OR IGNORE INTO
   field (
     line_id,
     sub_letter,
@@ -3936,3 +3936,292 @@ VALUES
     'CURRENCY',
     'ReturnData/IRS990/TotLiabNetAssetsFundBalanceGrp/EOYAmt'
   );
+
+-- =======================
+-- 990-EZ
+-- =======================
+INSERT OR IGNORE INTO
+  part (part_id, form_code, part_number, part_name)
+VALUES
+  (21, "990EZ", 'I',   'Revenue, Expenses, and Changes in Net Assets or Fund Balances'),
+  (22, "990EZ", 'II',  'Balance Sheets'),
+  (23, "990EZ", 'III', 'Statement of Program Service Accomplishments'),
+  (24, "990EZ", 'V',   'Other Information');
+
+INSERT OR IGNORE INTO
+  section (section_id, part_id, section_code, section_name)
+VALUES
+  (2100, 21, 'NONE', NULL),
+  (2200, 22, 'NONE', NULL),
+  (2300, 23, 'NONE', NULL),
+  (2400, 24, 'NONE', NULL);
+
+INSERT OR IGNORE INTO
+  line (line_id, section_id, line_number, line_label, data_type)
+VALUES
+  -- Part I Revenue
+  (21001, 2100, '1',   'Contributions, gifts, grants, and similar amounts received', 'CURRENCY'),
+  (21002, 2100, '2',   'Program service revenue including government fees and contracts', 'CURRENCY'),
+  (21003, 2100, '3',   'Membership dues and assessments', 'CURRENCY'),
+  (21004, 2100, '4',   'Investment income', 'CURRENCY'),
+  (21005, 2100, '5a',  'Gross amount from sale of assets excluding inventory', 'CURRENCY'),
+  (21006, 2100, '5b',  'Less: cost or other basis and sales expenses', 'CURRENCY'),
+  (21007, 2100, '5c',  'Gain or (loss) from sale of assets other than inventory', 'CURRENCY'),
+  (21008, 2100, '6a',  'Gaming and fundraising events: gross income', 'CURRENCY'),
+  (21009, 2100, '6b',  'Gaming and fundraising events: direct expenses', 'CURRENCY'),
+  (21010, 2100, '6c',  'Net income (loss) from gaming and fundraising events', 'CURRENCY'),
+  (21011, 2100, '7a',  'Gross sales of inventory, less returns and allowances', 'CURRENCY'),
+  (21012, 2100, '7b',  'Less: cost of goods sold', 'CURRENCY'),
+  (21013, 2100, '7c',  'Gross profit (loss) from sales of inventory', 'CURRENCY'),
+  (21014, 2100, '8',   'Other revenue (describe in Schedule O)', 'CURRENCY'),
+  (21015, 2100, '9',   'Total revenue', 'CURRENCY'),
+  -- Part I Expenses
+  (21016, 2100, '10',  'Grants and similar amounts paid', 'CURRENCY'),
+  (21017, 2100, '11',  'Benefits paid to or for members', 'CURRENCY'),
+  (21018, 2100, '12',  'Salaries, other compensation, and employee benefits', 'CURRENCY'),
+  (21019, 2100, '13',  'Professional fees and other payments to independent contractors', 'CURRENCY'),
+  (21020, 2100, '14',  'Occupancy, rent, utilities, and maintenance', 'CURRENCY'),
+  (21021, 2100, '15',  'Printing, publications, postage, and shipping', 'CURRENCY'),
+  (21022, 2100, '16',  'Other expenses (describe in Schedule O)', 'CURRENCY'),
+  (21023, 2100, '17',  'Total expenses', 'CURRENCY'),
+  (21024, 2100, '18',  'Excess or (deficit) for the year', 'CURRENCY'),
+  (21025, 2100, '19',  'Net assets or fund balances at beginning of year', 'CURRENCY'),
+  (21026, 2100, '20',  'Other changes in net assets or fund balances', 'CURRENCY'),
+  (21027, 2100, '21',  'Net assets or fund balances at end of year', 'CURRENCY'),
+  -- Part II Balance Sheet (end of year)
+  (22001, 2200, '22',  'Cash, savings, and investments', 'CURRENCY'),
+  (22002, 2200, '23',  'Land and buildings', 'CURRENCY'),
+  (22003, 2200, '24',  'Other assets (describe in Schedule O)', 'CURRENCY'),
+  (22004, 2200, '25',  'Total assets', 'CURRENCY'),
+  (22005, 2200, '26',  'Total liabilities (describe in Schedule O)', 'CURRENCY'),
+  -- Part III Program Service
+  (23001, 2300, '32',  'Primary exempt purpose', 'TEXT'),
+  -- Part V Other Information
+  (24001, 2400, '33a', 'Number of employees', 'INTEGER');
+
+INSERT OR IGNORE INTO
+  field (
+    line_id,
+    sub_letter,
+    column_code,
+    box_label,
+    data_type,
+    xml_path
+  )
+VALUES
+  -- Part I Revenue
+  (21001, NULL, NULL, 'Contributions, gifts, grants', 'CURRENCY', 'ReturnData/IRS990EZ/ContributionsGiftsGrantsEtcAmt'),
+  (21002, NULL, NULL, 'Program service revenue', 'CURRENCY', 'ReturnData/IRS990EZ/ProgramServiceRevenueAmt'),
+  (21003, NULL, NULL, 'Membership dues', 'CURRENCY', 'ReturnData/IRS990EZ/MembershipDuesAmt'),
+  (21004, NULL, NULL, 'Investment income', 'CURRENCY', 'ReturnData/IRS990EZ/InvestmentIncomeAmt'),
+  (21005, NULL, NULL, 'Gross amount from sale of assets', 'CURRENCY', 'ReturnData/IRS990EZ/GrossAmountSaleAssetsAmt'),
+  (21006, NULL, NULL, 'Cost basis and sales expenses', 'CURRENCY', 'ReturnData/IRS990EZ/CostBasisAndSalesExpensesAmt'),
+  (21007, NULL, NULL, 'Gain or loss from sale of assets', 'CURRENCY', 'ReturnData/IRS990EZ/GainOrLossFromSaleOfAssetsAmt'),
+  (21008, NULL, NULL, 'Gaming gross income', 'CURRENCY', 'ReturnData/IRS990EZ/GamingGrossIncomeAmt'),
+  (21009, NULL, NULL, 'Gaming direct expenses', 'CURRENCY', 'ReturnData/IRS990EZ/GamingDirectExpensesAmt'),
+  (21010, NULL, NULL, 'Net income from gaming and fundraising', 'CURRENCY', 'ReturnData/IRS990EZ/GamingOrFundraisingNtIncmAmt'),
+  (21011, NULL, NULL, 'Gross sales of inventory', 'CURRENCY', 'ReturnData/IRS990EZ/GrossSalesOfInventoryAmt'),
+  (21012, NULL, NULL, 'Cost of goods sold', 'CURRENCY', 'ReturnData/IRS990EZ/CostOfGoodsSoldAmt'),
+  (21013, NULL, NULL, 'Gross profit from inventory', 'CURRENCY', 'ReturnData/IRS990EZ/GrossProftLossSlsOfInvntryAmt'),
+  (21014, NULL, NULL, 'Other revenue', 'CURRENCY', 'ReturnData/IRS990EZ/OtherRevenueTotalAmt'),
+  (21015, NULL, NULL, 'Total revenue', 'CURRENCY', 'ReturnData/IRS990EZ/TotalRevenueAmt'),
+  -- Part I Expenses
+  (21016, NULL, NULL, 'Grants and similar amounts paid', 'CURRENCY', 'ReturnData/IRS990EZ/GrantsAndSimilarAmountsPaidAmt'),
+  (21017, NULL, NULL, 'Benefits paid to members', 'CURRENCY', 'ReturnData/IRS990EZ/BenefitsPaidToOrForMembersAmt'),
+  (21018, NULL, NULL, 'Salaries and employee benefits', 'CURRENCY', 'ReturnData/IRS990EZ/SalariesOtherCompEmpBnftsAmt'),
+  (21019, NULL, NULL, 'Professional fees and contractor payments', 'CURRENCY', 'ReturnData/IRS990EZ/FeesAndOtherPymtToIndCntrctAmt'),
+  (21020, NULL, NULL, 'Occupancy, rent, utilities, and maintenance', 'CURRENCY', 'ReturnData/IRS990EZ/OccupancyRentUtltsAndMaintAmt'),
+  (21021, NULL, NULL, 'Printing, publications, postage', 'CURRENCY', 'ReturnData/IRS990EZ/PrintingPublicationsPostageAmt'),
+  (21022, NULL, NULL, 'Other expenses', 'CURRENCY', 'ReturnData/IRS990EZ/OtherExpensesTotalAmt'),
+  (21023, NULL, NULL, 'Total expenses', 'CURRENCY', 'ReturnData/IRS990EZ/TotalExpensesAmt'),
+  (21024, NULL, NULL, 'Excess or deficit for the year', 'CURRENCY', 'ReturnData/IRS990EZ/ExcessOrDeficitForYearAmt'),
+  (21025, NULL, NULL, 'Net assets beginning of year', 'CURRENCY', 'ReturnData/IRS990EZ/NetAssetsOrFundBalancesBOYAmt'),
+  (21026, NULL, NULL, 'Other changes in net assets', 'CURRENCY', 'ReturnData/IRS990EZ/OtherChangesInNetAssetsAmt'),
+  (21027, NULL, NULL, 'Net assets end of year', 'CURRENCY', 'ReturnData/IRS990EZ/NetAssetsOrFundBalancesEOYAmt'),
+  -- Part II Balance Sheet
+  (22001, NULL, NULL, 'Cash, savings, and investments', 'CURRENCY', 'ReturnData/IRS990EZ/CashSavingsAndInvestmentsEOYAmt'),
+  (22002, NULL, NULL, 'Land and buildings', 'CURRENCY', 'ReturnData/IRS990EZ/LandAndBuildingsEOYAmt'),
+  (22003, NULL, NULL, 'Other assets', 'CURRENCY', 'ReturnData/IRS990EZ/OtherAssetsEOYAmt'),
+  (22004, NULL, NULL, 'Total assets', 'CURRENCY', 'ReturnData/IRS990EZ/TotalAssetsEOYAmt'),
+  (22005, NULL, NULL, 'Total liabilities', 'CURRENCY', 'ReturnData/IRS990EZ/TotalLiabilitiesEOYAmt'),
+  -- Part III Mission
+  (23001, NULL, NULL, 'Primary exempt purpose', 'TEXT', 'ReturnData/IRS990EZ/PrimaryExemptPurposeTxt'),
+  -- Part V Other
+  (24001, NULL, NULL, 'Total employees', 'INTEGER', 'ReturnData/IRS990EZ/TotalEmployeeCnt');
+
+-- =======================
+-- 990-N (e-Postcard)
+-- =======================
+INSERT OR IGNORE INTO
+  part (part_id, form_code, part_number, part_name)
+VALUES
+  (31, "990N", 'I', 'Organization Information');
+
+INSERT OR IGNORE INTO
+  section (section_id, part_id, section_code, section_name)
+VALUES
+  (3100, 31, 'NONE', NULL);
+
+INSERT OR IGNORE INTO
+  line (line_id, section_id, line_number, line_label, data_type)
+VALUES
+  (31001, 3100, '1', 'Gross receipts not greater than $50,000', 'BOOLEAN'),
+  (31002, 3100, '2', '501(c)(3) organization indicator', 'BOOLEAN'),
+  (31003, 3100, '3', 'Organization terminated indicator', 'BOOLEAN'),
+  (31004, 3100, '4', 'Website address', 'TEXT'),
+  (31005, 3100, '5', 'Principal officer name', 'TEXT');
+
+INSERT OR IGNORE INTO
+  field (
+    line_id,
+    sub_letter,
+    column_code,
+    box_label,
+    data_type,
+    xml_path
+  )
+VALUES
+  (31001, NULL, NULL, 'Gross receipts not greater than $50,000', 'BOOLEAN', 'ReturnData/IRS990N/GrossReceiptsNotGreaterThan50000Ind'),
+  (31002, NULL, NULL, '501(c)(3) organization', 'BOOLEAN', 'ReturnData/IRS990N/Organization501c3Ind'),
+  (31003, NULL, NULL, 'Organization terminated', 'BOOLEAN', 'ReturnData/IRS990N/OrganizationTerminatedInd'),
+  (31004, NULL, NULL, 'Website address', 'TEXT', 'ReturnData/IRS990N/WebsiteAddressTxt'),
+  (31005, NULL, NULL, 'Principal officer name', 'TEXT', 'ReturnData/IRS990N/PrincipalOfficerNm');
+
+-- =======================
+-- 990-PF
+-- =======================
+INSERT OR IGNORE INTO
+  part (part_id, form_code, part_number, part_name)
+VALUES
+  (41, "990PF", 'I',   'Analysis of Revenue and Expenses'),
+  (42, "990PF", 'II',  'Balance Sheets'),
+  (43, "990PF", 'VI',  'Excise Tax Based on Investment Income'),
+  (44, "990PF", 'XII', 'Qualifying Distributions');
+
+INSERT OR IGNORE INTO
+  section (section_id, part_id, section_code, section_name)
+VALUES
+  (4100, 41, 'NONE', NULL),
+  (4200, 42, 'NONE', NULL),
+  (4300, 43, 'NONE', NULL),
+  (4400, 44, 'NONE', NULL);
+
+INSERT OR IGNORE INTO
+  line (line_id, section_id, line_number, line_label, data_type)
+VALUES
+  -- Part I Revenue (per books column)
+  (41001, 4100, '1',   'Contributions, gifts, grants received', 'CURRENCY'),
+  (41002, 4100, '2',   'Distributions from split-interest trusts', 'CURRENCY'),
+  (41003, 4100, '3',   'Interest on savings and temporary cash investments', 'CURRENCY'),
+  (41004, 4100, '4',   'Dividends and interest from securities', 'CURRENCY'),
+  (41005, 4100, '5a',  'Gross rents', 'CURRENCY'),
+  (41006, 4100, '6a',  'Net gain or (loss) from sale of assets not on line 10', 'CURRENCY'),
+  (41007, 4100, '10',  'Gross profit or (loss) from sales of inventory', 'CURRENCY'),
+  (41008, 4100, '11',  'Other income', 'CURRENCY'),
+  (41009, 4100, '12',  'Total revenue', 'CURRENCY'),
+  -- Part I Expenses
+  (41010, 4100, '13',  'Compensation of officers, directors, trustees, etc.', 'CURRENCY'),
+  (41011, 4100, '14',  'Other employee salaries and wages', 'CURRENCY'),
+  (41012, 4100, '15',  'Pension plans, employee benefits', 'CURRENCY'),
+  (41013, 4100, '16a', 'Legal fees', 'CURRENCY'),
+  (41014, 4100, '16b', 'Accounting fees', 'CURRENCY'),
+  (41015, 4100, '16c', 'Other professional fees', 'CURRENCY'),
+  (41016, 4100, '17',  'Interest', 'CURRENCY'),
+  (41017, 4100, '18',  'Taxes', 'CURRENCY'),
+  (41018, 4100, '19',  'Depreciation and depletion', 'CURRENCY'),
+  (41019, 4100, '20',  'Occupancy', 'CURRENCY'),
+  (41020, 4100, '21',  'Travel, conferences, and meetings', 'CURRENCY'),
+  (41021, 4100, '22',  'Printing and publications', 'CURRENCY'),
+  (41022, 4100, '23',  'Other expenses', 'CURRENCY'),
+  (41023, 4100, '24',  'Total operating and administrative expenses', 'CURRENCY'),
+  (41024, 4100, '25',  'Contributions, gifts, grants paid', 'CURRENCY'),
+  (41025, 4100, '26',  'Total expenses and disbursements', 'CURRENCY'),
+  (41026, 4100, '27a', 'Excess of revenue over expenses and disbursements', 'CURRENCY'),
+  -- Part II Balance Sheet
+  (42001, 4200, '16',  'Total assets', 'CURRENCY'),
+  (42002, 4200, '22',  'Total liabilities', 'CURRENCY'),
+  (42003, 4200, '24',  'Net assets or fund balances', 'CURRENCY'),
+  -- Part VI Excise Tax
+  (43001, 4300, '5',   'Domestic foundations subject to 1.39% tax', 'CURRENCY'),
+  -- Part XII Qualifying Distributions
+  (44001, 4400, '4',   'Qualifying distributions (total)', 'CURRENCY');
+
+INSERT OR IGNORE INTO
+  field (
+    line_id,
+    sub_letter,
+    column_code,
+    box_label,
+    data_type,
+    xml_path
+  )
+VALUES
+  -- Part I Revenue (per books column, column A)
+  (41001, NULL, 'A', 'Contributions received — per books', 'CURRENCY', 'ReturnData/IRS990PF/AnalysisRevExpnssGrp/ContriRcvdRevAndExpnssGrp/RevenueAndExpensesPerBooksAmt'),
+  (41003, NULL, 'A', 'Interest income — per books', 'CURRENCY', 'ReturnData/IRS990PF/AnalysisRevExpnssGrp/IntrstRcvdRevAndExpnssGrp/RevenueAndExpensesPerBooksAmt'),
+  (41004, NULL, 'A', 'Dividends and interest from securities — per books', 'CURRENCY', 'ReturnData/IRS990PF/AnalysisRevExpnssGrp/DividendsRevAndExpnssGrp/RevenueAndExpensesPerBooksAmt'),
+  (41009, NULL, 'A', 'Total revenue — per books', 'CURRENCY', 'ReturnData/IRS990PF/AnalysisRevExpnssGrp/TotalRevAndExpnssGrp/RevenueAndExpensesPerBooksAmt'),
+  (41009, NULL, 'B', 'Total revenue — net investment income', 'CURRENCY', 'ReturnData/IRS990PF/AnalysisRevExpnssGrp/TotalRevAndExpnssGrp/NetInvestmentIncomeAmt'),
+  -- Part I Expenses (per books column)
+  (41010, NULL, 'A', 'Officer compensation — per books', 'CURRENCY', 'ReturnData/IRS990PF/AnalysisRevExpnssGrp/OfficerDirTrstKeyEmplInfoGrp/CompOfHghstPdEmplOrNoEmplInd'),
+  (41025, NULL, 'A', 'Total expenses — per books', 'CURRENCY', 'ReturnData/IRS990PF/AnalysisRevExpnssGrp/TotExpnsAndDsbrsmntsGrp/RevenueAndExpensesPerBooksAmt'),
+  (41025, NULL, 'B', 'Total expenses — net investment income', 'CURRENCY', 'ReturnData/IRS990PF/AnalysisRevExpnssGrp/TotExpnsAndDsbrsmntsGrp/NetInvestmentIncomeAmt'),
+  (41026, NULL, 'A', 'Excess of revenue over expenses — per books', 'CURRENCY', 'ReturnData/IRS990PF/AnalysisRevExpnssGrp/ExcessRevenueOverExpnssGrp/RevenueAndExpensesPerBooksAmt'),
+  -- Part II Balance Sheet (end of year)
+  (42001, NULL, 'B', 'Total assets — end of year', 'CURRENCY', 'ReturnData/IRS990PF/TotalAssetsEOYAmt'),
+  (42002, NULL, 'B', 'Total liabilities — end of year', 'CURRENCY', 'ReturnData/IRS990PF/TotalLiabilitiesEOYAmt'),
+  (42003, NULL, 'B', 'Net assets or fund balances — end of year', 'CURRENCY', 'ReturnData/IRS990PF/TotNetAstOrFundBalancesEOYAmt'),
+  -- Part XII Qualifying Distributions
+  (44001, NULL, NULL, 'Total qualifying distributions', 'CURRENCY', 'ReturnData/IRS990PF/TotalQualifyingDistribtnsAmt');
+
+-- =======================
+-- 990-T
+-- =======================
+INSERT OR IGNORE INTO
+  part (part_id, form_code, part_number, part_name)
+VALUES
+  (51, "990T", 'I',  'Unrelated Trade or Business Income'),
+  (52, "990T", 'II', 'Deductions Not Taken Elsewhere'),
+  (53, "990T", 'IV', 'Tax Computation');
+
+INSERT OR IGNORE INTO
+  section (section_id, part_id, section_code, section_name)
+VALUES
+  (5100, 51, 'NONE', NULL),
+  (5200, 52, 'NONE', NULL),
+  (5300, 53, 'NONE', NULL);
+
+INSERT OR IGNORE INTO
+  line (line_id, section_id, line_number, line_label, data_type)
+VALUES
+  -- Part I UBI
+  (51001, 5100, '13', 'Total of unrelated business income', 'CURRENCY'),
+  (51002, 5100, '14', 'Deductions', 'CURRENCY'),
+  (51003, 5100, '15', 'Unrelated business taxable income before NOL deduction', 'CURRENCY'),
+  (51004, 5100, '16', 'Net operating loss deduction', 'CURRENCY'),
+  (51005, 5100, '17', 'Unrelated business taxable income', 'CURRENCY'),
+  -- Part IV Tax Computation
+  (53001, 5300, '1',  'Unrelated business taxable income', 'CURRENCY'),
+  (53002, 5300, '2',  'Tax', 'CURRENCY'),
+  (53003, 5300, '10', 'Total tax', 'CURRENCY');
+
+INSERT OR IGNORE INTO
+  field (
+    line_id,
+    sub_letter,
+    column_code,
+    box_label,
+    data_type,
+    xml_path
+  )
+VALUES
+  -- Part I UBI
+  (51001, NULL, NULL, 'Total gross income from unrelated trade or business', 'CURRENCY', 'ReturnData/IRS990T/TotalGrossUBIAmt'),
+  (51002, NULL, NULL, 'Total deductions', 'CURRENCY', 'ReturnData/IRS990T/TotalDeductionsAmt'),
+  (51003, NULL, NULL, 'Unrelated business taxable income before NOL', 'CURRENCY', 'ReturnData/IRS990T/UBIBeforeNOLDedAmt'),
+  (51004, NULL, NULL, 'Net operating loss deduction', 'CURRENCY', 'ReturnData/IRS990T/NetOperatingLossDeductionAmt'),
+  (51005, NULL, NULL, 'Unrelated business taxable income', 'CURRENCY', 'ReturnData/IRS990T/UnrelatedBusinessTaxableIncm'),
+  -- Part IV Tax
+  (53001, NULL, NULL, 'Unrelated business taxable income', 'CURRENCY', 'ReturnData/IRS990T/TaxableIncome990TAmt'),
+  (53002, NULL, NULL, 'Tax on unrelated business taxable income', 'CURRENCY', 'ReturnData/IRS990T/TaxOnUBIAmt'),
+  (53003, NULL, NULL, 'Total tax', 'CURRENCY', 'ReturnData/IRS990T/TotalTaxAmt');

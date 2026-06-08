@@ -110,3 +110,8 @@ CREATE INDEX IF NOT EXISTS idx_reported_data_field ON reported_data (field_id);
 CREATE INDEX IF NOT EXISTS idx_filing_org ON filing (organization_id);
 
 CREATE INDEX IF NOT EXISTS idx_organization_name ON organization (name);
+
+CREATE TABLE IF NOT EXISTS migration (
+  name       TEXT PRIMARY KEY,
+  applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);

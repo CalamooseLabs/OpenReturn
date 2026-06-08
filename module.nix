@@ -188,6 +188,8 @@ in {
     # tries to restart the unit, so config changes always take effect immediately.
     system.activationScripts.openreturn-reset-failed = lib.stringAfter [ "users" ] ''
       systemctl reset-failed openreturn.service 2>/dev/null || true
+      systemctl reset-failed openreturn-init.service 2>/dev/null || true
+      systemctl reset-failed openreturn-migrate.service 2>/dev/null || true
       ${lib.optionalString hasModels
         "systemctl reset-failed openreturn-register-models.service 2>/dev/null || true"}
     '';
@@ -200,6 +202,68 @@ in {
       description = "openreturn service user";
     };
     users.groups.${cfg.group} = lib.mkIf (!cfg.runAsRoot) {};
+
+    # ------------------------------------------------------------------
+    # One-shot service: initialize database schema and seed data.
+    # Runs once on first deployment; subsequent runs are no-ops.
+    # ------------------------------------------------------------------
+    systemd.services.openreturn-init = {
+      description = "Initialize OpenReturn database";
+      wantedBy = [ "multi-user.target" ];
+      before    = [ "openreturn-migrate.service" "openreturn.service" ]
+                  ++ lib.optional hasModels "openreturn-register-models.service";
+
+      serviceConfig = {
+        Type             = "oneshot";
+        RemainAfterExit  = true;
+        User             = effectiveUser;
+        Group            = effectiveGroup;
+        WorkingDirectory = cfg.dataDir;
+        StateDirectory   = lib.removePrefix "/var/lib/" cfg.dataDir;
+        StateDirectoryMode = "0750";
+        PrivateTmp       = true;
+        ProtectSystem    = "strict";
+        ReadWritePaths   = [ cfg.dataDir ];
+        ProtectHome      = true;
+        NoNewPrivileges  = true;
+      };
+
+      script = ''
+        ${cfg.package}/bin/openreturn init
+      '';
+    };
+
+    # ------------------------------------------------------------------
+    # One-shot service: apply pending database migrations.
+    # Runs after init, before the server and model registration.
+    # ------------------------------------------------------------------
+    systemd.services.openreturn-migrate = {
+      description = "Apply OpenReturn database migrations";
+      wantedBy = [ "multi-user.target" ];
+      after     = [ "openreturn-init.service" ];
+      wants     = [ "openreturn-init.service" ];
+      before    = [ "openreturn.service" ]
+                  ++ lib.optional hasModels "openreturn-register-models.service";
+
+      serviceConfig = {
+        Type             = "oneshot";
+        RemainAfterExit  = true;
+        User             = effectiveUser;
+        Group            = effectiveGroup;
+        WorkingDirectory = cfg.dataDir;
+        StateDirectory   = lib.removePrefix "/var/lib/" cfg.dataDir;
+        StateDirectoryMode = "0750";
+        PrivateTmp       = true;
+        ProtectSystem    = "strict";
+        ReadWritePaths   = [ cfg.dataDir ];
+        ProtectHome      = true;
+        NoNewPrivileges  = true;
+      };
+
+      script = ''
+        ${cfg.package}/bin/openreturn migrate
+      '';
+    };
 
     # ------------------------------------------------------------------
     # One-shot service: register scoring models before the server starts.
@@ -236,8 +300,10 @@ in {
     systemd.services.openreturn = {
       description = "OpenReturn API server";
       wantedBy = [ "multi-user.target" ];
-      after  = [ "network.target" ] ++ lib.optional hasModels "openreturn-register-models.service";
-      wants  = lib.optional hasModels "openreturn-register-models.service";
+      after  = [ "network.target" "openreturn-migrate.service" ]
+               ++ lib.optional hasModels "openreturn-register-models.service";
+      wants  = [ "openreturn-migrate.service" ]
+               ++ lib.optional hasModels "openreturn-register-models.service";
 
       restartTriggers = [ cfg.package cfg.host (toString cfg.port) ];
 

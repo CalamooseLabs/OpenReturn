@@ -10,16 +10,13 @@ dependencies = [
 ]
 
 [project.scripts]
-openreturn = "main:main"
-openreturn-keys = "keys:main"
-openreturn-ingest = "ingest:main"
-openreturn-models = "models:main"
+openreturn = "cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools]
-py-modules = ["main", "keys", "ingest", "console", "models"]
+py-modules = ["cli", "main", "keys", "ingest", "console", "models"]
 
 [tool.setuptools.package-data]
 "*" = ["*.sql", "*.html"]

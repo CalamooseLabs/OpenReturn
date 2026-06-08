@@ -1,10 +1,72 @@
+import contextlib
+import io
 import sys
 import os
+import sqlite3
 import unittest
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
+import database.base as db_base
 from database.IRS990 import IRS990Database
+
+
+# ---------------------------------------------------------------------------
+# _open_connection
+# ---------------------------------------------------------------------------
+
+class TestOpenConnection(unittest.TestCase):
+
+    def setUp(self):
+        # Ensure DB_SECRET_KEY is absent between tests
+        os.environ.pop('DB_SECRET_KEY', None)
+
+    def tearDown(self):
+        os.environ.pop('DB_SECRET_KEY', None)
+
+    def test_no_key_returns_plain_sqlite(self):
+        conn = db_base._open_connection(':memory:')
+        self.assertIsInstance(conn, sqlite3.Connection)
+        conn.close()
+
+    def test_key_set_no_cipher_warns_and_falls_back(self):
+        os.environ['DB_SECRET_KEY'] = 'testpassword'
+        stderr_buf = io.StringIO()
+        with patch.object(db_base, '_HAS_CIPHER', False), \
+             contextlib.redirect_stderr(stderr_buf):
+            conn = db_base._open_connection(':memory:')
+        self.assertIsInstance(conn, sqlite3.Connection)
+        self.assertIn('sqlcipher3', stderr_buf.getvalue())
+        conn.close()
+
+    def test_key_set_with_cipher_uses_cipher_connect(self):
+        os.environ['DB_SECRET_KEY'] = 'testpassword'
+        mock_conn = MagicMock()
+        mock_cipher = MagicMock()
+        mock_cipher.connect.return_value = mock_conn
+        with patch.object(db_base, '_HAS_CIPHER', True), \
+             patch.object(db_base, '_sqlcipher', mock_cipher):
+            result = db_base._open_connection(':memory:')
+        mock_cipher.connect.assert_called_once_with(':memory:')
+        mock_conn.execute.assert_called_once_with("PRAGMA key='testpassword'")
+        self.assertIs(result, mock_conn)
+
+
+class TestDatabaseBase(unittest.TestCase):
+
+    def setUp(self):
+        self.db = IRS990Database(path=":memory:")
+
+    def tearDown(self):
+        self.db.close()
+
+    def test_commit_does_not_raise(self):
+        self.db.commit()
+
+    def test_begin_and_end_bulk_load(self):
+        self.db.begin_bulk_load()
+        self.db.end_bulk_load()
 
 
 class TestIRS990Database(unittest.TestCase):
@@ -185,27 +247,29 @@ class TestIRS990DatabaseListMethods(unittest.TestCase):
 
     def test_list_organizations_empty(self):
         result = self.db.list_organizations()
-        self.assertEqual(result, [])
+        self.assertEqual(result["organizations"], [])
+        self.assertEqual(result["total"], 0)
 
     def test_list_organizations_returns_inserted(self):
         self.db.upsert_organization("111111111", "Alpha Org")
         result = self.db.list_organizations()
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["ein"], "111111111")
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(result["organizations"][0]["ein"], "111111111")
 
     def test_list_organizations_multiple(self):
         self.db.upsert_organization("111111111", "Alpha Org")
         self.db.upsert_organization("222222222", "Beta Org")
         result = self.db.list_organizations()
-        self.assertEqual(len(result), 2)
+        self.assertEqual(result["total"], 2)
+        self.assertEqual(len(result["organizations"]), 2)
 
     def test_list_organizations_has_expected_keys(self):
         self.db.upsert_organization("111111111", "Alpha Org")
         result = self.db.list_organizations()
-        self.assertIn("ein", result[0])
-        self.assertIn("name", result[0])
-        self.assertIn("created_at", result[0])
-        self.assertIn("updated_at", result[0])
+        self.assertIn("ein", result["organizations"][0])
+        self.assertIn("name", result["organizations"][0])
+        self.assertIn("created_at", result["organizations"][0])
+        self.assertIn("updated_at", result["organizations"][0])
 
     # --- get_organization ---
 
@@ -307,6 +371,66 @@ class TestIRS990DatabaseListMethods(unittest.TestCase):
     def test_get_supported_forms_contains_990(self):
         result = self.db.get_supported_forms()
         self.assertIn("990", result)
+
+    def test_list_organizations_search_returns_match(self):
+        self.db.upsert_organization("111111111", "Alpha Org")
+        self.db.upsert_organization("222222222", "Beta Org")
+        result = self.db.list_organizations(search="Alpha")
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(result["organizations"][0]["name"], "Alpha Org")
+
+    def test_list_organizations_search_case_insensitive(self):
+        self.db.upsert_organization("111111111", "Alpha Org")
+        result = self.db.list_organizations(search="alpha")
+        self.assertEqual(result["total"], 1)
+
+    def test_list_organizations_search_no_match(self):
+        self.db.upsert_organization("111111111", "Alpha Org")
+        result = self.db.list_organizations(search="Zzz")
+        self.assertEqual(result["total"], 0)
+        self.assertEqual(result["organizations"], [])
+
+    def test_drop_and_restore_ingest_indexes(self):
+        self.db.drop_ingest_indexes()
+        self.db.restore_ingest_indexes()
+
+    def test_get_historical_values_empty(self):
+        self.db.upsert_organization("111111111", "Alpha Org")
+        result = self.db.get_historical_values("111111111")
+        self.assertIsInstance(result, dict)
+        self.assertEqual(result, {})
+
+    def test_get_historical_values_returns_values(self):
+        from database.IRS990 import IRS990Database
+        from scoring.engine import _PATHS
+        self.db.upsert_organization("333333333", "Hist Org")
+        self.db.connection.commit()
+        fid = self.db.create_filing("333333333", 2021, "990")
+        fid2 = self.db.create_filing("333333333", 2022, "990")
+        xpath = _PATHS['cy_rev']
+        xpath_index = self.db.get_xpath_index()
+        if xpath in xpath_index:
+            field_id = xpath_index[xpath]
+            self.db.store_reported_data(fid,  {field_id: "1000"})
+            self.db.store_reported_data(fid2, {field_id: "1500"})
+            self.db.connection.commit()
+            result = self.db.get_historical_values("333333333")
+            self.assertIn(xpath, result)
+            self.assertEqual(sorted(result[xpath]), [1000.0, 1500.0])
+
+    def test_get_historical_values_skips_non_numeric(self):
+        self.db.upsert_organization("444444444", "Bad Org")
+        self.db.connection.commit()
+        fid = self.db.create_filing("444444444", 2021, "990")
+        xpath_index = self.db.get_xpath_index()
+        from scoring.engine import _PATHS
+        xpath = _PATHS['cy_rev']
+        if xpath in xpath_index:
+            field_id = xpath_index[xpath]
+            self.db.store_reported_data(fid, {field_id: "not-a-number"})
+            self.db.connection.commit()
+            result = self.db.get_historical_values("444444444")
+            self.assertEqual(result.get(xpath, []), [])
 
 
 if __name__ == "__main__":

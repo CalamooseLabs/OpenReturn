@@ -6,6 +6,7 @@ import os
 import sys
 import tempfile
 import unittest
+import uuid
 import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -487,6 +488,110 @@ class TestTrunc(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# ingest.py — _resolve_uuids
+# ---------------------------------------------------------------------------
+
+class TestResolveUuids(unittest.TestCase):
+
+    def setUp(self):
+        from database.IRS990 import IRS990Database
+        self.db = IRS990Database(path=":memory:")
+        self.db.upsert_organization("123456789", "Test Org")
+
+    def tearDown(self):
+        self.db.close()
+
+    def test_empty_input_returns_empty(self):
+        result = ingest_mod._resolve_uuids(self.db, {})
+        self.assertEqual(result, {})
+
+    def test_matching_uuid_returns_empty_remap(self):
+        fid = self.db.create_filing("123456789", 2023, "990")
+        result = ingest_mod._resolve_uuids(self.db, {("123456789", 2023, "990"): fid})
+        self.assertEqual(result, {})
+
+    def test_different_uuid_is_remapped(self):
+        fid = self.db.create_filing("123456789", 2023, "990")
+        pre_uuid = str(uuid.uuid4())
+        result = ingest_mod._resolve_uuids(self.db, {("123456789", 2023, "990"): pre_uuid})
+        self.assertEqual(result, {pre_uuid: fid})
+
+    def test_multiple_keys_partial_remap(self):
+        fid2023 = self.db.create_filing("123456789", 2023, "990")
+        pre_uuid = str(uuid.uuid4())
+        filing_key_to_uuid = {
+            ("123456789", 2023, "990"): pre_uuid,
+            ("123456789", 2022, "990"): str(uuid.uuid4()),
+        }
+        result = ingest_mod._resolve_uuids(self.db, filing_key_to_uuid)
+        self.assertEqual(result, {pre_uuid: fid2023})
+
+
+# ---------------------------------------------------------------------------
+# ingest.py — _flush_zip
+# ---------------------------------------------------------------------------
+
+class TestFlushZip(unittest.TestCase):
+
+    def setUp(self):
+        from database.IRS990 import IRS990Database
+        self.db = IRS990Database(path=":memory:")
+        xpath_index = self.db.get_xpath_index()
+        self.field_id = list(xpath_index.values())[0]
+
+    def tearDown(self):
+        self.db.close()
+
+    def test_empty_lists_just_commits(self):
+        ingest_mod._flush_zip(self.db, [], [], {}, [])
+
+    def test_inserts_organization(self):
+        ingest_mod._flush_zip(self.db, [("111111111", "Alpha")], [], {}, [])
+        row = self.db.cursor.execute(
+            "SELECT name FROM organization WHERE ein = ?", ("111111111",)
+        ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row[0], "Alpha")
+
+    def test_inserts_filing(self):
+        pre_uuid = str(uuid.uuid4())
+        pending_orgs = [("111111111", "Alpha")]
+        pending_filings = [(pre_uuid, 2023, "111111111", "990", "f.xml", "z.zip")]
+        filing_key_to_uuid = {("111111111", 2023, "990"): pre_uuid}
+        ingest_mod._flush_zip(self.db, pending_orgs, pending_filings, filing_key_to_uuid, [])
+        row = self.db.cursor.execute(
+            "SELECT uuid FROM filing WHERE organization_id = ?", ("111111111",)
+        ).fetchone()
+        self.assertIsNotNone(row)
+
+    def test_inserts_reported_data(self):
+        pre_uuid = str(uuid.uuid4())
+        pending_orgs = [("111111111", "Alpha")]
+        pending_filings = [(pre_uuid, 2023, "111111111", "990", "f.xml", "z.zip")]
+        filing_key_to_uuid = {("111111111", 2023, "990"): pre_uuid}
+        pending_data = [(pre_uuid, self.field_id, "testval")]
+        ingest_mod._flush_zip(self.db, pending_orgs, pending_filings, filing_key_to_uuid, pending_data)
+        count = self.db.cursor.execute(
+            "SELECT COUNT(*) FROM reported_data WHERE filing_id = ?", (pre_uuid,)
+        ).fetchone()[0]
+        self.assertEqual(count, 1)
+
+    def test_uuid_remap_when_filing_exists(self):
+        self.db.upsert_organization("111111111", "Alpha")
+        actual_uuid = self.db.create_filing("111111111", 2023, "990")
+        pre_uuid = str(uuid.uuid4())
+        pending_orgs = [("111111111", "Alpha")]
+        pending_filings = [(pre_uuid, 2023, "111111111", "990", "f.xml", "z.zip")]
+        filing_key_to_uuid = {("111111111", 2023, "990"): pre_uuid}
+        pending_data = [(pre_uuid, self.field_id, "value")]
+        ingest_mod._flush_zip(self.db, pending_orgs, pending_filings, filing_key_to_uuid, pending_data)
+        count = self.db.cursor.execute(
+            "SELECT COUNT(*) FROM reported_data WHERE filing_id = ?", (actual_uuid,)
+        ).fetchone()[0]
+        self.assertEqual(count, 1)
+
+
+# ---------------------------------------------------------------------------
 # ingest.py — main()
 # ---------------------------------------------------------------------------
 
@@ -729,6 +834,164 @@ class TestIngestMain(unittest.TestCase):
                  patch('ingest.UploadRouter', return_value=mock_router):
                 self._run_main(['ingest', '--workers', '1', str(zip_dir)], cwd=td)
         mock_db.close.assert_called_once()
+
+    def test_invalid_zip_sequential_mode(self):
+        """Covers lines 148-150: xml_names is None in the sequential (--workers 1) path."""
+        with tempfile.TemporaryDirectory() as td:
+            (Path(td) / "OpenReturn.db").write_bytes(b"")
+            zip_dir = Path(td) / "zips"
+            zip_dir.mkdir()
+            (zip_dir / "bad.zip").write_bytes(b"not a zip")
+
+            mock_db = MagicMock()
+            mock_router = MagicMock()
+            with patch('ingest.ScoreDatabase', return_value=mock_db), \
+                 patch('ingest.UploadRouter', return_value=mock_router):
+                result, out, _ = self._run_main(
+                    ['ingest', '--workers', '1', str(zip_dir)], cwd=td
+                )
+        self.assertEqual(result, 0)
+        self.assertIn("invalid ZIP", out)
+
+
+# ---------------------------------------------------------------------------
+# ingest.py — parallel path (lines 234-313)
+# ---------------------------------------------------------------------------
+
+class TestIngestParallel(unittest.TestCase):
+    """Cover the parallel ProcessPoolExecutor path by mocking the executor."""
+
+    def _run_main(self, argv, extra_patches):
+        with contextlib.ExitStack() as stack:
+            for p in extra_patches:
+                stack.enter_context(p)
+            buf = io.StringIO()
+            err_buf = io.StringIO()
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err_buf):
+                with patch('sys.argv', argv):
+                    result = ingest_mod.main()
+        return result, buf.getvalue()
+
+    def _make_mock_pool(self, submit_result=None, submit_raises=None):
+        mock_future = MagicMock()
+        if submit_raises is not None:
+            mock_future.result.side_effect = submit_raises
+        else:
+            mock_future.result.return_value = submit_result
+
+        mock_pool = MagicMock()
+        mock_pool.__enter__ = MagicMock(return_value=mock_pool)
+        mock_pool.__exit__ = MagicMock(return_value=False)
+        mock_pool.submit.return_value = mock_future
+        return mock_pool
+
+    @staticmethod
+    def _fake_as_completed(futures):
+        return iter(futures.keys())
+
+    def test_parallel_processes_parsed_result(self):
+        """Covers print(zip_hdr), futures loop, and summary print in parallel mode."""
+        parsed = {
+            'status': 'parsed', 'ein': '123456789', 'name': 'Test Org', 'year': 2023,
+            'form_code': '990', 'file': 'filing.xml', 'zip_filename': 'test.zip',
+            'values': {},
+        }
+        mock_db = MagicMock()
+        mock_pool = self._make_mock_pool(submit_result=parsed)
+
+        with tempfile.TemporaryDirectory() as td:
+            zip_dir = Path(td) / "zips"
+            zip_dir.mkdir()
+            _make_zip(zip_dir, "test.zip", {"filing.xml": _MINIMAL_XML})
+
+            result, out = self._run_main(
+                ['ingest', '--workers', '2', str(zip_dir)],
+                extra_patches=[
+                    patch('ingest.ScoreDatabase', return_value=mock_db),
+                    patch('ingest.UploadRouter', return_value=MagicMock()),
+                    patch('ingest.ProcessPoolExecutor', return_value=mock_pool),
+                    patch('ingest.as_completed', side_effect=self._fake_as_completed),
+                ],
+            )
+        self.assertEqual(result, 0)
+        self.assertIn("stored", out)
+
+    def test_parallel_future_exception_counts_error(self):
+        """Covers except-block (lines 258-262) when fut.result() raises."""
+        mock_db = MagicMock()
+        mock_pool = self._make_mock_pool(submit_raises=RuntimeError("worker died"))
+
+        with tempfile.TemporaryDirectory() as td:
+            zip_dir = Path(td) / "zips"
+            zip_dir.mkdir()
+            _make_zip(zip_dir, "test.zip", {"filing.xml": _MINIMAL_XML})
+
+            result, out = self._run_main(
+                ['ingest', '--workers', '2', str(zip_dir)],
+                extra_patches=[
+                    patch('ingest.ScoreDatabase', return_value=mock_db),
+                    patch('ingest.UploadRouter', return_value=MagicMock()),
+                    patch('ingest.ProcessPoolExecutor', return_value=mock_pool),
+                    patch('ingest.as_completed', side_effect=self._fake_as_completed),
+                ],
+            )
+        self.assertEqual(result, 0)
+        self.assertIn("errors", out)
+
+    def test_parallel_parsed_inner_exception_counts_error(self):
+        """Covers inner except-block (lines 290-291) when parsed dict is incomplete."""
+        parsed = {
+            'status': 'parsed', 'ein': '123456789', 'year': 2023,
+            'form_code': '990', 'file': 'filing.xml', 'zip_filename': 'test.zip',
+            # 'name' missing → KeyError inside the try block
+        }
+        mock_db = MagicMock()
+        mock_pool = self._make_mock_pool(submit_result=parsed)
+
+        with tempfile.TemporaryDirectory() as td:
+            zip_dir = Path(td) / "zips"
+            zip_dir.mkdir()
+            _make_zip(zip_dir, "test.zip", {"filing.xml": _MINIMAL_XML})
+
+            result, _ = self._run_main(
+                ['ingest', '--workers', '2', str(zip_dir)],
+                extra_patches=[
+                    patch('ingest.ScoreDatabase', return_value=mock_db),
+                    patch('ingest.UploadRouter', return_value=MagicMock()),
+                    patch('ingest.ProcessPoolExecutor', return_value=mock_pool),
+                    patch('ingest.as_completed', side_effect=self._fake_as_completed),
+                ],
+            )
+        self.assertEqual(result, 0)
+
+    def test_parallel_no_xml_zip_alongside_valid_zip(self):
+        """Covers n_xml == 0 branch (lines 236-238) in parallel mode."""
+        parsed = {
+            'status': 'parsed', 'ein': '123456789', 'name': 'Test Org', 'year': 2023,
+            'form_code': '990', 'file': 'filing.xml', 'zip_filename': 'zzz_filing.zip',
+            'values': {},
+        }
+        mock_db = MagicMock()
+        mock_pool = self._make_mock_pool(submit_result=parsed)
+
+        with tempfile.TemporaryDirectory() as td:
+            zip_dir = Path(td) / "zips"
+            zip_dir.mkdir()
+            with zipfile.ZipFile(zip_dir / "aaa_noxml.zip", 'w') as zf:
+                zf.writestr("readme.txt", "no xml here")
+            _make_zip(zip_dir, "zzz_filing.zip", {"filing.xml": _MINIMAL_XML})
+
+            result, out = self._run_main(
+                ['ingest', '--workers', '2', str(zip_dir)],
+                extra_patches=[
+                    patch('ingest.ScoreDatabase', return_value=mock_db),
+                    patch('ingest.UploadRouter', return_value=MagicMock()),
+                    patch('ingest.ProcessPoolExecutor', return_value=mock_pool),
+                    patch('ingest.as_completed', side_effect=self._fake_as_completed),
+                ],
+            )
+        self.assertEqual(result, 0)
+        self.assertIn("no XML files", out)
 
 
 if __name__ == '__main__':  # pragma: no cover

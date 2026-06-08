@@ -76,18 +76,7 @@ def _flush_zip(db, pending_orgs, pending_filings, filing_key_to_uuid, pending_da
     db.commit()
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(
-        prog='openreturn-ingest',
-        description='Bulk-ingest a directory of 990 ZIP files into OpenReturn.',
-    )
-    ap.add_argument('directory', help='Path to a directory of .zip files')
-    ap.add_argument(
-        '--workers', type=int, default=os.cpu_count() or 4,
-        help='Parallel XML parser processes (default: CPU count)',
-    )
-    args = ap.parse_args()
-
+def cmd_ingest(args) -> int:
     dir_path = Path(args.directory)
     if not dir_path.is_dir():
         print(f"Not a directory: {dir_path}", file=sys.stderr)
@@ -328,6 +317,20 @@ def main() -> int:
 
     db.close()
     return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        prog='openreturn-ingest',
+        description='Bulk-ingest a directory of 990 ZIP files into OpenReturn.',
+    )
+    ap.add_argument('directory', help='Path to a directory of .zip files')
+    ap.add_argument(
+        '--workers', type=int, default=os.cpu_count() or 4,
+        help='Parallel XML parser processes (default: CPU count)',
+    )
+    args = ap.parse_args()
+    return cmd_ingest(args)
 
 
 if __name__ == '__main__':  # pragma: no cover

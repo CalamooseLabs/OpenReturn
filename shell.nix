@@ -23,7 +23,7 @@
     PYTHONPATH=src pytest tests "''${@}"
   '';
   runserver = pkgs.writeShellScriptBin "runserver" ''
-    python3 src/main.py "''${@}"
+    python3 src/cli.py serve "''${@}"
   '';
   gcommit = pkgs.writeShellScriptBin "gcommit" ''
     msg_file="GIT_COMMIT_MSG"

@@ -98,7 +98,8 @@ class TestValidateTomlClean(unittest.TestCase):
             n = FORMULA_INPUT_COUNTS[ft]
             all_keys = ['prog', 'admin', 'fund', 'total_exp',
                         'cy_exp', 'cy_rev', 'contrib', 'liabilities']
-            inputs = all_keys[:n]
+            # None = variable-length: use 2 inputs; integer = exact count
+            inputs = all_keys[:2] if n is None else all_keys[:n]
             data = {
                 'model': _valid_model(),
                 'factor': [_valid_factor(formula_type=ft, inputs=inputs)],
@@ -294,9 +295,12 @@ class TestValidateTomlFactors(unittest.TestCase):
 
 class TestValidateTomlWeight(unittest.TestCase):
 
-    def test_zero_weight_is_error(self):
-        data = {'model': _valid_model(), 'factor': [_valid_factor(weight=0)]}
-        self.assertTrue(any('weight' in e for e in _errors(data)))
+    def test_zero_weight_accepted(self):
+        data = {
+            'model': _valid_model(),
+            'factor': [_valid_factor('Intermediate', weight=0), _valid_factor('Final', weight=1.0)],
+        }
+        self.assertFalse(any('weight' in e for e in _errors(data)))
 
     def test_negative_weight_is_error(self):
         data = {'model': _valid_model(), 'factor': [_valid_factor(weight=-0.1)]}
@@ -365,11 +369,145 @@ class TestValidateTomlInputs(unittest.TestCase):
         data = {'model': _valid_model(), 'factor': [f]}
         self.assertFalse(any('require' in e.lower() for e in _errors(data)))
 
+    def test_variable_formula_zero_inputs_is_error(self):
+        for ft in ('sum', 'average', 'min', 'max'):
+            f = {'name': ft, 'weight': 1.0, 'formula_type': ft, 'inputs': [],
+                 'direction': 'higher', 'benchmark_lo': 0.0, 'benchmark_hi': 1.0}
+            data = {'model': _valid_model(), 'factor': [f]}
+            self.assertTrue(_errors(data), msg=f"Expected error for {ft!r} with 0 inputs")
+
+    def test_variable_formula_single_input_accepted(self):
+        for ft in ('sum', 'average', 'min', 'max'):
+            f = _valid_factor(formula_type=ft, inputs=['prog'])
+            data = {'model': _valid_model(), 'factor': [f]}
+            self.assertFalse(
+                any('require' in e.lower() for e in _errors(data)),
+                msg=f"Unexpected count error for {ft!r}"
+            )
+
+    def test_variable_formula_many_inputs_accepted(self):
+        for ft in ('sum', 'average', 'min', 'max'):
+            f = _valid_factor(formula_type=ft, inputs=['prog', 'admin', 'fund', 'cy_rev'])
+            data = {'model': _valid_model(), 'factor': [f]}
+            self.assertFalse(
+                any('require' in e.lower() for e in _errors(data)),
+                msg=f"Unexpected count error for {ft!r}"
+            )
+
+    def test_historical_formula_one_input_accepted(self):
+        for ft in ('running_average', 'cumulative_sum', 'historical_min', 'historical_max'):
+            f = _valid_factor(formula_type=ft, inputs=['cy_rev'])
+            data = {'model': _valid_model(), 'factor': [f]}
+            self.assertFalse(
+                any('require' in e.lower() for e in _errors(data)),
+                msg=f"Unexpected error for {ft!r}"
+            )
+
+    def test_historical_formula_wrong_count_is_error(self):
+        for ft in ('running_average', 'cumulative_sum', 'historical_min', 'historical_max'):
+            f = _valid_factor(formula_type=ft, inputs=['cy_rev', 'cy_exp'])
+            data = {'model': _valid_model(), 'factor': [f]}
+            self.assertTrue(
+                any('require' in e.lower() or 'inputs' in e.lower() for e in _errors(data)),
+                msg=f"Expected count error for {ft!r}"
+            )
+
     def test_inputs_not_a_list_is_error(self):
         f = _valid_factor()
         f['inputs'] = 'not-a-list'
         data = {'model': _valid_model(), 'factor': [f]}
         self.assertTrue(any('inputs' in e.lower() for e in _errors(data)))
+
+    def test_factor_ref_to_existing_factor_accepted(self):
+        data = {
+            'model': _valid_model(),
+            'factor': [
+                _valid_factor('Upstream', weight=0),
+                _valid_factor('Downstream', inputs=['factor:Upstream', 'total_exp'], weight=1.0),
+            ],
+        }
+        self.assertEqual(_errors(data), [])
+
+    def test_factor_ref_to_unknown_factor_is_error(self):
+        data = {
+            'model': _valid_model(),
+            'factor': [_valid_factor(inputs=['factor:Ghost', 'total_exp'])],
+        }
+        self.assertTrue(any('Ghost' in e for e in _errors(data)))
+
+    def test_factor_ref_empty_name_is_error(self):
+        data = {
+            'model': _valid_model(),
+            'factor': [_valid_factor(inputs=['factor:', 'total_exp'])],
+        }
+        self.assertTrue(_errors(data))
+
+    def test_factor_circular_dependency_is_error(self):
+        data = {
+            'model': _valid_model(),
+            'factor': [
+                _valid_factor('A', inputs=['factor:B', 'total_exp'], weight=0.5),
+                _valid_factor('B', inputs=['factor:A', 'total_exp'], weight=0.5),
+            ],
+        }
+        self.assertTrue(any('circular' in e.lower() for e in _errors(data)))
+
+    def test_factor_self_reference_is_error(self):
+        data = {
+            'model': _valid_model(),
+            'factor': [_valid_factor('Loop', inputs=['factor:Loop', 'total_exp'])],
+        }
+        self.assertTrue(any('circular' in e.lower() for e in _errors(data)))
+
+    def test_non_string_non_path_input_is_error(self):
+        # A bare integer in inputs (not a string numeric literal) hits the non-string branch
+        f = _valid_factor(formula_type='ratio', inputs=[99999, 'total_exp'])
+        data = {'model': _valid_model(), 'factor': [f]}
+        self.assertTrue(any('unknown input key' in e for e in _errors(data)))
+
+    def test_numeric_literal_input_accepted(self):
+        f = _valid_factor(formula_type='clamp', inputs=['cy_rev', '0', '1'])
+        data = {'model': _valid_model(), 'factor': [f]}
+        self.assertEqual(_errors(data), [])
+
+    def test_clamp_three_inputs_accepted(self):
+        f = _valid_factor(formula_type='clamp', inputs=['cy_rev', 'cy_exp', 'prog'])
+        data = {'model': _valid_model(), 'factor': [f]}
+        self.assertEqual(_errors(data), [])
+
+    def test_clamp_wrong_count_is_error(self):
+        f = _valid_factor(formula_type='clamp', inputs=['cy_rev', 'cy_exp'])
+        data = {'model': _valid_model(), 'factor': [f]}
+        self.assertTrue(any('require' in e.lower() or 'inputs' in e.lower() for e in _errors(data)))
+
+    def test_median_zero_inputs_is_error(self):
+        f = {'name': 'M', 'weight': 1.0, 'formula_type': 'median', 'inputs': [],
+             'direction': 'higher', 'benchmark_lo': 0.0, 'benchmark_hi': 1.0}
+        data = {'model': _valid_model(), 'factor': [f]}
+        self.assertTrue(_errors(data))
+
+    def test_median_single_input_accepted(self):
+        f = _valid_factor(formula_type='median', inputs=['cy_rev'])
+        data = {'model': _valid_model(), 'factor': [f]}
+        self.assertFalse(any('require' in e.lower() for e in _errors(data)))
+
+    def test_new_historical_formulas_one_input_accepted(self):
+        for ft in ('cagr', 'historical_std_dev', 'coefficient_of_variation'):
+            f = _valid_factor(formula_type=ft, inputs=['cy_rev'])
+            data = {'model': _valid_model(), 'factor': [f]}
+            self.assertFalse(
+                any('require' in e.lower() for e in _errors(data)),
+                msg=f"Unexpected error for {ft!r}"
+            )
+
+    def test_new_historical_formulas_wrong_count_is_error(self):
+        for ft in ('cagr', 'historical_std_dev', 'coefficient_of_variation'):
+            f = _valid_factor(formula_type=ft, inputs=['cy_rev', 'cy_exp'])
+            data = {'model': _valid_model(), 'factor': [f]}
+            self.assertTrue(
+                any('require' in e.lower() or 'inputs' in e.lower() for e in _errors(data)),
+                msg=f"Expected count error for {ft!r}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -449,10 +587,11 @@ class TestCmdRegisterDryRun(unittest.TestCase):
         import shutil
         shutil.rmtree(self._tmp, ignore_errors=True)
 
-    def _args(self, path, dry_run=True, db=None):
+    def _args(self, path, dry_run=True, db=None, skip_existing=False):
         args = MagicMock()
         args.file = path
         args.dry_run = dry_run
+        args.skip_existing = skip_existing
         args.db = db
         return args
 
@@ -558,10 +697,11 @@ class TestCmdRegisterWrite(unittest.TestCase):
         with open(self._toml_path, 'w') as fh:
             fh.write('\n'.join(lines))
 
-    def _args(self, dry_run=False):
+    def _args(self, dry_run=False, skip_existing=False):
         args = MagicMock()
         args.file = self._toml_path
         args.dry_run = dry_run
+        args.skip_existing = skip_existing
         args.db = self._db_path
         return args
 
@@ -596,6 +736,77 @@ class TestCmdRegisterWrite(unittest.TestCase):
             cmd_register(self._args())
         output = ' '.join(str(c) for c in mock_print.call_args_list)
         self.assertIn('Registered', output)
+
+    def test_duplicate_version_exits_with_1(self):
+        self._write_toml(version=2)
+        with patch('builtins.print'):
+            cmd_register(self._args())
+        with self.assertRaises(SystemExit) as ctx:
+            with patch('builtins.print'), patch('sys.stderr'):
+                cmd_register(self._args())
+        self.assertEqual(ctx.exception.code, 1)
+
+
+# ---------------------------------------------------------------------------
+# cmd_register — --skip-existing
+# ---------------------------------------------------------------------------
+
+class TestCmdRegisterSkipExisting(unittest.TestCase):
+
+    def setUp(self):
+        self._tmp = tempfile.mkdtemp()
+        self._db_path = os.path.join(self._tmp, 'test.db')
+        self._toml_path = os.path.join(self._tmp, 'model.toml')
+        lines = [
+            '[model]', 'version = 3', 'description = "Skip test"', '',
+            '[[factor]]', 'name = "Test Factor"', 'weight = 1.0',
+            'formula_type = "ratio"', 'inputs = ["prog", "total_exp"]',
+            'direction = "higher"', 'benchmark_lo = 0.0', 'benchmark_hi = 1.0',
+        ]
+        with open(self._toml_path, 'w') as fh:
+            fh.write('\n'.join(lines))
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def _args(self, skip_existing=False):
+        args = MagicMock()
+        args.file = self._toml_path
+        args.dry_run = False
+        args.skip_existing = skip_existing
+        args.db = self._db_path
+        return args
+
+    def test_skip_existing_on_new_version_registers_normally(self):
+        with patch('builtins.print') as mock_print:
+            cmd_register(self._args(skip_existing=True))
+        output = ' '.join(str(c) for c in mock_print.call_args_list)
+        self.assertIn('Registered', output)
+
+    def test_skip_existing_on_duplicate_prints_message_and_exits_0(self):
+        with patch('builtins.print'):
+            cmd_register(self._args())
+        with patch('builtins.print') as mock_print:
+            cmd_register(self._args(skip_existing=True))
+        output = ' '.join(str(c) for c in mock_print.call_args_list)
+        self.assertIn('already registered', output)
+
+    def test_skip_existing_on_duplicate_does_not_raise(self):
+        with patch('builtins.print'):
+            cmd_register(self._args())
+        try:
+            with patch('builtins.print'):
+                cmd_register(self._args(skip_existing=True))
+        except SystemExit:
+            self.fail("skip_existing should not raise SystemExit on duplicate")
+
+    def test_without_skip_existing_duplicate_raises(self):
+        with patch('builtins.print'):
+            cmd_register(self._args())
+        with self.assertRaises(SystemExit):
+            with patch('builtins.print'), patch('sys.stderr'):
+                cmd_register(self._args(skip_existing=False))
 
 
 # ---------------------------------------------------------------------------

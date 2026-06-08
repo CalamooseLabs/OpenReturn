@@ -1,3 +1,4 @@
+import math
 import sys
 import os
 import json
@@ -6,7 +7,8 @@ from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from scoring.engine import ScoringEngine, _PATHS, FORMULA_TYPES, FORMULA_INPUT_COUNTS
+from scoring.engine import (ScoringEngine, _PATHS, FORMULA_TYPES, FORMULA_INPUT_COUNTS,
+                            _FACTOR_PREFIX, _HISTORICAL_TYPES)
 
 
 def _build_vals(**kwargs):
@@ -46,7 +48,11 @@ class TestModuleConstants(unittest.TestCase):
         self.assertIsInstance(FORMULA_TYPES, set)
 
     def test_formula_types_contains_expected(self):
-        for ft in ('ratio', 'ratio_positive', 'growth', 'working_capital', 'sum_ratio'):
+        for ft in ('ratio', 'ratio_positive', 'growth', 'working_capital', 'sum_ratio',
+                   'difference', 'product', 'clamp', 'abs_value', 'inverse',
+                   'sum', 'average', 'min', 'max', 'median',
+                   'running_average', 'cumulative_sum', 'historical_min', 'historical_max',
+                   'cagr', 'historical_std_dev', 'coefficient_of_variation'):
             self.assertIn(ft, FORMULA_TYPES)
 
     def test_formula_input_counts_all_types_covered(self):
@@ -54,11 +60,31 @@ class TestModuleConstants(unittest.TestCase):
             self.assertIn(ft, FORMULA_INPUT_COUNTS)
 
     def test_formula_input_counts_values(self):
-        self.assertEqual(FORMULA_INPUT_COUNTS['ratio'],           2)
-        self.assertEqual(FORMULA_INPUT_COUNTS['ratio_positive'],  2)
-        self.assertEqual(FORMULA_INPUT_COUNTS['growth'],          2)
-        self.assertEqual(FORMULA_INPUT_COUNTS['working_capital'], 4)
-        self.assertEqual(FORMULA_INPUT_COUNTS['sum_ratio'],       3)
+        self.assertEqual(FORMULA_INPUT_COUNTS['ratio'],                    2)
+        self.assertEqual(FORMULA_INPUT_COUNTS['ratio_positive'],           2)
+        self.assertEqual(FORMULA_INPUT_COUNTS['growth'],                   2)
+        self.assertEqual(FORMULA_INPUT_COUNTS['working_capital'],          4)
+        self.assertEqual(FORMULA_INPUT_COUNTS['sum_ratio'],                3)
+        self.assertEqual(FORMULA_INPUT_COUNTS['difference'],               2)
+        self.assertEqual(FORMULA_INPUT_COUNTS['product'],                  2)
+        self.assertEqual(FORMULA_INPUT_COUNTS['clamp'],                    3)
+        self.assertEqual(FORMULA_INPUT_COUNTS['abs_value'],                1)
+        self.assertEqual(FORMULA_INPUT_COUNTS['inverse'],                  1)
+        self.assertIsNone(FORMULA_INPUT_COUNTS['sum'])
+        self.assertIsNone(FORMULA_INPUT_COUNTS['average'])
+        self.assertIsNone(FORMULA_INPUT_COUNTS['min'])
+        self.assertIsNone(FORMULA_INPUT_COUNTS['max'])
+        self.assertIsNone(FORMULA_INPUT_COUNTS['median'])
+        self.assertEqual(FORMULA_INPUT_COUNTS['running_average'],          1)
+        self.assertEqual(FORMULA_INPUT_COUNTS['cumulative_sum'],           1)
+        self.assertEqual(FORMULA_INPUT_COUNTS['historical_min'],           1)
+        self.assertEqual(FORMULA_INPUT_COUNTS['historical_max'],           1)
+        self.assertEqual(FORMULA_INPUT_COUNTS['cagr'],                     1)
+        self.assertEqual(FORMULA_INPUT_COUNTS['historical_std_dev'],       1)
+        self.assertEqual(FORMULA_INPUT_COUNTS['coefficient_of_variation'], 1)
+
+    def test_historical_types_is_subset_of_formula_types(self):
+        self.assertTrue(_HISTORICAL_TYPES.issubset(FORMULA_TYPES))
 
 
 # ---------------------------------------------------------------------------
@@ -422,6 +448,354 @@ class TestComputeFactorSumRatio(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# _compute_factor — difference
+# ---------------------------------------------------------------------------
+
+class TestComputeFactorDifference(unittest.TestCase):
+    def setUp(self):
+        self.engine = ScoringEngine(db=None)
+
+    def _f(self, inputs):
+        return _factor('difference', inputs)
+
+    def test_normal(self):
+        vals = _build_vals(cy_rev=1100.0, cy_exp=1000.0)
+        self.assertAlmostEqual(self.engine._compute_factor(self._f(['cy_rev', 'cy_exp']), vals), 100.0)
+
+    def test_negative_result(self):
+        vals = _build_vals(cy_rev=900.0, cy_exp=1000.0)
+        self.assertAlmostEqual(self.engine._compute_factor(self._f(['cy_rev', 'cy_exp']), vals), -100.0)
+
+    def test_missing_a_returns_none(self):
+        vals = _build_vals(cy_exp=1000.0)
+        self.assertIsNone(self.engine._compute_factor(self._f(['cy_rev', 'cy_exp']), vals))
+
+    def test_missing_b_returns_none(self):
+        vals = _build_vals(cy_rev=1000.0)
+        self.assertIsNone(self.engine._compute_factor(self._f(['cy_rev', 'cy_exp']), vals))
+
+
+# ---------------------------------------------------------------------------
+# _compute_factor — product
+# ---------------------------------------------------------------------------
+
+class TestComputeFactorProduct(unittest.TestCase):
+    def setUp(self):
+        self.engine = ScoringEngine(db=None)
+
+    def _f(self, inputs):
+        return _factor('product', inputs)
+
+    def test_normal(self):
+        vals = _build_vals(cy_rev=2.0, cy_exp=3.0)
+        self.assertAlmostEqual(self.engine._compute_factor(self._f(['cy_rev', 'cy_exp']), vals), 6.0)
+
+    def test_missing_input_returns_none(self):
+        vals = _build_vals(cy_rev=2.0)
+        self.assertIsNone(self.engine._compute_factor(self._f(['cy_rev', 'cy_exp']), vals))
+
+    def test_zero_factor_returns_zero(self):
+        vals = _build_vals(cy_rev=0.0, cy_exp=999.0)
+        self.assertAlmostEqual(self.engine._compute_factor(self._f(['cy_rev', 'cy_exp']), vals), 0.0)
+
+
+# ---------------------------------------------------------------------------
+# _compute_factor — abs_value
+# ---------------------------------------------------------------------------
+
+class TestComputeFactorAbsValue(unittest.TestCase):
+    def setUp(self):
+        self.engine = ScoringEngine(db=None)
+
+    def _f(self, inputs):
+        return _factor('abs_value', inputs)
+
+    def test_positive(self):
+        vals = _build_vals(cy_rev=500.0)
+        self.assertAlmostEqual(self.engine._compute_factor(self._f(['cy_rev']), vals), 500.0)
+
+    def test_negative_becomes_positive(self):
+        vals = _build_vals(equity=-300.0)
+        self.assertAlmostEqual(self.engine._compute_factor(self._f(['equity']), vals), 300.0)
+
+    def test_missing_returns_none(self):
+        self.assertIsNone(self.engine._compute_factor(self._f(['cy_rev']), {}))
+
+
+# ---------------------------------------------------------------------------
+# _compute_factor — inverse
+# ---------------------------------------------------------------------------
+
+class TestComputeFactorInverse(unittest.TestCase):
+    def setUp(self):
+        self.engine = ScoringEngine(db=None)
+
+    def _f(self, inputs):
+        return _factor('inverse', inputs)
+
+    def test_normal(self):
+        vals = _build_vals(cy_rev=4.0)
+        self.assertAlmostEqual(self.engine._compute_factor(self._f(['cy_rev']), vals), 0.25)
+
+    def test_zero_returns_none(self):
+        vals = _build_vals(cy_rev=0.0)
+        self.assertIsNone(self.engine._compute_factor(self._f(['cy_rev']), vals))
+
+    def test_missing_returns_none(self):
+        self.assertIsNone(self.engine._compute_factor(self._f(['cy_rev']), {}))
+
+
+# ---------------------------------------------------------------------------
+# _compute_factor — sum
+# ---------------------------------------------------------------------------
+
+class TestComputeFactorSum(unittest.TestCase):
+    def setUp(self):
+        self.engine = ScoringEngine(db=None)
+
+    def _f(self, inputs):
+        return _factor('sum', inputs)
+
+    def test_single_input(self):
+        vals = _build_vals(prog=500.0)
+        self.assertAlmostEqual(self.engine._compute_factor(self._f(['prog']), vals), 500.0)
+
+    def test_multiple_inputs(self):
+        vals = _build_vals(prog=500.0, admin=200.0, fund=100.0)
+        self.assertAlmostEqual(
+            self.engine._compute_factor(self._f(['prog', 'admin', 'fund']), vals), 800.0)
+
+    def test_none_inputs_skipped(self):
+        vals = _build_vals(prog=500.0, fund=100.0)
+        self.assertAlmostEqual(
+            self.engine._compute_factor(self._f(['prog', 'admin', 'fund']), vals), 600.0)
+
+    def test_all_none_returns_none(self):
+        self.assertIsNone(self.engine._compute_factor(self._f(['prog', 'admin']), {}))
+
+
+# ---------------------------------------------------------------------------
+# _compute_factor — average
+# ---------------------------------------------------------------------------
+
+class TestComputeFactorAverage(unittest.TestCase):
+    def setUp(self):
+        self.engine = ScoringEngine(db=None)
+
+    def _f(self, inputs):
+        return _factor('average', inputs)
+
+    def test_single_input(self):
+        vals = _build_vals(cy_rev=900.0)
+        self.assertAlmostEqual(self.engine._compute_factor(self._f(['cy_rev']), vals), 900.0)
+
+    def test_multiple_inputs(self):
+        vals = _build_vals(cy_rev=1000.0, cy_exp=2000.0)
+        self.assertAlmostEqual(
+            self.engine._compute_factor(self._f(['cy_rev', 'cy_exp']), vals), 1500.0)
+
+    def test_none_inputs_skipped(self):
+        vals = _build_vals(cy_rev=1000.0)
+        self.assertAlmostEqual(
+            self.engine._compute_factor(self._f(['cy_rev', 'cy_exp']), vals), 1000.0)
+
+    def test_all_none_returns_none(self):
+        self.assertIsNone(self.engine._compute_factor(self._f(['cy_rev', 'cy_exp']), {}))
+
+
+# ---------------------------------------------------------------------------
+# _compute_factor — min / max
+# ---------------------------------------------------------------------------
+
+class TestComputeFactorMinMax(unittest.TestCase):
+    def setUp(self):
+        self.engine = ScoringEngine(db=None)
+
+    def test_min_normal(self):
+        vals = _build_vals(cy_rev=300.0, cy_exp=800.0, prog=500.0)
+        f = _factor('min', ['cy_rev', 'cy_exp', 'prog'])
+        self.assertAlmostEqual(self.engine._compute_factor(f, vals), 300.0)
+
+    def test_max_normal(self):
+        vals = _build_vals(cy_rev=300.0, cy_exp=800.0, prog=500.0)
+        f = _factor('max', ['cy_rev', 'cy_exp', 'prog'])
+        self.assertAlmostEqual(self.engine._compute_factor(f, vals), 800.0)
+
+    def test_min_skips_none(self):
+        vals = _build_vals(cy_rev=400.0, prog=100.0)
+        f = _factor('min', ['cy_rev', 'cy_exp', 'prog'])
+        self.assertAlmostEqual(self.engine._compute_factor(f, vals), 100.0)
+
+    def test_max_skips_none(self):
+        vals = _build_vals(cy_rev=400.0, prog=100.0)
+        f = _factor('max', ['cy_rev', 'cy_exp', 'prog'])
+        self.assertAlmostEqual(self.engine._compute_factor(f, vals), 400.0)
+
+    def test_all_none_returns_none(self):
+        f = _factor('min', ['cy_rev', 'cy_exp'])
+        self.assertIsNone(self.engine._compute_factor(f, {}))
+
+
+# ---------------------------------------------------------------------------
+# _compute_factor — median
+# ---------------------------------------------------------------------------
+
+class TestComputeFactorMedian(unittest.TestCase):
+    def setUp(self):
+        self.engine = ScoringEngine(db=None)
+
+    def test_odd_count(self):
+        vals = _build_vals(cy_rev=300.0, cy_exp=500.0, prog=700.0)
+        f = _factor('median', ['cy_rev', 'cy_exp', 'prog'])
+        self.assertAlmostEqual(self.engine._compute_factor(f, vals), 500.0)
+
+    def test_even_count_averages_middle_two(self):
+        vals = _build_vals(cy_rev=200.0, cy_exp=800.0)
+        f = _factor('median', ['cy_rev', 'cy_exp'])
+        self.assertAlmostEqual(self.engine._compute_factor(f, vals), 500.0)
+
+    def test_single_input(self):
+        vals = _build_vals(cy_rev=999.0)
+        f = _factor('median', ['cy_rev'])
+        self.assertAlmostEqual(self.engine._compute_factor(f, vals), 999.0)
+
+    def test_none_inputs_skipped(self):
+        vals = _build_vals(cy_rev=400.0, prog=600.0)
+        f = _factor('median', ['cy_rev', 'cy_exp', 'prog'])
+        self.assertAlmostEqual(self.engine._compute_factor(f, vals), 500.0)
+
+    def test_all_none_returns_none(self):
+        f = _factor('median', ['cy_rev', 'cy_exp'])
+        self.assertIsNone(self.engine._compute_factor(f, {}))
+
+
+# ---------------------------------------------------------------------------
+# _compute_factor — clamp
+# ---------------------------------------------------------------------------
+
+class TestComputeFactorClamp(unittest.TestCase):
+    def setUp(self):
+        self.engine = ScoringEngine(db=None)
+
+    def test_value_within_range(self):
+        vals = _build_vals(cy_rev=0.5)
+        f = _factor('clamp', ['cy_rev', '0', '1'])
+        self.assertAlmostEqual(self.engine._compute_factor(f, vals), 0.5)
+
+    def test_value_below_lo_clamped_to_lo(self):
+        vals = _build_vals(cy_rev=-5.0)
+        f = _factor('clamp', ['cy_rev', '0', '1'])
+        self.assertAlmostEqual(self.engine._compute_factor(f, vals), 0.0)
+
+    def test_value_above_hi_clamped_to_hi(self):
+        vals = _build_vals(cy_rev=5.0)
+        f = _factor('clamp', ['cy_rev', '0', '1'])
+        self.assertAlmostEqual(self.engine._compute_factor(f, vals), 1.0)
+
+    def test_field_key_bounds(self):
+        vals = _build_vals(cy_rev=500.0, cy_exp=200.0, admin=800.0)
+        f = _factor('clamp', ['cy_rev', 'cy_exp', 'admin'])
+        self.assertAlmostEqual(self.engine._compute_factor(f, vals), 500.0)
+
+    def test_missing_value_returns_none(self):
+        f = _factor('clamp', ['cy_rev', '0', '1'])
+        self.assertIsNone(self.engine._compute_factor(f, {}))
+
+    def test_missing_bound_returns_none(self):
+        vals = _build_vals(cy_rev=0.5)
+        f = _factor('clamp', ['cy_rev', 'cy_exp', '1'])
+        self.assertIsNone(self.engine._compute_factor(f, vals))
+
+
+# ---------------------------------------------------------------------------
+# _compute_factor — historical formulas
+# ---------------------------------------------------------------------------
+
+class TestComputeFactorHistorical(unittest.TestCase):
+    def setUp(self):
+        self.engine = ScoringEngine(db=None)
+        self.hist = {_PATHS['cy_rev']: [800.0, 1000.0, 1200.0]}
+
+    def _f(self, formula_type):
+        return _factor(formula_type, ['cy_rev'])
+
+    def test_running_average_normal(self):
+        result = self.engine._compute_factor(self._f('running_average'), {}, historical=self.hist)
+        self.assertAlmostEqual(result, 1000.0)
+
+    def test_cumulative_sum_normal(self):
+        result = self.engine._compute_factor(self._f('cumulative_sum'), {}, historical=self.hist)
+        self.assertAlmostEqual(result, 3000.0)
+
+    def test_historical_min_normal(self):
+        result = self.engine._compute_factor(self._f('historical_min'), {}, historical=self.hist)
+        self.assertAlmostEqual(result, 800.0)
+
+    def test_historical_max_normal(self):
+        result = self.engine._compute_factor(self._f('historical_max'), {}, historical=self.hist)
+        self.assertAlmostEqual(result, 1200.0)
+
+    def test_no_historical_data_returns_none(self):
+        result = self.engine._compute_factor(self._f('running_average'), {}, historical={})
+        self.assertIsNone(result)
+
+    def test_empty_historical_for_key_returns_none(self):
+        result = self.engine._compute_factor(
+            self._f('running_average'), {}, historical={_PATHS['cy_rev']: []})
+        self.assertIsNone(result)
+
+    def test_single_year_running_average(self):
+        hist = {_PATHS['cy_rev']: [1500.0]}
+        result = self.engine._compute_factor(self._f('running_average'), {}, historical=hist)
+        self.assertAlmostEqual(result, 1500.0)
+
+    def test_cagr_normal(self):
+        # hist = [800, 1000, 1200]; CAGR = (1200/800)^(1/2) - 1
+        result = self.engine._compute_factor(self._f('cagr'), {}, historical=self.hist)
+        expected = (1200.0 / 800.0) ** (1.0 / 2) - 1.0
+        self.assertAlmostEqual(result, expected)
+
+    def test_cagr_single_value_returns_none(self):
+        hist = {_PATHS['cy_rev']: [1000.0]}
+        self.assertIsNone(self.engine._compute_factor(self._f('cagr'), {}, historical=hist))
+
+    def test_cagr_zero_start_returns_none(self):
+        hist = {_PATHS['cy_rev']: [0.0, 1200.0]}
+        self.assertIsNone(self.engine._compute_factor(self._f('cagr'), {}, historical=hist))
+
+    def test_cagr_negative_start_returns_none(self):
+        hist = {_PATHS['cy_rev']: [-100.0, 1200.0]}
+        self.assertIsNone(self.engine._compute_factor(self._f('cagr'), {}, historical=hist))
+
+    def test_cagr_negative_end_returns_none(self):
+        hist = {_PATHS['cy_rev']: [800.0, -200.0]}
+        self.assertIsNone(self.engine._compute_factor(self._f('cagr'), {}, historical=hist))
+
+    def test_historical_std_dev_normal(self):
+        # hist = [800, 1000, 1200]; mean=1000; population std_dev
+        result = self.engine._compute_factor(self._f('historical_std_dev'), {}, historical=self.hist)
+        mean = 1000.0
+        expected = math.sqrt(((800 - mean) ** 2 + (1000 - mean) ** 2 + (1200 - mean) ** 2) / 3)
+        self.assertAlmostEqual(result, expected)
+
+    def test_historical_std_dev_single_value_is_zero(self):
+        hist = {_PATHS['cy_rev']: [1000.0]}
+        result = self.engine._compute_factor(self._f('historical_std_dev'), {}, historical=hist)
+        self.assertAlmostEqual(result, 0.0)
+
+    def test_coefficient_of_variation_normal(self):
+        result = self.engine._compute_factor(self._f('coefficient_of_variation'), {}, historical=self.hist)
+        mean = 1000.0
+        std_dev = math.sqrt(((800 - mean) ** 2 + (1000 - mean) ** 2 + (1200 - mean) ** 2) / 3)
+        self.assertAlmostEqual(result, std_dev / abs(mean))
+
+    def test_coefficient_of_variation_zero_mean_returns_none(self):
+        hist = {_PATHS['cy_rev']: [-500.0, 500.0]}
+        self.assertIsNone(
+            self.engine._compute_factor(self._f('coefficient_of_variation'), {}, historical=hist))
+
+
+# ---------------------------------------------------------------------------
 # _compute_factor — unknown formula_type
 # ---------------------------------------------------------------------------
 
@@ -545,6 +919,220 @@ class TestCalculate(unittest.TestCase):
 
         total_arg = db.finalize_score.call_args[0][1]
         self.assertAlmostEqual(total_arg, 0.0)
+
+
+# ---------------------------------------------------------------------------
+# _resolve_input
+# ---------------------------------------------------------------------------
+
+class TestResolveInput(unittest.TestCase):
+    def setUp(self):
+        self.engine = ScoringEngine(db=None)
+        self.vals = _build_vals(prog=700.0, total_exp=1000.0)
+
+    def test_field_key_resolves_from_vals(self):
+        result = self.engine._resolve_input('prog', self.vals, {})
+        self.assertAlmostEqual(result, 700.0)
+
+    def test_field_key_missing_returns_none(self):
+        result = self.engine._resolve_input('cy_rev', self.vals, {})
+        self.assertIsNone(result)
+
+    def test_unknown_field_key_returns_none(self):
+        result = self.engine._resolve_input('not_a_key', self.vals, {})
+        self.assertIsNone(result)
+
+    def test_factor_prefix_resolves_from_computed(self):
+        computed = {'Prog Ratio': 0.7}
+        result = self.engine._resolve_input('factor:Prog Ratio', self.vals, computed)
+        self.assertAlmostEqual(result, 0.7)
+
+    def test_factor_prefix_missing_returns_none(self):
+        result = self.engine._resolve_input('factor:Missing Factor', self.vals, {})
+        self.assertIsNone(result)
+
+    def test_factor_prefix_none_value_propagates(self):
+        computed = {'Bad Factor': None}
+        result = self.engine._resolve_input('factor:Bad Factor', self.vals, computed)
+        self.assertIsNone(result)
+
+    def test_numeric_literal_integer_zero(self):
+        self.assertAlmostEqual(self.engine._resolve_input('0', self.vals, {}), 0.0)
+
+    def test_numeric_literal_positive_float(self):
+        self.assertAlmostEqual(self.engine._resolve_input('0.75', self.vals, {}), 0.75)
+
+    def test_numeric_literal_negative(self):
+        self.assertAlmostEqual(self.engine._resolve_input('-1.5', self.vals, {}), -1.5)
+
+    def test_numeric_literal_one(self):
+        self.assertAlmostEqual(self.engine._resolve_input('1', self.vals, {}), 1.0)
+
+
+# ---------------------------------------------------------------------------
+# _topo_sort
+# ---------------------------------------------------------------------------
+
+class TestTopoSort(unittest.TestCase):
+    def setUp(self):
+        self.engine = ScoringEngine(db=None)
+
+    def _f(self, name, inputs):
+        return {
+            'factor_id': 1, 'name': name, 'weight': 0.1,
+            'formula_type': 'ratio', 'inputs': json.dumps(inputs),
+            'direction': 'higher', 'benchmark_lo': 0.0, 'benchmark_hi': 1.0,
+            'formula_description': '',
+        }
+
+    def test_independent_factors_all_returned(self):
+        factors = [self._f('A', ['prog', 'total_exp']),
+                   self._f('B', ['admin', 'total_exp'])]
+        result = self.engine._topo_sort(factors)
+        self.assertEqual(len(result), 2)
+        self.assertEqual({f['name'] for f in result}, {'A', 'B'})
+
+    def test_dependency_comes_before_dependent(self):
+        factors = [
+            self._f('B', ['factor:A', 'total_exp']),
+            self._f('A', ['prog', 'total_exp']),
+        ]
+        result = self.engine._topo_sort(factors)
+        names = [f['name'] for f in result]
+        self.assertLess(names.index('A'), names.index('B'))
+
+    def test_chain_sorted_correctly(self):
+        factors = [
+            self._f('C', ['factor:B', 'total_exp']),
+            self._f('A', ['prog', 'total_exp']),
+            self._f('B', ['factor:A', 'total_exp']),
+        ]
+        result = self.engine._topo_sort(factors)
+        names = [f['name'] for f in result]
+        self.assertLess(names.index('A'), names.index('B'))
+        self.assertLess(names.index('B'), names.index('C'))
+
+    def test_circular_dependency_raises(self):
+        factors = [
+            self._f('A', ['factor:B', 'total_exp']),
+            self._f('B', ['factor:A', 'total_exp']),
+        ]
+        with self.assertRaises(ValueError) as ctx:
+            self.engine._topo_sort(factors)
+        self.assertIn('Circular', str(ctx.exception))
+
+    def test_self_reference_raises(self):
+        factors = [self._f('A', ['factor:A', 'total_exp'])]
+        with self.assertRaises(ValueError):
+            self.engine._topo_sort(factors)
+
+    def test_unknown_factor_reference_raises(self):
+        factors = [self._f('A', ['factor:Ghost', 'total_exp'])]
+        with self.assertRaises(ValueError) as ctx:
+            self.engine._topo_sort(factors)
+        self.assertIn('Ghost', str(ctx.exception))
+
+
+# ---------------------------------------------------------------------------
+# calculate() — factor references and weight=0
+# ---------------------------------------------------------------------------
+
+class TestCalculateFactorRefs(unittest.TestCase):
+
+    def _make_filing(self):
+        fields = [{'xml_path': path, 'value': '1000'} for path in _PATHS.values()]
+        return {'filing_id': 1, 'fields': fields}
+
+    def test_weight_zero_excluded_from_total(self):
+        factors = [
+            _full_factor(1, 'Intermediate', 'ratio', ['prog', 'total_exp'], 'higher', 0.0, 1.0, 0.0),
+            _full_factor(2, 'Final',        'ratio', ['prog', 'total_exp'], 'higher', 0.0, 1.0, 1.0),
+        ]
+        db = MagicMock()
+        db.get_filing_data_by_ein_year.return_value = self._make_filing()
+        db.get_factors.return_value = factors
+        db.create_score.return_value = 1
+        db.get_score.return_value = {}
+        ScoringEngine(db=db).calculate('000000000', 2023)
+        _, total = db.finalize_score.call_args[0]
+        # Intermediate weight=0 contributes nothing; Final weight=1.0 normalized
+        self.assertGreater(total, 0.0)
+        stored = db.store_factor_values.call_args[0][1]
+        # Both factors stored (weight-zero factor still persisted)
+        self.assertIn(1, stored)
+        self.assertIn(2, stored)
+
+    def test_factor_ref_passes_raw_value_to_downstream(self):
+        # prog=1000, total_exp=2000 → ratio = 0.5
+        fields = [
+            {'xml_path': _PATHS['prog'],      'value': '1000'},
+            {'xml_path': _PATHS['total_exp'], 'value': '2000'},
+        ]
+        filing = {'filing_id': 2, 'fields': fields}
+        factors = [
+            # Upstream: prog/total_exp = 0.5; weight=0 (intermediate)
+            _full_factor(1, 'Prog Ratio', 'ratio', ['prog', 'total_exp'], 'higher', 0.0, 1.0, 0.0),
+            # Downstream uses that 0.5 as numerator, total_exp(2000) as denom → 0.5/2000 = 0.00025
+            _full_factor(2, 'Derived',    'ratio', ['factor:Prog Ratio', 'total_exp'], 'higher', 0.0, 1.0, 1.0),
+        ]
+        db = MagicMock()
+        db.get_filing_data_by_ein_year.return_value = filing
+        db.get_factors.return_value = factors
+        db.create_score.return_value = 1
+        db.get_score.return_value = {}
+        ScoringEngine(db=db).calculate('000000000', 2023)
+        stored = db.store_factor_values.call_args[0][1]
+        upstream_raw, _ = stored[1]
+        downstream_raw, _ = stored[2]
+        self.assertAlmostEqual(upstream_raw, 0.5)
+        self.assertAlmostEqual(downstream_raw, 0.5 / 2000.0)
+
+
+# ---------------------------------------------------------------------------
+# calculate() — historical data fetching
+# ---------------------------------------------------------------------------
+
+class TestCalculateHistorical(unittest.TestCase):
+
+    def _make_db(self, factors, hist=None):
+        db = MagicMock()
+        db.get_filing_data_by_ein_year.return_value = {'filing_id': 1, 'fields': []}
+        db.get_factors.return_value = factors
+        db.create_score.return_value = 1
+        db.get_score.return_value = {}
+        db.get_historical_values.return_value = hist or {}
+        return db
+
+    def test_historical_formula_triggers_fetch(self):
+        factors = [_full_factor(1, 'Avg Rev', 'running_average', ['cy_rev'], 'higher', 0.0, 2000.0, 1.0)]
+        hist = {_PATHS['cy_rev']: [800.0, 1000.0, 1200.0]}
+        db = self._make_db(factors, hist)
+        ScoringEngine(db=db).calculate('000000001', 2023)
+        db.get_historical_values.assert_called_once_with('000000001')
+
+    def test_no_historical_formula_skips_fetch(self):
+        factors = [_full_factor(1, 'Ratio', 'ratio', ['prog', 'total_exp'], 'higher', 0.0, 1.0, 1.0)]
+        db = self._make_db(factors)
+        ScoringEngine(db=db).calculate('000000001', 2023)
+        db.get_historical_values.assert_not_called()
+
+    def test_running_average_stored_correctly(self):
+        factors = [_full_factor(1, 'Avg Rev', 'running_average', ['cy_rev'], 'higher', 0.0, 2000.0, 1.0)]
+        hist = {_PATHS['cy_rev']: [800.0, 1000.0, 1200.0]}
+        db = self._make_db(factors, hist)
+        ScoringEngine(db=db).calculate('000000001', 2023)
+        stored = db.store_factor_values.call_args[0][1]
+        raw, _ = stored[1]
+        self.assertAlmostEqual(raw, 1000.0)
+
+    def test_cumulative_sum_stored_correctly(self):
+        factors = [_full_factor(1, 'Total Rev', 'cumulative_sum', ['cy_rev'], 'higher', 0.0, 5000.0, 1.0)]
+        hist = {_PATHS['cy_rev']: [1000.0, 1500.0, 2000.0]}
+        db = self._make_db(factors, hist)
+        ScoringEngine(db=db).calculate('000000001', 2023)
+        stored = db.store_factor_values.call_args[0][1]
+        raw, _ = stored[1]
+        self.assertAlmostEqual(raw, 4500.0)
 
 
 if __name__ == '__main__':

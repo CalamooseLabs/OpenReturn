@@ -84,17 +84,7 @@ def _dump_db(db: ScoreDatabase) -> None:
   print(f"\n{_DIM}{'─' * 52}{_R}\n")
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description='OpenReturn — IRS 990 API server')
-    parser.add_argument('--debug',   action='store_true', help='Verbose request/response logging')
-    parser.add_argument('--testing', action='store_true', help='Clear database, optionally ingest --zip-dir, then dump state')
-    parser.add_argument('--zip-dir', help='Directory of ZIP files to ingest on startup (use with --testing)')
-    parser.add_argument('--host',    default='localhost',  help='Bind host (default: localhost)')
-    parser.add_argument('--port',    type=int, default=8080, help='Bind port (default: 8080)')
-    parser.add_argument('--auth',    action='store_true', help='Require API key authentication (manage keys with openreturn-keys)')
-    parser.add_argument('--workers', type=int, default=None, help='Parallel XML parser processes for --zip-dir ingestion (default: CPU count)')
-    args = parser.parse_args()
-
+def cmd_serve(args) -> int:
     if args.testing:
       Path("OpenReturn.db").unlink(missing_ok=True)
 
@@ -129,6 +119,19 @@ def main() -> int:
 
     db.close()
     return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description='OpenReturn — IRS 990 API server')
+    parser.add_argument('--debug',   action='store_true', help='Verbose request/response logging')
+    parser.add_argument('--testing', action='store_true', help='Clear database, optionally ingest --zip-dir, then dump state')
+    parser.add_argument('--zip-dir', help='Directory of ZIP files to ingest on startup (use with --testing)')
+    parser.add_argument('--host',    default='localhost',  help='Bind host (default: localhost)')
+    parser.add_argument('--port',    type=int, default=8080, help='Bind port (default: 8080)')
+    parser.add_argument('--auth',    action='store_true', help='Require API key authentication (manage keys with openreturn keys)')
+    parser.add_argument('--workers', type=int, default=None, help='Parallel XML parser processes for --zip-dir ingestion (default: CPU count)')
+    args = parser.parse_args()
+    return cmd_serve(args)
 
 
 if __name__ == "__main__":  # pragma: no cover

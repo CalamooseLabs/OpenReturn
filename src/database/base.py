@@ -1,10 +1,35 @@
+import os
 import sqlite3
+import sys
 from pathlib import Path
+
+try:
+    import sqlcipher3 as _sqlcipher  # pragma: no cover
+    _HAS_CIPHER = True               # pragma: no cover
+except ImportError:
+    _sqlcipher = None
+    _HAS_CIPHER = False
+
+
+def _open_connection(db_path: str) -> sqlite3.Connection:
+    key = os.environ.get('DB_SECRET_KEY')
+    if key:
+        if _HAS_CIPHER:
+            conn = _sqlcipher.connect(db_path)
+            conn.execute(f"PRAGMA key='{key}'")
+            return conn
+        print(
+            "Warning: DB_SECRET_KEY is set but sqlcipher3 is not installed — "
+            "database will not be encrypted.",
+            file=sys.stderr,
+        )
+    return sqlite3.connect(db_path)
+
 
 class Database:
   def __init__(self, name, sql_dir, populate_guard: str | None = None, path: str | None = None) -> None:
     self.name = name
-    self.connection = sqlite3.connect(path if path is not None else f"{name}.db")
+    self.connection = _open_connection(path if path is not None else f"{name}.db")
     self.cursor = self.connection.cursor()
     self.connection.execute("PRAGMA journal_mode=WAL")
     self.connection.execute("PRAGMA synchronous=NORMAL")

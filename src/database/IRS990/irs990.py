@@ -3,43 +3,6 @@ import secrets
 import uuid
 from database import Database
 
-_RICH_FIELDS_SQL = """
-  SELECT
-    rd.raw_value,
-    fi.field_id,
-    fi.xml_path,
-    fi.sub_letter,
-    fi.column_code,
-    fi.box_label,
-    l.line_number,
-    l.line_label,
-    l.data_type,
-    s.section_code,
-    s.section_name,
-    p.part_number,
-    p.part_name
-  FROM reported_data rd
-  JOIN field fi ON fi.field_id = rd.field_id
-  JOIN line l ON l.line_id = fi.line_id
-  JOIN section s ON s.section_id = l.section_id
-  JOIN part p ON p.part_id = s.part_id
-  WHERE rd.filing_id = ?
-  ORDER BY p.part_number, s.section_code, l.line_number, fi.sub_letter, fi.column_code
-"""
-
-def _build_field(r: tuple) -> dict:
-  return {
-    "field_id":   r[1],
-    "value":      r[0],
-    "xml_path":   r[2],
-    "sub_letter": r[3],
-    "column_code": r[4],
-    "box_label":  r[5],
-    "line":    {"number": r[6], "label": r[7], "data_type": r[8]},
-    "section": {"code": r[9], "name": r[10]},
-    "part":    {"number": r[11], "name": r[12]},
-  }
-
 
 class IRS990Database(Database):
   def __init__(self, name="OpenReturn", path: str | None = None) -> None:
@@ -52,6 +15,30 @@ class IRS990Database(Database):
       self.connection.commit()  # pragma: no cover — only runs on pre-migration DBs
     except Exception:
       pass  # column already exists (fresh DB has it from setup_api_keys.sql)
+    self._field_meta: dict[int, dict] = self._build_field_meta_cache()
+    self._key_cache:  dict[str, int | None] = {}
+
+  def _build_field_meta_cache(self) -> dict[int, dict]:
+    rows = self.cursor.execute("""
+      SELECT fi.field_id, fi.xml_path, fi.sub_letter, fi.column_code, fi.box_label,
+             l.line_number, l.line_label, l.data_type,
+             s.section_code, s.section_name,
+             p.part_number, p.part_name
+      FROM field fi
+      JOIN line l ON l.line_id = fi.line_id
+      JOIN section s ON s.section_id = l.section_id
+      JOIN part p ON p.part_id = s.part_id
+    """).fetchall()
+    return {r[0]: {
+      "field_id":    r[0],
+      "xml_path":    r[1],
+      "sub_letter":  r[2],
+      "column_code": r[3],
+      "box_label":   r[4],
+      "line":    {"number": r[5],  "label": r[6],  "data_type": r[7]},
+      "section": {"code":   r[8],  "name":  r[9]},
+      "part":    {"number": r[10], "name":  r[11]},
+    } for r in rows}
 
   # --- API keys ---
 
@@ -69,18 +56,22 @@ class IRS990Database(Database):
     """
     Returns the rate limit for a valid active key (-1 = no limit),
     or None if the key is invalid or revoked.
+    Results are cached in memory per server session; cache is cleared on revoke.
     """
     key_hash = hashlib.sha256(raw.encode()).hexdigest()
+    if key_hash in self._key_cache:
+      return self._key_cache[key_hash]
     row = self.cursor.execute(
       "SELECT key_id, rate_limit FROM api_key WHERE key_hash = ? AND active = 1", (key_hash,)
     ).fetchone()
+    result = row[1] if row else None
+    self._key_cache[key_hash] = result
     if row:
       self.cursor.execute(
         "UPDATE api_key SET last_used_at = datetime('now') WHERE key_id = ?", (row[0],)
       )
       self.connection.commit()
-      return row[1]
-    return None
+    return result
 
   def list_api_keys(self) -> list[dict]:
     rows = self.cursor.execute(
@@ -95,6 +86,7 @@ class IRS990Database(Database):
   def revoke_api_key(self, key_id: int) -> bool:
     self.cursor.execute("UPDATE api_key SET active = 0 WHERE key_id = ?", (key_id,))
     self.connection.commit()
+    self._key_cache.clear()
     return self.cursor.rowcount > 0
 
   _INGEST_INDEXES = [
@@ -125,11 +117,28 @@ class IRS990Database(Database):
     )
     return {row[0]: row[1] for row in res.fetchall()}
 
-  def list_organizations(self) -> list[dict]:
+  def list_organizations(self, search: str | None = None,
+                         limit: int = 50, offset: int = 0) -> dict:
+    params: list = []
+    where = ""
+    if search:
+      safe = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+      where = "WHERE name LIKE ? ESCAPE '\\'"
+      params.append(f"%{safe}%")
+    total = self.cursor.execute(
+      f"SELECT COUNT(*) FROM organization {where}", params
+    ).fetchone()[0]
     rows = self.cursor.execute(
-      "SELECT ein, name, created_at, updated_at FROM organization ORDER BY name"
+      f"SELECT ein, name, created_at, updated_at FROM organization {where} ORDER BY name LIMIT ? OFFSET ?",
+      [*params, limit, offset]
     ).fetchall()
-    return [{"ein": r[0], "name": r[1], "created_at": r[2], "updated_at": r[3]} for r in rows]
+    return {
+      "total": total, "limit": limit, "offset": offset,
+      "organizations": [
+        {"ein": r[0], "name": r[1], "created_at": r[2], "updated_at": r[3]}
+        for r in rows
+      ],
+    }
 
   def get_organization(self, ein: str) -> dict | None:
     row = self.cursor.execute(
@@ -195,8 +204,41 @@ class IRS990Database(Database):
     return filing_id
 
   def get_reported_data(self, filing_id: str) -> list[dict]:
-    rows = self.cursor.execute(_RICH_FIELDS_SQL, (filing_id,)).fetchall()
-    return [_build_field(r) for r in rows]
+    rows = self.cursor.execute(
+      "SELECT field_id, raw_value FROM reported_data WHERE filing_id = ?", (filing_id,)
+    ).fetchall()
+    result = [
+      {**self._field_meta[fid], "value": val}
+      for fid, val in rows if fid in self._field_meta
+    ]
+    result.sort(key=lambda f: (
+      f["part"]["number"]    or "",
+      f["section"]["code"]   or "",
+      f["line"]["number"]    or "",
+      f["sub_letter"]        or "",
+      f["column_code"]       or "",
+    ))
+    return result
+
+  def get_historical_values(self, ein: str) -> dict[str, list[float]]:
+    """Returns {xml_path: [values ordered oldest-to-newest]} across all filings for the org."""
+    rows = self.cursor.execute("""
+      SELECT fi.xml_path, rd.raw_value
+      FROM reported_data rd
+      JOIN field fi ON fi.field_id = rd.field_id
+      JOIN filing f  ON f.uuid = rd.filing_id
+      WHERE f.organization_id = ?
+        AND fi.xml_path IS NOT NULL
+      ORDER BY fi.xml_path, f.year ASC
+    """, (ein,)).fetchall()
+    result: dict[str, list[float]] = {}
+    for path, raw in rows:
+      if raw is not None:
+        try:
+          result.setdefault(path, []).append(float(raw))
+        except (ValueError, TypeError):
+          pass
+    return result
 
   def store_reported_data(self, filing_id: str, values: dict[int, str]) -> None:
     self.cursor.executemany(

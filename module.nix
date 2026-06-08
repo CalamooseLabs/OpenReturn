@@ -3,6 +3,39 @@ let
   cfg = config.services.openreturn;
   effectiveUser  = if cfg.runAsRoot then "root" else cfg.user;
   effectiveGroup = if cfg.runAsRoot then "root" else cfg.group;
+
+  # ---------------------------------------------------------------------------
+  # TOML generation for scoring models
+  # ---------------------------------------------------------------------------
+
+  mkInputList = inputs:
+    "[" + lib.concatMapStringsSep ", " (i: "\"${i}\"") inputs + "]";
+
+  mkFactor = f:
+    "\n[[factor]]\n"
+    + "name               = \"${f.name}\"\n"
+    + "weight             = ${toString f.weight}\n"
+    + "formula_type       = \"${f.formula_type}\"\n"
+    + "inputs             = ${mkInputList f.inputs}\n"
+    + "direction          = \"${f.direction}\"\n"
+    + "benchmark_lo       = ${toString f.benchmark_lo}\n"
+    + "benchmark_hi       = ${toString f.benchmark_hi}\n"
+    + lib.optionalString (f.formula_description != null)
+        "formula_description = \"${f.formula_description}\"\n";
+
+  mkModelToml = model:
+    pkgs.writeText "openreturn-model-v${toString model.version}.toml" (
+      "[model]\n"
+      + "version = ${toString model.version}\n"
+      + lib.optionalString (model.description != null)
+          "description = \"${model.description}\"\n"
+      + lib.concatMapStrings mkFactor model.factors
+    );
+
+  modelFiles = map mkModelToml cfg.models;
+
+  hasModels = cfg.models != [];
+
 in {
   options.services.openreturn = {
     enable = lib.mkEnableOption "openreturn IRS 990 API server";
@@ -72,6 +105,80 @@ in {
       description = "Require API key authentication for all requests.";
     };
 
+    models = lib.mkOption {
+      type = lib.types.listOf (lib.types.submodule {
+        options = {
+          version = lib.mkOption {
+            type = lib.types.ints.positive;
+            description = "Model version number. Must be unique — bump this when changing factors.";
+          };
+
+          description = lib.mkOption {
+            type = lib.types.nullOr lib.types.str;
+            default = null;
+            description = "Optional human-readable description of the model.";
+          };
+
+          factors = lib.mkOption {
+            type = lib.types.listOf (lib.types.submodule {
+              options = {
+                name = lib.mkOption {
+                  type = lib.types.str;
+                  description = "Unique factor name. Used in factor:<name> references.";
+                };
+
+                weight = lib.mkOption {
+                  type = lib.types.number;
+                  description = "Contribution weight (≥ 0). Set to 0 for intermediate factors.";
+                };
+
+                formula_type = lib.mkOption {
+                  type = lib.types.str;
+                  description = "Formula type (e.g. ratio, growth, clamp, cagr).";
+                };
+
+                inputs = lib.mkOption {
+                  type = lib.types.listOf lib.types.str;
+                  description = "Ordered input keys (field keys, numeric literals, or factor:<name>).";
+                };
+
+                direction = lib.mkOption {
+                  type = lib.types.enum [ "higher" "lower" ];
+                  description = "Which end of the benchmark range scores best.";
+                };
+
+                benchmark_lo = lib.mkOption {
+                  type = lib.types.number;
+                  description = "Lower bound for normalization.";
+                };
+
+                benchmark_hi = lib.mkOption {
+                  type = lib.types.number;
+                  description = "Upper bound for normalization (must be > benchmark_lo).";
+                };
+
+                formula_description = lib.mkOption {
+                  type = lib.types.nullOr lib.types.str;
+                  default = null;
+                  description = "Optional human-readable description of what the factor measures.";
+                };
+              };
+            });
+            description = "List of scoring factors.";
+          };
+        };
+      });
+      default = [];
+      description = ''
+        Scoring models to register automatically on first deployment.
+        Each model is written to a TOML file in the Nix store and registered
+        via a one-shot systemd service that runs before the API server starts.
+        Models are skipped if their version number is already in the database,
+        so it is safe to redeploy without re-registering existing models.
+        To update a model, bump the version number.
+      '';
+    };
+
   };
 
   config = lib.mkIf cfg.enable {
@@ -81,6 +188,8 @@ in {
     # tries to restart the unit, so config changes always take effect immediately.
     system.activationScripts.openreturn-reset-failed = lib.stringAfter [ "users" ] ''
       systemctl reset-failed openreturn.service 2>/dev/null || true
+      ${lib.optionalString hasModels
+        "systemctl reset-failed openreturn-register-models.service 2>/dev/null || true"}
     '';
 
     networking.firewall.allowedTCPPorts = lib.mkIf cfg.openFirewall [ cfg.port ];
@@ -92,10 +201,43 @@ in {
     };
     users.groups.${cfg.group} = lib.mkIf (!cfg.runAsRoot) {};
 
+    # ------------------------------------------------------------------
+    # One-shot service: register scoring models before the server starts.
+    # Only created when cfg.models is non-empty.
+    # ------------------------------------------------------------------
+    systemd.services.openreturn-register-models = lib.mkIf hasModels {
+      description = "Register OpenReturn scoring models";
+      wantedBy = [ "multi-user.target" ];
+      before    = [ "openreturn.service" ];
+
+      serviceConfig = {
+        Type             = "oneshot";
+        RemainAfterExit  = true;
+        User             = effectiveUser;
+        Group            = effectiveGroup;
+        WorkingDirectory = cfg.dataDir;
+        StateDirectory   = lib.removePrefix "/var/lib/" cfg.dataDir;
+        StateDirectoryMode = "0750";
+        PrivateTmp       = true;
+        ProtectSystem    = "strict";
+        ReadWritePaths   = [ cfg.dataDir ];
+        ProtectHome      = true;
+        NoNewPrivileges  = true;
+      };
+
+      script = lib.concatMapStrings (tomlFile: ''
+        ${cfg.package}/bin/openreturn models register --skip-existing ${tomlFile}
+      '') modelFiles;
+    };
+
+    # ------------------------------------------------------------------
+    # Main API server
+    # ------------------------------------------------------------------
     systemd.services.openreturn = {
       description = "OpenReturn API server";
       wantedBy = [ "multi-user.target" ];
-      after = [ "network.target" ];
+      after  = [ "network.target" ] ++ lib.optional hasModels "openreturn-register-models.service";
+      wants  = lib.optional hasModels "openreturn-register-models.service";
 
       restartTriggers = [ cfg.package cfg.host (toString cfg.port) ];
 
@@ -107,7 +249,7 @@ in {
         StateDirectoryMode = "0750";
 
         ExecStart = lib.concatStringsSep " " (
-          [ "${cfg.package}/bin/openreturn" "--host" cfg.host "--port" (toString cfg.port) ]
+          [ "${cfg.package}/bin/openreturn" "serve" "--host" cfg.host "--port" (toString cfg.port) ]
           ++ lib.optional cfg.debug "--debug"
           ++ lib.optional cfg.auth "--auth"
         );
@@ -118,9 +260,6 @@ in {
         RestartSec = "5s";
         StartLimitIntervalSec = "0";
 
-        # Hardening — root needs neither capabilities nor NoNewPrivileges.
-        # For an unprivileged user on a privileged port, grant only the one
-        # capability needed; on a high port, use NoNewPrivileges instead.
         PrivateTmp = true;
         ProtectSystem = "strict";
         ReadWritePaths = [ cfg.dataDir ];

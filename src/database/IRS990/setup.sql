@@ -108,3 +108,5 @@ CREATE INDEX IF NOT EXISTS idx_reported_data_filing ON reported_data (filing_id)
 CREATE INDEX IF NOT EXISTS idx_reported_data_field ON reported_data (field_id);
 
 CREATE INDEX IF NOT EXISTS idx_filing_org ON filing (organization_id);
+
+CREATE INDEX IF NOT EXISTS idx_organization_name ON organization (name);

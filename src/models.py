@@ -9,7 +9,7 @@ except ImportError:  # pragma: no cover
     sys.exit(1)
 
 from database.Score import ScoreDatabase
-from scoring.engine import _PATHS as _VALID_INPUTS, FORMULA_TYPES, FORMULA_INPUT_COUNTS
+from scoring.engine import _PATHS as _VALID_INPUTS, FORMULA_TYPES, FORMULA_INPUT_COUNTS, _FACTOR_PREFIX
 
 _MODEL_KEYS  = {'version', 'description'}
 _FACTOR_KEYS = {'name', 'weight', 'formula_type', 'inputs', 'direction',
@@ -89,8 +89,8 @@ def validate_toml(data: dict) -> list[str]:
 
         weight = factor.get('weight')
         if weight is not None:
-            if not isinstance(weight, (int, float)) or float(weight) <= 0:
-                issues.append(f"ERROR: {prefix}: weight must be a positive number, got: {weight!r}")
+            if not isinstance(weight, (int, float)) or float(weight) < 0:
+                issues.append(f"ERROR: {prefix}: weight must be a non-negative number, got: {weight!r}")
             else:
                 weights.append(float(weight))
 
@@ -107,15 +107,44 @@ def validate_toml(data: dict) -> list[str]:
             if not isinstance(inputs, list):
                 issues.append(f"ERROR: {prefix}: inputs must be an array")
             else:
+                factor_names = {
+                    f.get('name') for f in factors
+                    if isinstance(f, dict) and isinstance(f.get('name'), str)
+                }
                 for inp in inputs:
-                    if inp not in _VALID_INPUTS:
+                    if isinstance(inp, str) and inp.startswith(_FACTOR_PREFIX):
+                        ref = inp[len(_FACTOR_PREFIX):]
+                        if not ref:
+                            issues.append(f"ERROR: {prefix}: 'factor:' reference must include a name")
+                        elif ref not in factor_names:
+                            issues.append(
+                                f"ERROR: {prefix}: references unknown factor '{ref}'"
+                            )
+                    elif isinstance(inp, str):
+                        try:
+                            float(inp)
+                        except ValueError:
+                            if inp not in _VALID_INPUTS:
+                                issues.append(
+                                    f"ERROR: {prefix}: unknown input key '{inp}'. "
+                                    f"Must be one of: {sorted(_VALID_INPUTS)}, a numeric literal, "
+                                    f"or 'factor:<name>'"
+                                )
+                    elif inp not in _VALID_INPUTS:
                         issues.append(
                             f"ERROR: {prefix}: unknown input key '{inp}'. "
-                            f"Must be one of: {sorted(_VALID_INPUTS)}"
+                            f"Must be one of: {sorted(_VALID_INPUTS)}, a numeric literal, "
+                            f"or 'factor:<name>'"
                         )
                 if formula_type and formula_type in FORMULA_INPUT_COUNTS:
                     expected = FORMULA_INPUT_COUNTS[formula_type]
-                    if len(inputs) != expected:
+                    if expected is None:
+                        if len(inputs) < 1:
+                            issues.append(
+                                f"ERROR: {prefix}: formula_type '{formula_type}' requires "
+                                f"at least 1 input, got 0"
+                            )
+                    elif len(inputs) != expected:
                         issues.append(
                             f"ERROR: {prefix}: formula_type '{formula_type}' requires "
                             f"{expected} inputs, got {len(inputs)}"
@@ -136,6 +165,44 @@ def validate_toml(data: dict) -> list[str]:
                 issues.append(
                     f"ERROR: {prefix}: benchmark_lo ({lo}) must be less than benchmark_hi ({hi})"
                 )
+
+    # Check for circular factor:X dependencies
+    dep_graph: dict[str, set[str]] = {}
+    for f in factors:
+        if not isinstance(f, dict) or not isinstance(f.get('name'), str):
+            continue
+        name = f['name']
+        inp_list = f.get('inputs', [])
+        if not isinstance(inp_list, list):
+            continue
+        deps: set[str] = set()
+        for inp in inp_list:
+            if isinstance(inp, str) and inp.startswith(_FACTOR_PREFIX):
+                deps.add(inp[len(_FACTOR_PREFIX):])
+        dep_graph[name] = deps
+
+    visited_c:  set[str] = set()
+    in_stack_c: set[str] = set()
+
+    def _find_cycle(name: str) -> list[str] | None:
+        if name in in_stack_c:
+            return [name]
+        if name in visited_c or name not in dep_graph:
+            return None
+        in_stack_c.add(name)
+        for dep in dep_graph[name]:
+            result = _find_cycle(dep)
+            if result is not None:
+                return [name] + result
+        in_stack_c.discard(name)
+        visited_c.add(name)
+        return None
+
+    for fname in dep_graph:
+        cycle = _find_cycle(fname)
+        if cycle:
+            issues.append(f"ERROR: circular factor dependency: {' → '.join(cycle)}")
+            break
 
     if weights and abs(sum(weights) - 1.0) > 0.001:
         issues.append(f"WARNING: factor weights sum to {sum(weights):.4f}, expected 1.0")
@@ -168,6 +235,18 @@ def cmd_register(args) -> None:
 
     db = ScoreDatabase(path=args.db)
     description = data['model'].get('description')
+
+    existing = db.cursor.execute(
+        "SELECT 1 FROM score_model WHERE version = ?", (version,)
+    ).fetchone()
+    if existing:
+        if args.skip_existing:
+            print(f"Model version {version} already registered, skipping.")
+            db.close()
+            return
+        print(f"ERROR: model version {version} is already registered.", file=sys.stderr)
+        db.close()
+        sys.exit(1)
 
     db.cursor.execute(
         "INSERT INTO score_model (version, description) VALUES (?, ?)",
@@ -224,6 +303,8 @@ def main() -> None:
     reg.add_argument('file', help='Path to the TOML model definition')
     reg.add_argument('--dry-run', action='store_true', dest='dry_run',
                      help='Validate without writing to the database')
+    reg.add_argument('--skip-existing', action='store_true', dest='skip_existing',
+                     help='Exit successfully if this model version is already registered')
 
     sub.add_parser('list', help='List registered scoring models')
 

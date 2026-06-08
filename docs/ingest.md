@@ -1,0 +1,164 @@
+# Ingesting Form 990 Data
+
+There are two ways to get data into OpenReturn: the **ingest CLI** for bulk loading large IRS data drops, and the **upload endpoint** for adding individual ZIPs through the browser. They use different code paths and have very different performance characteristics.
+
+---
+
+## The Ingest CLI
+
+`openreturn-ingest` (or `python3 src/ingest.py` in dev) is designed for the annual IRS TEOS data releases, which typically arrive as dozens of ZIP archives each containing thousands of XML filings.
+
+### What it does, step by step
+
+**1. Pre-scan**
+
+Before processing anything, the CLI opens every ZIP and counts XML members. This gives accurate progress totals upfront. Invalid ZIPs are flagged at this stage and skipped.
+
+**2. Bulk load mode**
+
+The CLI calls `db.begin_bulk_load()` before touching any filings. This sets three SQLite pragmas:
+
+| Pragma | Value during ingest | Normal value |
+|--------|--------------------|--------------------|
+| `synchronous` | `OFF` | `NORMAL` |
+| `wal_autocheckpoint` | `16000` pages (~128 MB) | `1000` pages |
+| `locking_mode` | `EXCLUSIVE` | `NORMAL` |
+
+`locking_mode=EXCLUSIVE` is the most consequential: SQLite takes an exclusive lock on the database file. **No other connection can read or write the database while ingest is running.** Any API query during this period will get a `database is locked` error.
+
+**3. Index drop**
+
+The three high-write-cost indexes are dropped before any rows are inserted:
+
+- `idx_reported_data_filing` — `reported_data (filing_id)`
+- `idx_reported_data_field` — `reported_data (field_id)`
+- `idx_filing_org` — `filing (organization_id)`
+
+Inserting tens of millions of rows while maintaining these B-tree indexes is many times slower than bulk-inserting and rebuilding afterward. The tradeoff is that any query running during ingest (if it somehow bypassed the lock) would fall back to full table scans.
+
+**4. Parse and write — sequential vs. parallel**
+
+How parsing happens depends on `--workers`:
+
+**`--workers 1` (sequential)**
+
+Each XML is read directly from the open ZipFile handle, decoded, and processed in the main process using `router._process_xml()`. This uses the full `IRS990Parser` class (namespace-aware DOM walker). The result is written to the database immediately after each file. Slower but uses minimal memory and is easy to debug.
+
+**`--workers N` (parallel, default: CPU count)**
+
+A `ProcessPoolExecutor` is created once for the entire ingest run. Each worker process receives the XPath index and supported form codes via `_worker_init` and stores them as module-level globals. Workers never touch the database — they only parse.
+
+For each ZIP the CLI submits batches of `(zip_path, xml_filename, zip_name)` tuples to the pool via `_parse_xml_task`. Each task:
+
+1. Opens a cached `ZipFile` handle (module-level `_zip_cache` per worker — the same ZIP is only opened once per worker process)
+2. If the ZIP uses an unsupported compression method, falls back to a `subprocess unzip` call
+3. Parses the XML with `xml.etree.ElementTree` directly (no `IRS990Parser` overhead)
+4. Extracts EIN, name, tax year, form code, and all recognized XPath field values using a precompiled find-string lookup
+5. Returns a plain dict — no DB access, fully serializable across process boundaries
+
+The main process collects results via `as_completed`, buffers organizations, filings, and field values in memory, then writes the entire ZIP's worth of data in one `_flush_zip()` call:
+
+```
+_flush_zip():
+  INSERT OR IGNORE INTO organization …
+  INSERT OR IGNORE INTO filing …
+  _resolve_uuids() → detect collisions with existing rows
+  remap pending_data UUIDs if needed
+  INSERT OR IGNORE INTO reported_data …
+  db.commit()
+```
+
+`_resolve_uuids()` handles the case where a filing for the same (EIN, year, form code) already exists in the database. It creates a temporary table, joins against `filing`, and returns a remap of pre-assigned UUIDs to the actual existing ones so field values land under the correct row.
+
+**5. Teardown**
+
+After all ZIPs are processed:
+
+1. `db.restore_ingest_indexes()` — rebuilds the three dropped indexes (heavy write, may take minutes on large datasets)
+2. `db.end_bulk_load()` — restores normal locking mode, runs `PRAGMA optimize` (updates query planner statistics), and runs `PRAGMA wal_checkpoint(TRUNCATE)` to merge the WAL file back into the main database file and zero out the WAL
+
+---
+
+## The Upload Endpoint
+
+`POST /upload` accepts a `multipart/form-data` request containing a ZIP file. This is the browser-based path for adding individual data files.
+
+### What it does
+
+1. Parses the `multipart/form-data` boundary manually and extracts the ZIP bytes from the request body (no disk write — the ZIP stays in memory as a `BytesIO`)
+2. Opens the in-memory ZIP and iterates over XML members
+3. For each XML: calls `_process_xml()` — parses with `IRS990Parser`, upserts the organization, creates the filing record, stores all field values, and returns a result dict
+4. Calls `db.commit()` once at the end
+5. Returns a summary `{stored, errors, results}`
+
+**Key differences from the CLI:**
+
+| | CLI ingest | Upload endpoint |
+|---|---|---|
+| Parsing | Worker processes (`ET` direct) | Main process (`IRS990Parser`) |
+| DB writes | Buffered per ZIP, flushed in batch | Immediate after each XML |
+| Bulk load mode | Yes (exclusive lock, no indexes) | No |
+| Index management | Drop before, rebuild after | Indexes always present |
+| Commit strategy | Per ZIP + final checkpoint | Single commit at end of request |
+| Concurrent API access | Blocked | Allowed (but contended) |
+
+The upload endpoint commits everything in a single transaction. For a ZIP with thousands of XMLs this means the transaction stays open for the full duration of the request, which can cause write contention with other API routes.
+
+---
+
+## Why Ingest Breaks the Running Server
+
+Running `openreturn-ingest` while the API server is up will cause the server to return errors for the duration of the ingest run.
+
+**Exclusive lock**
+
+`PRAGMA locking_mode=EXCLUSIVE` means only one connection can hold the database at a time. SQLite's WAL mode does allow concurrent readers in normal operation, but exclusive locking mode overrides that — it prevents any new readers from opening the file. The API server's connection pool will see `sqlite3.OperationalError: database is locked` on the first query after the lock is acquired.
+
+**Missing indexes**
+
+Even if a query somehow succeeded (e.g., on a connection established before the lock), the three dropped indexes cover the most common query patterns: looking up filings by organization, reported data by filing, and reported data by field. Without them, every query against `reported_data` (the largest table by far) requires a full scan. On a database with tens of millions of rows this turns sub-millisecond queries into multi-second ones.
+
+**CPU and memory saturation**
+
+Parallel ingest with the default worker count (equal to CPU count) fully saturates the CPU. The server's Python process competes for time on every incoming request. Worker processes also each hold a copy of the XPath index and XML data in memory; on a machine with many cores this can push available memory low enough to trigger the OOM killer.
+
+**WAL growth**
+
+With `wal_autocheckpoint` raised to 16000 pages, the WAL file is not checkpointed back to the main database until it reaches ~128 MB. During the final `wal_checkpoint(TRUNCATE)` the database is briefly unavailable again while the WAL is merged. If the server is running, requests during this window also fail.
+
+---
+
+## Running Ingest Safely
+
+**Schedule it after hours.** All normal API traffic should be finished before starting a bulk ingest. The exclusive lock lasts for the full ingest run, which depending on dataset size and hardware can range from a few minutes to several hours.
+
+**Stop the server first (recommended).** If the server process holds an open connection to the database when `locking_mode=EXCLUSIVE` is set, SQLite may time out before acquiring the lock, leaving ingest in an indeterminate state. The cleanest approach:
+
+```bash
+# NixOS managed service
+systemctl stop openreturn
+openreturn-ingest /path/to/irs-zips/
+systemctl start openreturn
+
+# Dev / manual
+# Stop the server (Ctrl-C or kill)
+python3 src/ingest.py /path/to/irs-zips/
+python3 src/main.py   # restart
+```
+
+**Use parallel mode for large datasets.** The default (`--workers` = CPU count) is significantly faster than `--workers 1` for large IRS drops because XML parsing is CPU-bound and fully parallelizes. The database write phase is single-process regardless of worker count, so doubling workers roughly doubles parse throughput up to the point where DB writes become the bottleneck.
+
+**Expect index rebuild time.** After all ZIPs are processed the CLI prints `Rebuilding indexes…` and `Checkpointing WAL…`. These steps can take several minutes on large databases and cannot be interrupted cleanly — let them finish before starting the server again.
+
+---
+
+## Upload Endpoint Caveats
+
+The `/upload` endpoint is convenient for small one-off additions but is not designed for large data drops:
+
+- **No bulk load mode.** Indexes stay up, `synchronous=NORMAL`, normal locking — safe for concurrent access but slow for bulk writes.
+- **Single-threaded.** Every XML is parsed and written in sequence in the main server process. A ZIP with 10,000 XMLs will block the HTTP handler for the full duration, causing timeouts on any other requests made during that window.
+- **50 MB request limit.** The server enforces a hard limit on request body size. IRS TEOS ZIPs are typically hundreds of megabytes and will be rejected.
+- **In-memory ZIP.** The entire ZIP body is held in memory for the duration of the request. Large ZIPs increase the server's memory footprint for that request.
+
+For anything beyond a handful of filings, use the CLI instead.

@@ -106,6 +106,17 @@ class TestValidateApiKey(TestApiKeyBase):
         ).fetchone()[0]
         self.assertIsNone(row)
 
+    def test_second_call_returns_from_cache(self):
+        first  = self.db.validate_api_key(self.raw)
+        second = self.db.validate_api_key(self.raw)
+        self.assertEqual(first, second)
+
+    def test_invalid_key_cached_on_second_call(self):
+        first  = self.db.validate_api_key("bad-key")
+        second = self.db.validate_api_key("bad-key")
+        self.assertIsNone(first)
+        self.assertIsNone(second)
+
 
 class TestListApiKeys(TestApiKeyBase):
     def test_empty_initially(self):

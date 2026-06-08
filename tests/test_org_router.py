@@ -20,7 +20,7 @@ FILING_ONE = {
 
 def _make_router():
     db = MagicMock()
-    db.list_organizations.return_value = []
+    db.list_organizations.return_value = {"total": 0, "limit": 50, "offset": 0, "organizations": []}
     db.get_organization.return_value = None
     db.list_filings.return_value = []
     return OrgRouter(db=db), db
@@ -105,19 +105,31 @@ class TestListOrganizations(unittest.TestCase):
 
     def test_calls_list_organizations(self):
         self._call()
-        self.db.list_organizations.assert_called_once_with()
+        self.db.list_organizations.assert_called_once_with(search=None, limit=50, offset=0)
 
     def test_empty_list_when_no_orgs(self):
         result = self._call()
         self.assertEqual(result["organizations"], [])
 
     def test_returns_orgs_from_db(self):
-        self.db.list_organizations.return_value = [ORG_ALPHA, ORG_BETA]
+        self.db.list_organizations.return_value = {
+            "total": 2, "limit": 50, "offset": 0, "organizations": [ORG_ALPHA, ORG_BETA]
+        }
         result = self._call()
         self.assertEqual(result["organizations"], [ORG_ALPHA, ORG_BETA])
 
+    def test_non_integer_limit_returns_error(self):
+        result = self._call(limit="bad")
+        self.assertIn("error", result)
+
+    def test_non_integer_offset_returns_error(self):
+        result = self._call(offset="abc")
+        self.assertIn("error", result)
+
     def test_count_matches_db(self):
-        self.db.list_organizations.return_value = [ORG_ALPHA, ORG_BETA]
+        self.db.list_organizations.return_value = {
+            "total": 2, "limit": 50, "offset": 0, "organizations": [ORG_ALPHA, ORG_BETA]
+        }
         result = self._call()
         self.assertEqual(len(result["organizations"]), 2)
 

@@ -69,6 +69,9 @@ python3 src/cli.py ingest --workers 8 /path/to/zip-dir/
 
 # Sequential (one file at a time)
 python3 src/cli.py ingest --workers 1 /path/to/zip-dir/
+
+# Print a per-phase wall-clock breakdown (read / insert / resolve / …)
+python3 src/cli.py ingest --profile /path/to/zip-dir/
 ```
 
 The ingest process:

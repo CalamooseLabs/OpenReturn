@@ -5,6 +5,60 @@ import tempfile
 import zipfile as zf
 
 
+class MemberReader:
+  """Reads ZIP members by name as bytes.
+
+  Supported archives are read directly via ``zipfile``. For archives whose
+  compression Python cannot decode (e.g. Deflate64, common in IRS TEOS ZIPs),
+  the *whole* archive is extracted once with ``unzip`` and members are served
+  from the extraction directory. This avoids spawning an ``unzip -p``
+  subprocess per file — at ~21 ms/spawn over hundreds of thousands of files
+  that fallback dominated bulk-ingest wall-clock.
+
+  The extraction dir is created under TMPDIR (tmpfs/RAM on most systems), so
+  the extracted files are read straight from memory. Use as a context manager
+  (or call close()) to clean it up.
+  """
+
+  def __init__(self, zip_path) -> None:
+    self.zip_path = str(zip_path)
+    self._zip = zf.ZipFile(self.zip_path)
+    self._extract_dir: str | None = None
+
+  def namelist(self) -> list[str]:
+    return self._zip.namelist()
+
+  def read(self, name: str) -> bytes:
+    if self._extract_dir is None:
+      try:
+        return self._zip.read(name)
+      except NotImplementedError:
+        # Unsupported compression — extract the whole archive once, then
+        # serve this and every subsequent member from disk.
+        self._extract_all()
+    with open(os.path.join(self._extract_dir, name), 'rb') as f:
+      return f.read()
+
+  def _extract_all(self) -> None:
+    self._extract_dir = tempfile.mkdtemp(prefix='openreturn-zip-')
+    subprocess.run(
+      ['unzip', '-o', '-qq', '--', self.zip_path, '-d', self._extract_dir],
+      capture_output=True,
+    )
+
+  def __enter__(self) -> "MemberReader":
+    return self
+
+  def __exit__(self, *exc) -> None:
+    self.close()
+
+  def close(self) -> None:
+    self._zip.close()
+    if self._extract_dir:
+      shutil.rmtree(self._extract_dir, ignore_errors=True)
+      self._extract_dir = None
+
+
 class Unzipper:
   def __init__(self, path) -> None:
     self.path = path

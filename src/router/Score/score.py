@@ -20,8 +20,7 @@ class ScoreRouter(Router):
 
     @self.get('/factors')
     def get_factors(query_params: dict, body: Any, headers: HTTPMessage):
-      raw = self._qp(query_params, 'version')
-      version = int(raw) if raw and raw.isdigit() else 1
+      version = self._qp_int(query_params, 'version', default=1)
       return {"model_version": version, "factors": self.db.get_factors(version)}
 
     # --- Scores ---
@@ -45,13 +44,11 @@ class ScoreRouter(Router):
 
     @self.get('/detail')
     def get_score(query_params: dict, body: Any, headers: HTTPMessage):
-      raw = self._qp(query_params, 'score_id')
-      if not raw:
+      if not self._qp(query_params, 'score_id'):
         return {"error": "missing query param: score_id"}
-      try:
-        score_id = int(raw)
-      except ValueError:
-        return {"error": "score_id must be an integer"}
+      score_id, err = self._qp_int_or_error(query_params, 'score_id')
+      if err:
+        return err
       score = self.db.get_score(score_id)
       if score is None:
         return {"error": f"score not found: {score_id}"}
@@ -130,10 +127,9 @@ class ScoreRouter(Router):
       year = self._qp(query_params, 'year')
       if not ein or not year:
         return {"error": "missing query params: ein, year"}
-      try:
-        year_int = int(year)
-      except ValueError:
-        return {"error": "year must be an integer"}
+      year_int, err = self._qp_int_or_error(query_params, 'year', field='year')
+      if err:
+        return err
       score = self.db.get_score_by_ein_year(ein, year_int)
       if score is None:
         return {"error": f"no score found for EIN {ein} year {year}"}
@@ -145,9 +141,8 @@ class ScoreRouter(Router):
       year = self._qp(query_params, 'year')
       if not ein or not year:
         return {"error": "missing query params: ein, year"}
-      try:
-        year_int = int(year)
-      except ValueError:
-        return {"error": "year must be an integer"}
+      year_int, err = self._qp_int_or_error(query_params, 'year', field='year')
+      if err:
+        return err
       scores = self.db.compare_scores(ein, year_int)
       return {"ein": ein, "year": year_int, "scores": scores}

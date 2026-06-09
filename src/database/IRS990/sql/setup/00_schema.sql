@@ -72,7 +72,8 @@ CREATE TABLE IF NOT EXISTS field (
 );
 
 CREATE TABLE IF NOT EXISTS filing (
-  uuid CHARACTER(36) PRIMARY KEY,
+  filing_id INTEGER PRIMARY KEY,
+  uuid CHARACTER(36) NOT NULL UNIQUE,
   year SMALLINT NOT NULL,
   organization_id CHARACTER(10),
   form_code TEXT NOT NULL REFERENCES form (code),
@@ -85,9 +86,13 @@ CREATE TABLE IF NOT EXISTS filing (
   UNIQUE (organization_id, year, form_code)
 );
 
+-- reported_data.filing_id references the filing's INTEGER rowid, not its uuid.
+-- This is by far the largest table (~190M rows at full corpus); an 8-byte
+-- integer FK instead of a 36-char uuid on every row shrinks the DB and speeds
+-- inserts and the index rebuild. The public / API identifier stays filing.uuid.
 CREATE TABLE IF NOT EXISTS reported_data (
   value_id INTEGER PRIMARY KEY AUTOINCREMENT,
-  filing_id CHARACTER(36) NOT NULL REFERENCES filing (uuid) ON DELETE CASCADE,
+  filing_id INTEGER NOT NULL REFERENCES filing (filing_id) ON DELETE CASCADE,
   field_id INTEGER NOT NULL REFERENCES field (field_id),
   raw_value TEXT,
   UNIQUE (filing_id, field_id)

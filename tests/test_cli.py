@@ -491,7 +491,9 @@ class TestTrunc(unittest.TestCase):
 # ingest.py — _resolve_uuids
 # ---------------------------------------------------------------------------
 
-class TestResolveUuids(unittest.TestCase):
+class TestResolveIds(unittest.TestCase):
+    """ingest._resolve_ids maps client-assigned integer filing_ids to the
+    actual filing_id when an (EIN, year, form) row already exists."""
 
     def setUp(self):
         from database.IRS990 import IRS990Database
@@ -501,30 +503,36 @@ class TestResolveUuids(unittest.TestCase):
     def tearDown(self):
         self.db.close()
 
+    def _existing_id(self, ein, year, form):
+        self.db.create_filing(ein, year, form)
+        return self.db.cursor.execute(
+            "SELECT filing_id FROM filing WHERE organization_id=? AND year=? AND form_code=?",
+            (ein, year, form),
+        ).fetchone()[0]
+
     def test_empty_input_returns_empty(self):
-        result = ingest_mod._resolve_uuids(self.db, {})
+        self.assertEqual(ingest_mod._resolve_ids(self.db, {}), {})
+
+    def test_matching_id_returns_empty_remap(self):
+        fid = self._existing_id("123456789", 2023, "990")
+        result = ingest_mod._resolve_ids(self.db, {("123456789", 2023, "990"): fid})
         self.assertEqual(result, {})
 
-    def test_matching_uuid_returns_empty_remap(self):
-        fid = self.db.create_filing("123456789", 2023, "990")
-        result = ingest_mod._resolve_uuids(self.db, {("123456789", 2023, "990"): fid})
-        self.assertEqual(result, {})
-
-    def test_different_uuid_is_remapped(self):
-        fid = self.db.create_filing("123456789", 2023, "990")
-        pre_uuid = str(uuid.uuid4())
-        result = ingest_mod._resolve_uuids(self.db, {("123456789", 2023, "990"): pre_uuid})
-        self.assertEqual(result, {pre_uuid: fid})
+    def test_different_id_is_remapped(self):
+        fid = self._existing_id("123456789", 2023, "990")
+        pre_id = 999999
+        result = ingest_mod._resolve_ids(self.db, {("123456789", 2023, "990"): pre_id})
+        self.assertEqual(result, {pre_id: fid})
 
     def test_multiple_keys_partial_remap(self):
-        fid2023 = self.db.create_filing("123456789", 2023, "990")
-        pre_uuid = str(uuid.uuid4())
-        filing_key_to_uuid = {
-            ("123456789", 2023, "990"): pre_uuid,
-            ("123456789", 2022, "990"): str(uuid.uuid4()),
+        fid2023 = self._existing_id("123456789", 2023, "990")
+        pre_id = 999999
+        keys = {
+            ("123456789", 2023, "990"): pre_id,
+            ("123456789", 2022, "990"): 888888,  # no existing row → not remapped
         }
-        result = ingest_mod._resolve_uuids(self.db, filing_key_to_uuid)
-        self.assertEqual(result, {pre_uuid: fid2023})
+        result = ingest_mod._resolve_ids(self.db, keys)
+        self.assertEqual(result, {pre_id: fid2023})
 
 
 # ---------------------------------------------------------------------------
@@ -543,10 +551,10 @@ class TestFlushZip(unittest.TestCase):
         self.db.close()
 
     def test_empty_lists_just_commits(self):
-        ingest_mod._flush_zip(self.db, [], [], {}, [])
+        ingest_mod._flush_zip(self.db, [], [], [], {})
 
     def test_inserts_organization(self):
-        ingest_mod._flush_zip(self.db, [("111111111", "Alpha")], [], {}, [])
+        ingest_mod._flush_zip(self.db, [("111111111", "Alpha")], [], [], {})
         row = self.db.cursor.execute(
             "SELECT name FROM organization WHERE ein = ?", ("111111111",)
         ).fetchone()
@@ -554,41 +562,66 @@ class TestFlushZip(unittest.TestCase):
         self.assertEqual(row[0], "Alpha")
 
     def test_inserts_filing(self):
-        pre_uuid = str(uuid.uuid4())
         pending_orgs = [("111111111", "Alpha")]
-        pending_filings = [(pre_uuid, 2023, "111111111", "990", "f.xml", "z.zip")]
-        filing_key_to_uuid = {("111111111", 2023, "990"): pre_uuid}
-        ingest_mod._flush_zip(self.db, pending_orgs, pending_filings, filing_key_to_uuid, [])
+        pending_filings = [(1, str(uuid.uuid4()), 2023, "111111111", "990", "f.xml", "z.zip")]
+        ingest_mod._flush_zip(self.db, pending_orgs, pending_filings, [], {})
         row = self.db.cursor.execute(
             "SELECT uuid FROM filing WHERE organization_id = ?", ("111111111",)
         ).fetchone()
         self.assertIsNotNone(row)
 
     def test_inserts_reported_data(self):
-        pre_uuid = str(uuid.uuid4())
+        pre_id = 1
         pending_orgs = [("111111111", "Alpha")]
-        pending_filings = [(pre_uuid, 2023, "111111111", "990", "f.xml", "z.zip")]
-        filing_key_to_uuid = {("111111111", 2023, "990"): pre_uuid}
-        pending_data = [(pre_uuid, self.field_id, "testval")]
-        ingest_mod._flush_zip(self.db, pending_orgs, pending_filings, filing_key_to_uuid, pending_data)
+        pending_filings = [(pre_id, str(uuid.uuid4()), 2023, "111111111", "990", "f.xml", "z.zip")]
+        pending_data = [(pre_id, self.field_id, "testval")]
+        ingest_mod._flush_zip(self.db, pending_orgs, pending_filings, pending_data, {})
         count = self.db.cursor.execute(
-            "SELECT COUNT(*) FROM reported_data WHERE filing_id = ?", (pre_uuid,)
+            "SELECT COUNT(*) FROM reported_data WHERE filing_id = ?", (pre_id,)
         ).fetchone()[0]
         self.assertEqual(count, 1)
 
-    def test_uuid_remap_when_filing_exists(self):
+    def test_id_remap_when_filing_exists(self):
         self.db.upsert_organization("111111111", "Alpha")
-        actual_uuid = self.db.create_filing("111111111", 2023, "990")
-        pre_uuid = str(uuid.uuid4())
+        self.db.create_filing("111111111", 2023, "990")
+        actual_id = self.db.cursor.execute(
+            "SELECT filing_id FROM filing WHERE organization_id=? AND year=? AND form_code=?",
+            ("111111111", 2023, "990"),
+        ).fetchone()[0]
+        pre_id = 999999
         pending_orgs = [("111111111", "Alpha")]
-        pending_filings = [(pre_uuid, 2023, "111111111", "990", "f.xml", "z.zip")]
-        filing_key_to_uuid = {("111111111", 2023, "990"): pre_uuid}
-        pending_data = [(pre_uuid, self.field_id, "value")]
-        ingest_mod._flush_zip(self.db, pending_orgs, pending_filings, filing_key_to_uuid, pending_data)
+        pending_filings = [(pre_id, str(uuid.uuid4()), 2023, "111111111", "990", "f.xml", "z.zip")]
+        pending_data = [(pre_id, self.field_id, "value")]
+        ingest_mod._flush_zip(self.db, pending_orgs, pending_filings, pending_data, {})
         count = self.db.cursor.execute(
-            "SELECT COUNT(*) FROM reported_data WHERE filing_id = ?", (actual_uuid,)
+            "SELECT COUNT(*) FROM reported_data WHERE filing_id = ?", (actual_id,)
         ).fetchone()[0]
         self.assertEqual(count, 1)
+
+    def test_persistent_remap_applies_to_later_flush(self):
+        """A remap from an earlier flush must still apply when a within-ZIP
+        duplicate's reported_data arrives in a later flush (empty filings)."""
+        self.db.upsert_organization("111111111", "Alpha")
+        self.db.create_filing("111111111", 2023, "990")
+        actual_id = self.db.cursor.execute(
+            "SELECT filing_id FROM filing WHERE organization_id=? AND year=? AND form_code=?",
+            ("111111111", 2023, "990"),
+        ).fetchone()[0]
+        pre_id = 999999
+        id_remap: dict = {}
+        # Flush 1: filing collides → remap recorded in id_remap.
+        ingest_mod._flush_zip(
+            self.db, [("111111111", "Alpha")],
+            [(pre_id, str(uuid.uuid4()), 2023, "111111111", "990", "f.xml", "z.zip")],
+            [(pre_id, self.field_id, "v1")], id_remap,
+        )
+        # Flush 2: no new filing, but more data for the same pre_id.
+        field2 = list(self.db.get_xpath_index().values())[1]
+        ingest_mod._flush_zip(self.db, [], [], [(pre_id, field2, "v2")], id_remap)
+        count = self.db.cursor.execute(
+            "SELECT COUNT(*) FROM reported_data WHERE filing_id = ?", (actual_id,)
+        ).fetchone()[0]
+        self.assertEqual(count, 2)
 
 
 # ---------------------------------------------------------------------------
@@ -897,7 +930,7 @@ class TestIngestParallel(unittest.TestCase):
             'values': {},
         }
         mock_db = MagicMock()
-        mock_pool = self._make_mock_pool(submit_result=parsed)
+        mock_pool = self._make_mock_pool(submit_result=[parsed])
 
         with tempfile.TemporaryDirectory() as td:
             zip_dir = Path(td) / "zips"
@@ -946,7 +979,7 @@ class TestIngestParallel(unittest.TestCase):
             # 'name' missing → KeyError inside the try block
         }
         mock_db = MagicMock()
-        mock_pool = self._make_mock_pool(submit_result=parsed)
+        mock_pool = self._make_mock_pool(submit_result=[parsed])
 
         with tempfile.TemporaryDirectory() as td:
             zip_dir = Path(td) / "zips"
@@ -972,7 +1005,7 @@ class TestIngestParallel(unittest.TestCase):
             'values': {},
         }
         mock_db = MagicMock()
-        mock_pool = self._make_mock_pool(submit_result=parsed)
+        mock_pool = self._make_mock_pool(submit_result=[parsed])
 
         with tempfile.TemporaryDirectory() as td:
             zip_dir = Path(td) / "zips"

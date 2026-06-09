@@ -8,6 +8,8 @@ There are two ways to get data into OpenReturn: the **ingest CLI** for bulk load
 
 `openreturn-ingest` (or `python3 src/ingest.py` in dev) is designed for the annual IRS TEOS data releases, which typically arrive as dozens of ZIP archives each containing thousands of XML filings.
 
+Flags: `--workers N` (parallel parser processes, default = CPU count) and `--profile` (print a wall-clock timer plus a per-phase breakdown — read / insert / resolve / commit / checkpoint / worker-wait — and per-ZIP `read ms/file`, for diagnosing throughput).
+
 ### What it does, step by step
 
 **1. Pre-scan**
@@ -40,35 +42,38 @@ Inserting tens of millions of rows while maintaining these B-tree indexes is man
 
 How parsing happens depends on `--workers`:
 
+In both modes the main process reads each XML's bytes (via `unzipper.MemberReader`, see below) — workers never do disk/ZIP I/O.
+
 **`--workers 1` (sequential)**
 
-Each XML is read directly from the open ZipFile handle, decoded, and processed in the main process using `router._process_xml()`. This uses the full `IRS990Parser` class (namespace-aware DOM walker). The result is written to the database immediately after each file. Slower but uses minimal memory and is easy to debug.
+Each XML is read, decoded, and processed in the main process using `router._process_xml()`. This uses the full `IRS990Parser` class (namespace-aware DOM walker). The result is written to the database immediately after each file. Slower but uses minimal memory and is easy to debug.
 
 **`--workers N` (parallel, default: CPU count)**
 
 A `ProcessPoolExecutor` is created once for the entire ingest run. Each worker process receives the XPath index and supported form codes via `_worker_init` and stores them as module-level globals. Workers never touch the database — they only parse.
 
-For each ZIP the CLI submits batches of `(zip_path, xml_filename, zip_name)` tuples to the pool via `_parse_xml_task`. Each task:
+The main process reads XML bytes and submits them in batches of `_BATCH_FILES` (50) `(xml_bytes, filename, zip_name)` tuples via `_parse_xml_batch` (batching amortizes the process-pool IPC cost). Each filing is parsed by `_parse_xml_task`, which:
 
-1. Opens a cached `ZipFile` handle (module-level `_zip_cache` per worker — the same ZIP is only opened once per worker process)
-2. If the ZIP uses an unsupported compression method, falls back to a `subprocess unzip` call
-3. Parses the XML with `xml.etree.ElementTree` directly (no `IRS990Parser` overhead)
-4. Extracts EIN, name, tax year, form code, and all recognized XPath field values using a precompiled find-string lookup
-5. Returns a plain dict — no DB access, fully serializable across process boundaries
+1. Parses the bytes with `xml.etree.ElementTree`
+2. Walks the tree **once**, building `{path: text}`, then intersects with the XPath index — far cheaper than one `ElementTree.find()` per mapped path (~56× on a real 990). First occurrence wins, matching `find()` semantics.
+3. Pulls EIN, name, tax year, and form code out of the same walk
+4. Returns a plain dict — no DB access, fully serializable across process boundaries
 
-The main process collects results via `as_completed`, buffers organizations, filings, and field values in memory, then writes the entire ZIP's worth of data in one `_flush_zip()` call:
+**Reading ZIP members (`unzipper.MemberReader`).** Members are read directly via `zipfile`. Some IRS TEOS archives use **Deflate64**, which Python's `zipfile` cannot decode; on the first such member `MemberReader` extracts the whole archive **once** with `unzip -d` (into tmpfs) and serves members as plain files. This replaced a per-file `unzip -p` subprocess fallback that dominated full-corpus ingest (88.7% of wall-clock → 10.2%; full 731k-filing run 1h45m → ~20m).
+
+The main process collects results via `as_completed`, buffers organizations, filings, and field values in memory, and flushes to the DB via `_flush_zip()` (per ZIP, or mid-ZIP once buffered `reported_data` rows reach `_DATA_ROWS_PER_FLUSH`):
 
 ```
 _flush_zip():
   INSERT OR IGNORE INTO organization …
-  INSERT OR IGNORE INTO filing …
-  _resolve_uuids() → detect collisions with existing rows
-  remap pending_data UUIDs if needed
-  INSERT OR IGNORE INTO reported_data …
+  INSERT OR IGNORE INTO filing (filing_id, uuid, …)   -- explicit integer filing_id
+  _resolve_ids() → detect collisions with existing rows (this batch only)
+  apply the persistent per-ZIP id_remap to pending_data
+  INSERT OR IGNORE INTO reported_data …               -- integer filing_id
   db.commit()
 ```
 
-`_resolve_uuids()` handles the case where a filing for the same (EIN, year, form code) already exists in the database. It creates a temporary table, joins against `filing`, and returns a remap of pre-assigned UUIDs to the actual existing ones so field values land under the correct row.
+Integer filing_ids are assigned client-side from a counter seeded past `MAX(filing_id)` (so `reported_data` rows can be built before the filing rows are inserted; `reported_data.filing_id` is the integer rowid, not the uuid — see the schema note in [architecture](development/architecture.md)). `_resolve_ids()` handles the case where a filing for the same (EIN, year, form code) already exists: it joins a temp table of **the current batch's** keys against `filing` and returns a remap of the client-assigned id to the existing one. Those remaps accumulate in a per-ZIP `id_remap` dict that is applied to every batch's `pending_data`, so a within-ZIP duplicate whose data lands in a later flush is still remapped correctly. (`uuid` remains the public/API filing identifier.)
 
 **5. Teardown**
 

@@ -1,1 +1,1 @@
-from scoring.engine import ScoringEngine
+from scoring.engine import ScoringEngine as ScoringEngine

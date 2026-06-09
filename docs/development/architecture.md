@@ -5,6 +5,9 @@
 ```
 src/
   database/      → Database (base) / IRS990Database / ScoreDatabase
+                   IRS990/repositories/  → query/command mixins
+                   IRS990/sql/{setup,populate,migrations}/
+                   Score/sql/{setup,populate,migrations}/
   parser/        → Parser (base) / IRS990Parser
   router/        → Router (base) / UploadRouter / OrgRouter / FilingRouter / ScoreRouter
   server/        → Server (wraps HTTPServer, wires routers to routes)
@@ -27,15 +30,17 @@ Each layer has a base class in its package `__init__.py` and a concrete implemen
 
 SQLite connection manager. Opens (or creates) a `.db` file and runs setup/populate scripts on init.
 
-- `_run_script(path)` — executes a SQL file relative to the **subclass's** `__file__`, not the project root. SQL assets must live alongside the subpackage that uses them.
+- `_run_dir(subdir, sql_dir)` — executes every `*.sql` in `src/database/<sql_dir>/<subdir>/` in **sorted filename order**. `__init__` runs `sql/setup/` then `sql/populate/`. SQL assets must live under the `sql/` tree of the subpackage that uses them. Numeric filename prefixes (`00_`, `10_`, …) make load order deterministic and dependency-safe.
 - `begin_bulk_load()` / `end_bulk_load()` — toggle WAL mode, a 512 MB page cache, and a 10 GB mmap for high-throughput ingest. Call these around large batch operations.
-- `populate_guard` — optional table name; when set, `populate.sql` only runs if that table is empty (used for performance-sensitive subclasses).
+- `populate_guard` — optional table name; when set, the `sql/populate/` files only run if that table is empty (used for performance-sensitive subclasses).
 
 ### `IRS990Database` (`src/database/IRS990/irs990.py`)
 
-Extends `Database`. Runs `setup.sql` (schema) then `populate.sql` on **every startup**. The ~4200 `INSERT OR IGNORE` statements cover all five supported form types (990, 990-EZ, 990-N, 990-PF, 990-T), their parts/sections/lines/fields, states, and data types. First-run startup is slow (~seconds) because all rows are new; subsequent startups are fast because `INSERT OR IGNORE` skips existing rows instantly. The `UPDATE form SET supported=1 …` statement in `populate.sql` also runs on every startup, ensuring new form types are enabled in databases created before they were added.
+Extends `Database`. Loads `sql/setup/*.sql` (schema + `api_key` table) then `sql/populate/*.sql` on **every startup**. `populate/` is split by form — `00_reference` (states, forms, parts, and the core 990/EZ/PF/T structure), then `10_form_990`, `20_form_990ez`, `30_form_990pf`, `40_form_990t`, `50_return_header` — each loaded in sorted order. The `INSERT OR IGNORE` statements cover all five supported form types (990, 990-EZ, 990-N, 990-PF, 990-T), their parts/sections/lines/fields, states, and data types. First-run startup is slow (~seconds) because all rows are new; subsequent startups are fast because `INSERT OR IGNORE` skips existing rows instantly. FK enforcement is on, so file order matters: `50_return_header` depends on part 14 from `10_form_990`.
 
-Key methods:
+The class itself is thin — its query/command methods come from the repository mixins in `src/database/IRS990/repositories/` (`ApiKeyRepository`, `FilingRepository`, `MetadataRepository`, `MigrationRepository`, `OrganizationRepository`, `ReportedDataRepository`), composed via multiple inheritance so the public interface stays flat. `__init__` wires the `_field_meta` cache and `_key_cache` the mixins rely on.
+
+Key methods (defined in the mixin shown, called as `db.<method>`):
 
 | Method | Purpose |
 |--------|---------|
@@ -53,9 +58,11 @@ Key methods:
 
 **Non-obvious**: field metadata (`_field_meta`) is loaded into memory at init. The API key validation cache is per-process, not TTL-based — it is only invalidated on revoke. Schema migration for the `rate_limit` column runs on every startup for databases created before the column was added.
 
+**Filing keys**: `filing` has an integer `filing_id` PRIMARY KEY (rowid) and a separate `uuid UNIQUE`. **`uuid` is the public/API identifier** (filing responses, `FilingRouter`/`ScoreRouter` lookups, and `organization_score.filing_id` all use it). The large `reported_data` table references the integer `filing_id` instead — an 8-byte int rather than a 36-char uuid on ~190M rows roughly halves the DB and speeds bulk inserts and the index rebuild. `store_reported_data`/`get_reported_data` take the public uuid and resolve it to the integer internally; the bulk ingest path assigns integer ids directly.
+
 ### `ScoreDatabase` (`src/database/Score/score.py`)
 
-Extends `IRS990Database`. Adds scoring tables (`score_model`, `score_factor`, `organization_score`, `score_factor_value`).
+Extends `IRS990Database`. Loads its own `Score/sql/setup/*.sql` and `Score/sql/populate/*.sql` (after the inherited IRS990 schema) and adds scoring tables (`score_model`, `score_factor`, `organization_score`, `score_factor_value`).
 
 Key methods:
 
@@ -127,7 +134,7 @@ class MyRouter(Router):
 | `FilingRouter` | `/filings` | `src/router/Filing/filing.py` |
 | `ScoreRouter` | `/scores` | `src/router/Score/score.py` |
 
-`UploadRouter` handles ZIP file upload and ingestion via `ProcessPoolExecutor`. It also exposes `process_zip_dir(path)` used by the ingest CLI. The parser, ZIP cache, and XPath index all live as module-level globals (`_xpath_index`, `_xpath_compiled`, `_zip_cache`, `_supported_forms`) initialized by `_worker_init` in each worker process.
+`UploadRouter` handles ZIP file upload and ingestion via `ProcessPoolExecutor`. It also exposes `process_zip_dir(path)` (used by `main.py`'s testing mode). The XPath index and supported-form set live as module-level globals (`_xpath_index`, `_supported_forms`) initialized by `_worker_init` in each worker process. Workers receive already-read XML **bytes** and do no disk/ZIP I/O; `unzipper.MemberReader` (in the main process) reads members, extracting Deflate64 archives once with `unzip` rather than per-file.
 
 ---
 
@@ -173,13 +180,13 @@ See [Scoring Models](../scoring/models.md) for the full list of formula types an
 
 `openreturn-ingest` / `python3 src/ingest.py` processes one or more ZIP archives.
 
-**Sequential mode** (`--workers 1`, default): processes each XML in the main process using `UploadRouter.process_zip_dir()`.
+**Sequential mode** (`--workers 1`): reads + processes each XML in the main process via `UploadRouter._process_xml` (full `IRS990Parser`). Simple, low-memory, easy to debug.
 
-**Parallel mode** (`--workers N`): delegates to `ProcessPoolExecutor`. Each worker calls `_worker_init` once (loads XPath index and supported forms into module globals), then processes XML files via `_parse_xml_task`. Results are collected with `as_completed` and written to the DB in the main process.
+**Parallel mode** (`--workers N`, default = CPU count): the main process reads XML bytes (`MemberReader`) and submits them to a `ProcessPoolExecutor` in batches via `_parse_xml_batch`. Each worker (`_worker_init` once) parses bytes with a single tree-walk + XPath-index intersection and returns plain dicts. Results are collected with `as_completed`; the main process buffers and bulk-writes.
 
-**Deduplication**: `_resolve_uuids()` creates a temporary table `_key_resolve` and joins it against `filing` to detect when a (EIN, year, form_code) triple already exists. If a match is found, the pre-assigned UUID is remapped to the existing UUID so all `store_reported_data` calls land under the correct row.
+**Deduplication**: filing rows get client-assigned integer `filing_id`s (counter seeded past `MAX(filing_id)`). `_resolve_ids()` joins a temp table of the current flush's keys against `filing` to detect when an (EIN, year, form_code) triple already exists, and remaps the client id to the existing one; remaps accumulate in a per-ZIP `id_remap` applied to each batch's `reported_data`.
 
-**Batch commits**: `_flush_zip()` accumulates inserts and calls `db.commit()` every `_BATCH_SIZE` rows (default 500) to avoid holding large transactions.
+**Batch commits**: `_flush_zip()` writes a buffered batch and commits; it flushes per ZIP or mid-ZIP once buffered `reported_data` rows reach `_DATA_ROWS_PER_FLUSH` (500k). Indexes on `reported_data`/`filing` are dropped during the load (`drop_ingest_indexes`) and rebuilt at the end.
 
 ---
 
@@ -196,4 +203,4 @@ All commands are dispatched through `src/cli.py` (the unified `openreturn` binar
 | `openreturn keys` | `src/keys.py` | Manage API keys |
 | `openreturn models` | `src/models.py` | Register and list scoring models |
 
-`cmd_init` opens the database (triggering `populate.sql` on first run via `populate_guard="form"`), prints form/field counts, and closes. `cmd_migrate` discovers `.sql` files in `src/database/IRS990/migrations/`, compares against the `migration` tracking table, and applies anything pending in filename order.
+`cmd_init` opens the database (triggering the `sql/populate/` files on first run via `populate_guard="form"`), prints form/field counts, and closes. `cmd_migrate` discovers `.sql` files in `src/database/IRS990/sql/migrations/`, compares against the `migration` tracking table, and applies anything pending in filename order.

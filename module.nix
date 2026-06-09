@@ -68,7 +68,7 @@ in {
     dataDir = lib.mkOption {
       type = lib.types.str;
       default = "/var/lib/openreturn";
-      description = "Directory where IRS990.db is stored. The service runs from this directory.";
+      description = "Directory where OpenReturn.db is stored. The service runs from this directory.";
     };
 
     user = lib.mkOption {

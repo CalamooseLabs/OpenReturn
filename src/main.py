@@ -23,7 +23,7 @@ _REFERENCE_TABLES = {
 # User data tables — show counts and recent rows
 _USER_TABLES: dict[str, list[str]] = {
   'organization':             ['ein', 'name', 'created_at'],
-  'filing':                   ['uuid', 'year', 'organization_id', 'form_code', 'created_at'],
+  'filing':                   ['filing_id', 'uuid', 'year', 'organization_id', 'form_code', 'created_at'],
   'reported_data':            ['value_id', 'filing_id', 'field_id', 'raw_value'],
   'organization_score':       ['score_id', 'filing_id', 'model_id', 'total_score', 'scored_at'],
   'organization_score_factor':['value_id', 'score_id', 'factor_id', 'raw_value', 'weighted_value'],

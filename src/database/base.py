@@ -37,9 +37,9 @@ class Database:
     self.connection.execute("PRAGMA temp_store=MEMORY")
     self.connection.execute("PRAGMA mmap_size=10737418240")  # 10 GB
 
-    self._run_script("setup.sql", sql_dir)
+    self._run_dir("sql/setup", sql_dir)
     if populate_guard is None or not self._table_has_rows(populate_guard):
-      self._run_script("populate.sql", sql_dir)
+      self._run_dir("sql/populate", sql_dir)
 
   def _table_has_rows(self, table: str) -> bool:
     return self.cursor.execute(
@@ -68,7 +68,15 @@ class Database:
     if self.connection:
       self.connection.close()
 
-  def _run_script(self, script: str, sql_dir: str) -> None:
-    file_path = Path(__file__).parent / sql_dir / script
-    self.cursor.executescript(file_path.read_text())
+  def _run_dir(self, subdir: str, sql_dir: str) -> None:
+    """Execute every *.sql file in <sql_dir>/<subdir> in sorted filename order.
+
+    Files are named with numeric prefixes (00_, 10_, …) so load order is
+    deterministic and dependency-safe (parts before sections before lines).
+    Resolves to src/database/<sql_dir>/<subdir>/ — sql_dir selects the
+    owning subpackage (e.g. "IRS990", "Score").
+    """
+    directory = Path(__file__).parent / sql_dir / subdir
+    for script in sorted(directory.glob("*.sql")):
+      self.cursor.executescript(script.read_text())
     self.connection.commit()

@@ -32,6 +32,31 @@ class Router:
     return query_params.get(key, [None])[0]
 
   @staticmethod
+  def _qp_int(query_params: dict, key: str, default: int | None = None) -> int | None:
+    """Parse an int query param. Returns ``default`` if the param is absent or
+    not a valid integer — never raises. Use for optional params with a fallback."""
+    raw = query_params.get(key, [None])[0]
+    if not raw:
+      return default
+    try:
+      return int(raw)
+    except ValueError:
+      return default
+
+  @staticmethod
+  def _qp_int_or_error(query_params: dict, key: str, default: int | None = None,
+                       field: str | None = None) -> tuple[int | None, dict | None]:
+    """Parse an int query param. Returns ``(value, None)`` on success or absence
+    (using ``default``), or ``(None, error_dict)`` if present but non-integer."""
+    raw = query_params.get(key, [None])[0]
+    if not raw:
+      return default, None
+    try:
+      return int(raw), None
+    except ValueError:
+      return None, {"error": f"{field or key} must be an integer"}
+
+  @staticmethod
   def _require_fields(body: Any, *keys: str) -> tuple[dict | None, dict | None]:
     if not isinstance(body, dict):
       return None, {"error": "JSON body required"}

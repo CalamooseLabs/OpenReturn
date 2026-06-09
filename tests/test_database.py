@@ -187,7 +187,8 @@ class TestIRS990Database(unittest.TestCase):
         self.db.store_reported_data(filing_id, values)
 
         count = self.db.cursor.execute(
-            "SELECT COUNT(*) FROM reported_data WHERE filing_id = ?", (filing_id,)
+            "SELECT COUNT(*) FROM reported_data rd JOIN filing f ON f.filing_id = rd.filing_id "
+            "WHERE f.uuid = ?", (filing_id,)
         ).fetchone()[0]
         self.assertEqual(count, len(values))
 
@@ -201,7 +202,8 @@ class TestIRS990Database(unittest.TestCase):
         self.db.store_reported_data(filing_id, {field_id: "expected value"})
 
         raw = self.db.cursor.execute(
-            "SELECT raw_value FROM reported_data WHERE filing_id = ? AND field_id = ?",
+            "SELECT rd.raw_value FROM reported_data rd JOIN filing f ON f.filing_id = rd.filing_id "
+            "WHERE f.uuid = ? AND rd.field_id = ?",
             (filing_id, field_id),
         ).fetchone()[0]
         self.assertEqual(raw, "expected value")
@@ -218,7 +220,8 @@ class TestIRS990Database(unittest.TestCase):
         self.db.store_reported_data(filing_id, values)  # should not raise
 
         count = self.db.cursor.execute(
-            "SELECT COUNT(*) FROM reported_data WHERE filing_id = ?", (filing_id,)
+            "SELECT COUNT(*) FROM reported_data rd JOIN filing f ON f.filing_id = rd.filing_id "
+            "WHERE f.uuid = ?", (filing_id,)
         ).fetchone()[0]
         self.assertEqual(count, 1)
 

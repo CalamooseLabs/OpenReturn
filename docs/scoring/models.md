@@ -4,7 +4,7 @@ Scores represent a financial health assessment of a Form 990 filing under a vers
 
 ## CLI
 
-Run from the directory where `IRS990.db` lives:
+Run from the directory where `OpenReturn.db` lives:
 
 ```bash
 openreturn-models register model_v1.toml          # validate and write to DB

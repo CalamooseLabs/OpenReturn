@@ -40,7 +40,7 @@ OpenReturn ships a NixOS module. Add the flake as an input and enable the servic
 | `host` | string | `"localhost"` | Bind address |
 | `port` | port | `8080` | Bind port |
 | `debug` | bool | `false` | Verbose request/response logging |
-| `dataDir` | string | `"/var/lib/openreturn"` | Directory where `IRS990.db` is stored |
+| `dataDir` | string | `"/var/lib/openreturn"` | Directory where `OpenReturn.db` is stored |
 | `user` | string | `"openreturn"` | Service user |
 | `group` | string | `"openreturn"` | Service group |
 | `runAsRoot` | bool | `false` | Run as root instead of the dedicated service user (not recommended) |

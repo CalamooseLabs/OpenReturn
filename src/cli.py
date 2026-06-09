@@ -48,6 +48,8 @@ def main() -> int:
     ingest_p.add_argument('directory', help='Path to a directory of .zip files')
     ingest_p.add_argument('--workers', type=int, default=os.cpu_count() or 4,
                           help='Parallel XML parser processes (default: CPU count)')
+    ingest_p.add_argument('--profile', action='store_true',
+                          help='Print a per-phase wall-clock breakdown of the parallel ingest')
 
     # ── keys ─────────────────────────────────────────────────────────────────
     keys_p = sub.add_parser('keys', help='Manage API keys')

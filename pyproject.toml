@@ -19,7 +19,7 @@ where = ["src"]
 py-modules = ["cli", "main", "keys", "ingest", "console", "models", "db"]
 
 [tool.setuptools.package-data]
-"*" = ["*.sql", "*.html"]
+"*" = ["*.sql", "*.html", "sql/**/*.sql"]
 
 [tool.setuptools.package-dir]
 "" = "src"

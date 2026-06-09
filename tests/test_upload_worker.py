@@ -51,9 +51,6 @@ def _zip_with(tmpdir, filename, content, zip_name="test.zip"):
 
 class TestWorkerInit(unittest.TestCase):
 
-    def setUp(self):
-        upload_mod._zip_cache.clear()
-
     def test_sets_xpath_index(self):
         xpath = {"ReturnData/IRS990/ActivityOrMissionDesc": 1}
         upload_mod._worker_init(xpath, set())
@@ -63,28 +60,20 @@ class TestWorkerInit(unittest.TestCase):
         upload_mod._worker_init({}, {"990", "990EZ"})
         self.assertEqual(upload_mod._supported_forms, {"990", "990EZ"})
 
-    def test_sets_xpath_compiled(self):
-        xpath = {"ReturnData/IRS990/ActivityOrMissionDesc": 42}
-        upload_mod._worker_init(xpath, set())
-        expected_key = upload_mod._build_find("ReturnData/IRS990/ActivityOrMissionDesc")
-        self.assertIn(expected_key, upload_mod._xpath_compiled)
-        self.assertEqual(upload_mod._xpath_compiled[expected_key], 42)
-
 
 # ---------------------------------------------------------------------------
 # _parse_xml_task
 # ---------------------------------------------------------------------------
 
 class TestParseXmlTask(unittest.TestCase):
+    """The worker now receives already-read XML bytes (the main process reads
+    them), so these pass bytes directly rather than a ZIP path."""
 
     def setUp(self):
-        upload_mod._zip_cache.clear()
         upload_mod._worker_init({"ReturnData/IRS990/CYTotalRevenueAmt": 1}, {"990"})
 
     def test_returns_parsed_for_valid_xml(self):
-        with tempfile.TemporaryDirectory() as td:
-            zip_path = _zip_with(td, "filing.xml", _FULL_XML)
-            result = upload_mod._parse_xml_task((str(zip_path), "filing.xml", "test.zip"))
+        result = upload_mod._parse_xml_task((_FULL_XML, "filing.xml", "test.zip"))
         self.assertEqual(result["status"], "parsed")
         self.assertEqual(result["ein"], "123456789")
         self.assertEqual(result["year"], 2023)
@@ -92,9 +81,7 @@ class TestParseXmlTask(unittest.TestCase):
     def test_returns_skipped_for_unsupported_form(self):
         xml = _FULL_XML.replace(b"<ReturnTypeCd>990</ReturnTypeCd>",
                                  b"<ReturnTypeCd>UNSUPPORTED</ReturnTypeCd>")
-        with tempfile.TemporaryDirectory() as td:
-            zip_path = _zip_with(td, "filing.xml", xml)
-            result = upload_mod._parse_xml_task((str(zip_path), "filing.xml", "test.zip"))
+        result = upload_mod._parse_xml_task((xml, "filing.xml", "test.zip"))
         self.assertEqual(result["status"], "skipped")
         self.assertIn("unsupported", result["reason"])
 
@@ -106,50 +93,56 @@ class TestParseXmlTask(unittest.TestCase):
     <ReturnTypeCd>990</ReturnTypeCd>
   </ReturnHeader>
 </Return>"""
-        with tempfile.TemporaryDirectory() as td:
-            zip_path = _zip_with(td, "filing.xml", xml)
-            result = upload_mod._parse_xml_task((str(zip_path), "filing.xml", "test.zip"))
+        result = upload_mod._parse_xml_task((xml, "filing.xml", "test.zip"))
         self.assertEqual(result["status"], "error")
         self.assertIn("missing", result["reason"])
 
     def test_returns_error_for_invalid_xml(self):
-        with tempfile.TemporaryDirectory() as td:
-            zip_path = _zip_with(td, "filing.xml", b"not xml content")
-            result = upload_mod._parse_xml_task((str(zip_path), "filing.xml", "test.zip"))
+        result = upload_mod._parse_xml_task((b"not xml content", "filing.xml", "test.zip"))
         self.assertEqual(result["status"], "error")
 
-    def test_uses_zip_cache_on_second_call(self):
-        with tempfile.TemporaryDirectory() as td:
-            zip_path = _zip_with(td, "filing.xml", _FULL_XML)
-            zip_str = str(zip_path)
-            upload_mod._parse_xml_task((zip_str, "filing.xml", "test.zip"))
-            self.assertIn(zip_str, upload_mod._zip_cache)
-            result = upload_mod._parse_xml_task((zip_str, "filing.xml", "test.zip"))
-        self.assertEqual(result["status"], "parsed")
-
     def test_extracts_value_when_element_found(self):
-        """Covers line 89: values[field_id] = elem.text when XPath matches."""
+        """Covers values[field_id] = text when a mapped path is present."""
         upload_mod._worker_init({"ReturnHeader/TaxYr": 999}, {"990"})
-        with tempfile.TemporaryDirectory() as td:
-            zip_path = _zip_with(td, "filing.xml", _FULL_XML)
-            result = upload_mod._parse_xml_task((str(zip_path), "filing.xml", "test.zip"))
+        result = upload_mod._parse_xml_task((_FULL_XML, "filing.xml", "test.zip"))
         self.assertEqual(result["status"], "parsed")
         self.assertIn(999, result["values"])
         self.assertEqual(result["values"][999], "2023")
 
-    def test_notimplementederror_falls_back_to_subprocess(self):
-        with tempfile.TemporaryDirectory() as td:
-            zip_path_str = str(Path(td) / "fake.zip")
-            mock_zf = MagicMock()
-            mock_zf.read.side_effect = NotImplementedError
-            upload_mod._zip_cache[zip_path_str] = mock_zf
-            try:
-                with patch('router.Upload.upload.subprocess.run') as mock_run:
-                    mock_run.return_value.stdout = b"<not>valid xml</not>"
-                    result = upload_mod._parse_xml_task((zip_path_str, "f.xml", "fake.zip"))
-            finally:
-                upload_mod._zip_cache.pop(zip_path_str, None)
-        self.assertEqual(result["status"], "error")
+    def test_walk_keeps_first_occurrence_of_repeated_path(self):
+        """The single-pass walk uses setdefault, matching find()'s first-match."""
+        xml = _FULL_XML.replace(
+            b"</ReturnHeader>",
+            b"</ReturnHeader><ReturnData><IRS990>"
+            b"<Dup>first</Dup><Dup>second</Dup></IRS990></ReturnData>",
+        )
+        upload_mod._worker_init({"ReturnData/IRS990/Dup": 7}, {"990"})
+        result = upload_mod._parse_xml_task((xml, "filing.xml", "test.zip"))
+        self.assertEqual(result["values"][7], "first")
+
+
+# ---------------------------------------------------------------------------
+# _parse_xml_batch
+# ---------------------------------------------------------------------------
+
+class TestParseXmlBatch(unittest.TestCase):
+
+    def setUp(self):
+        upload_mod._worker_init({"ReturnHeader/TaxYr": 999}, {"990"})
+
+    def test_returns_one_result_per_task(self):
+        batch = [
+            (_FULL_XML, "a.xml", "test.zip"),
+            (b"not xml", "b.xml", "test.zip"),
+        ]
+        results = upload_mod._parse_xml_batch(batch)
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0]["status"], "parsed")
+        self.assertEqual(results[0]["file"], "a.xml")
+        self.assertEqual(results[1]["status"], "error")
+
+    def test_empty_batch_returns_empty_list(self):
+        self.assertEqual(upload_mod._parse_xml_batch([]), [])
 
 
 # ---------------------------------------------------------------------------

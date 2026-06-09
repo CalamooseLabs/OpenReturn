@@ -1,6 +1,5 @@
 import io
 import os
-import subprocess
 import xml.etree.ElementTree as ET
 import zipfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -11,18 +10,18 @@ from pathlib import Path
 from router import Router
 from database.IRS990 import IRS990Database
 from parser.IRS990 import IRS990Parser
+from unzipper import MemberReader
 
 # ---------------------------------------------------------------------------
 # Module-level worker state — set once per worker process via _worker_init.
 # These must be module-level (not class attributes) for pickling.
+# Workers receive already-read XML bytes, so they do no ZIP/disk I/O.
 # ---------------------------------------------------------------------------
 
 _xpath_index:     dict[str, int] = {}
 _supported_forms: set[str]       = set()
-_zip_cache:       dict[str, zipfile.ZipFile] = {}
-_xpath_compiled:  dict[str, int] = {}  # precomputed find-string → field_id
 
-_NS = {'irs': 'http://www.irs.gov/efile'}
+_NS_PFX = '{http://www.irs.gov/efile}'
 
 _EIN_PATH  = "ReturnHeader/Filer/EIN"
 _NAME_PATH = "ReturnHeader/Filer/BusinessName/BusinessNameLine1Txt"
@@ -30,63 +29,73 @@ _YEAR_PATH = "ReturnHeader/TaxYr"
 _FORM_PATH = "ReturnHeader/ReturnTypeCd"
 
 
-def _build_find(path: str) -> str:
-  return "./" + "/".join(f"irs:{c}" for c in path.split("/"))
-
-
-_EIN_FIND  = _build_find(_EIN_PATH)
-_NAME_FIND = _build_find(_NAME_PATH)
-_YEAR_FIND = _build_find(_YEAR_PATH)
-_FORM_FIND = _build_find(_FORM_PATH)
-
-
 def _worker_init(xpath_index: dict, supported_forms: set) -> None:
-  global _xpath_index, _supported_forms, _xpath_compiled
+  global _xpath_index, _supported_forms
   _xpath_index     = xpath_index
   _supported_forms = supported_forms
-  _xpath_compiled  = {_build_find(p): fid for p, fid in xpath_index.items()}
+
+
+def _walk(elem, parent: str, out: dict) -> None:
+  """Record {path: text} for every element with a non-blank text value.
+
+  Paths mirror the XPath-index keys (e.g. 'ReturnData/IRS990/...'). First
+  occurrence wins (``setdefault``) to match ElementTree's ``find`` semantics
+  for repeated elements."""
+  tag = elem.tag
+  if tag.startswith(_NS_PFX):
+    tag = tag[len(_NS_PFX):]
+  path = f"{parent}/{tag}" if parent else tag
+  if elem.text and elem.text.strip():
+    out.setdefault(path, elem.text)
+  for child in elem:
+    _walk(child, path, out)
+
+
+def _header_issue(ein, name, year, form_code, supported_forms,
+                  filename: str, zip_filename: str | None = None) -> dict | None:
+  """Validate the four required header fields and the form-supported check.
+
+  Returns an error/skipped result dict if the filing should not be stored,
+  or None if the header is valid. ``zip_filename`` is included in the result
+  only when provided (the parallel path carries it; the HTTP path does not).
+  """
+  extra = {"zip_filename": zip_filename} if zip_filename is not None else {}
+  if not all([ein, name, year, form_code]):
+    missing = [k for k, v in {"EIN": ein, "name": name, "year": year, "form": form_code}.items() if not v]
+    return {"file": filename, **extra, "status": "error",
+            "reason": f"missing header fields: {missing}"}
+  if form_code not in supported_forms:
+    return {"file": filename, **extra, "status": "skipped",
+            "reason": f"unsupported form type: {form_code}"}
+  return None
 
 
 def _parse_xml_task(task: tuple) -> dict:
-  """Parse a single XML filing. No DB access. Designed to run in worker processes."""
-  zip_path_str, filename, zip_filename = task
-  try:
-    if zip_path_str not in _zip_cache:
-      _zip_cache[zip_path_str] = zipfile.ZipFile(zip_path_str, 'r')
-    try:
-      xml_bytes = _zip_cache[zip_path_str].read(filename)
-    except NotImplementedError:
-      proc = subprocess.run(
-        ['unzip', '-p', '--', zip_path_str, filename], capture_output=True
-      )
-      xml_bytes = proc.stdout
+  """Parse a single XML filing from raw bytes. No DB or disk access — the
+  main process reads the bytes and passes them in, so this is pure CPU work
+  safe to run in worker processes.
 
+  Extraction is a single recursive walk of the tree building {path: text},
+  then a dict intersection with the XPath index — far cheaper than one
+  ElementTree.find() per mapped path (thousands of root-relative searches)."""
+  xml_bytes, filename, zip_filename = task
+  try:
     root = ET.fromstring(xml_bytes)
 
-    ein_e  = root.find(_EIN_FIND,  _NS)
-    name_e = root.find(_NAME_FIND, _NS)
-    year_e = root.find(_YEAR_FIND, _NS)
-    form_e = root.find(_FORM_FIND, _NS)
+    paths: dict[str, str] = {}
+    for child in root:
+      _walk(child, '', paths)
 
-    ein       = ein_e.text  if ein_e  is not None else None
-    name      = name_e.text if name_e is not None else None
-    year      = year_e.text if year_e is not None else None
-    form_code = form_e.text if form_e is not None else None
+    ein       = paths.get(_EIN_PATH)
+    name      = paths.get(_NAME_PATH)
+    year      = paths.get(_YEAR_PATH)
+    form_code = paths.get(_FORM_PATH)
 
-    if not all([ein, name, year, form_code]):
-      missing = [k for k, v in {"EIN": ein, "name": name, "year": year, "form": form_code}.items() if not v]
-      return {"file": filename, "zip_filename": zip_filename,
-              "status": "error", "reason": f"missing header fields: {missing}"}
+    issue = _header_issue(ein, name, year, form_code, _supported_forms, filename, zip_filename)
+    if issue is not None:
+      return issue
 
-    if form_code not in _supported_forms:
-      return {"file": filename, "zip_filename": zip_filename,
-              "status": "skipped", "reason": f"unsupported form type: {form_code}"}
-
-    values: dict[int, str] = {}
-    for find_str, field_id in _xpath_compiled.items():
-      elem = root.find(find_str, _NS)
-      if elem is not None and elem.text:
-        values[field_id] = elem.text
+    values = {_xpath_index[p]: v for p, v in paths.items() if p in _xpath_index}
 
     return {
       "file":         filename,
@@ -101,6 +110,13 @@ def _parse_xml_task(task: tuple) -> dict:
   except Exception as exc:
     return {"file": filename, "zip_filename": zip_filename,
             "status": "error", "reason": str(exc)}
+
+
+def _parse_xml_batch(batch: list) -> list:
+  """Parse a batch of filings in one worker task. Batching amortizes the
+  per-task IPC cost (pickling bytes in, results out) now that per-filing
+  parsing is cheap. Returns one result dict per input task."""
+  return [_parse_xml_task(task) for task in batch]
 
 
 # ---------------------------------------------------------------------------
@@ -131,12 +147,9 @@ class UploadRouter(Router):
     year      = parser.getElem(_YEAR_PATH)
     form_code = parser.getElem(_FORM_PATH)
 
-    if not all([ein, name, year, form_code]):
-      missing = [k for k, v in {"EIN": ein, "name": name, "year": year, "form": form_code}.items() if not v]
-      return {"file": filename, "status": "error", "reason": f"missing header fields: {missing}"}
-
-    if form_code not in self.supported_forms:
-      return {"file": filename, "status": "skipped", "reason": f"unsupported form type: {form_code}"}
+    issue = _header_issue(ein, name, year, form_code, self.supported_forms, filename)
+    if issue is not None:
+      return issue
 
     self.db.upsert_organization(ein, name)
     filing_id = self.db.create_filing(ein, int(year), form_code,
@@ -191,8 +204,8 @@ class UploadRouter(Router):
     ) as pool:
       for zip_idx, zip_path in enumerate(zips, 1):
         try:
-          with zipfile.ZipFile(zip_path, 'r') as zf:
-            xml_names = [n for n in zf.namelist() if not n.endswith('/') and n.endswith('.xml')]
+          with MemberReader(zip_path) as reader:
+            xml_names = [n for n in reader.namelist() if not n.endswith('/') and n.endswith('.xml')]
             total = len(xml_names)
             print(f"[{zip_idx}/{len(zips)}] {zip_path.name}  ({total} XMLs)")
             uncommitted = 0
@@ -203,13 +216,7 @@ class UploadRouter(Router):
 
               for name in chunk:
                 try:
-                  try:
-                    xml_bytes = zf.read(name)
-                  except NotImplementedError:
-                    r = subprocess.run(
-                      ['unzip', '-p', '--', str(zip_path), name], capture_output=True
-                    )
-                    xml_bytes = r.stdout
+                  xml_bytes = reader.read(name)
                   futures[pool.submit(_parse_xml_task, (xml_bytes, name, zip_path.name))] = name
                 except Exception as e:
                   results.append({"file": name, "status": "error", "reason": str(e)})

@@ -16,7 +16,8 @@ pkgs.python3Packages.buildPythonApplication {
 
   postInstall = ''
     find $out -name "*.sql" -o -name "*.html" | head -1 > /dev/null || {
-      cp -r ${./src}/database/IRS990/*.sql $out/lib/python*/site-packages/database/IRS990/ 2>/dev/null || true
+      cp -r ${./src}/database/IRS990/sql $out/lib/python*/site-packages/database/IRS990/ 2>/dev/null || true
+      cp -r ${./src}/database/Score/sql $out/lib/python*/site-packages/database/Score/ 2>/dev/null || true
       cp -r ${./src}/router/Upload/views $out/lib/python*/site-packages/router/Upload/ 2>/dev/null || true
     }
   '';

@@ -34,8 +34,8 @@ The project maintains **100% statement coverage**. PRs that reduce coverage shou
 |-----------|---------------|
 | `tests/test_scoring_engine.py` | `src/scoring/engine.py` |
 | `tests/test_models.py` | `src/models.py` |
-| `tests/test_database.py` | `src/database/IRS990/irs990.py`, `src/database/Score/score.py` |
-| `tests/test_expanded_forms.py` | `src/database/IRS990/populate.sql` (990-EZ/N/PF/T schema) |
+| `tests/test_database.py` | `src/database/IRS990/irs990.py` + `src/database/IRS990/repositories/`, `src/database/Score/score.py` |
+| `tests/test_expanded_forms.py` | `src/database/IRS990/sql/populate/*.sql` (990-EZ/N/PF/T schema) |
 | `tests/test_db_commands.py` | `src/db.py` |
 | `tests/test_cli.py` | `src/ingest.py` |
 | `tests/test_upload_worker.py` | `src/router/Upload/upload.py` |
@@ -47,7 +47,7 @@ The project maintains **100% statement coverage**. PRs that reduce coverage shou
 
 ## Notes on Parallel Ingest Coverage
 
-`src/ingest.py` and `src/router/Upload/upload.py` spawn worker processes via `ProcessPoolExecutor`. Subprocess workers cannot be tracked by the coverage tool. Coverage for the main-process loop (submit, `as_completed`, result dispatch) is achieved by patching `ProcessPoolExecutor` and `as_completed` in tests; worker functions (`_worker_init`, `_parse_xml_task`, etc.) are tested directly in-process in `test_upload_worker.py`.
+`src/ingest.py` and `src/router/Upload/upload.py` spawn worker processes via `ProcessPoolExecutor`. Subprocess workers cannot be tracked by the coverage tool. Coverage for the main-process loop (submit, `as_completed`, result dispatch) is achieved by patching `ProcessPoolExecutor` and `as_completed` in tests; worker functions (`_worker_init`, `_parse_xml_task`, `_parse_xml_batch`) are tested directly in-process in `test_upload_worker.py`.
 
 ## Test Patterns
 
@@ -55,4 +55,4 @@ The project maintains **100% statement coverage**. PRs that reduce coverage shou
 
 **Mock DB for engine tests**: `ScoringEngine` is initialized with `db=MagicMock()` so individual formula and normalization methods can be tested without any database layer.
 
-**Module-level state**: `upload.py` uses module globals (`_xpath_index`, `_supported_forms`, `_zip_cache`). Tests call `upload_mod._worker_init(...)` in `setUp` and clear `_zip_cache` to reset state between tests.
+**Module-level state**: `upload.py` uses module globals (`_xpath_index`, `_supported_forms`) set per worker process. Tests call `upload_mod._worker_init(...)` in `setUp` to populate them. (Workers no longer cache ZIP handles — they receive already-read bytes — so there is no `_zip_cache` to reset.)

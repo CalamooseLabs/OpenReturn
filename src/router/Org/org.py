@@ -17,11 +17,12 @@ class OrgRouter(Router):
     @self.get('')
     def list_organizations(query_params: dict, body: Any, headers: HTTPMessage):
       search = self._qp(query_params, 'search')
-      try:
-        limit  = min(int(self._qp(query_params, 'limit')  or 50), 500)
-        offset = max(int(self._qp(query_params, 'offset') or 0),  0)
-      except ValueError:
+      limit,  e1 = self._qp_int_or_error(query_params, 'limit',  default=50)
+      offset, e2 = self._qp_int_or_error(query_params, 'offset', default=0)
+      if e1 or e2:
         return {"error": "limit and offset must be integers"}
+      limit  = min(limit, 500)
+      offset = max(offset, 0)
       return self.db.list_organizations(search=search, limit=limit, offset=offset)
 
     @self.get('/detail')

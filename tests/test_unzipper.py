@@ -8,7 +8,7 @@ from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from unzipper import Unzipper
+from unzipper import Unzipper, MemberReader
 
 
 def _write_zip(path: str, files: dict[str, str]):
@@ -302,6 +302,45 @@ class TestUnzipperSymlinkProtection(unittest.TestCase):
             uz.close()
         finally:
             os.unlink(path)
+
+
+class MemberReaderTestCase(unittest.TestCase):
+    """MemberReader: read members by name, with whole-archive unzip fallback
+    for compression zipfile can't decode (e.g. Deflate64)."""
+
+    def test_reads_member_via_zipfile(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = os.path.join(td, 'a.zip')
+            _write_zip(path, {'f.xml': '<data>ok</data>', 'g.xml': '<g/>'})
+            with MemberReader(path) as r:
+                self.assertEqual(r.read('f.xml'), b'<data>ok</data>')
+                self.assertCountEqual(r.namelist(), ['f.xml', 'g.xml'])
+
+    def test_extracts_whole_archive_once_on_notimplementederror(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = os.path.join(td, 'a.zip')
+            _write_zip(path, {'f.xml': 'real', 'g.xml': 'real2'})
+
+            def fake_unzip(cmd, **kw):
+                d = cmd[cmd.index('-d') + 1]
+                with open(os.path.join(d, 'f.xml'), 'wb') as fh:
+                    fh.write(b'<extracted-f/>')
+                with open(os.path.join(d, 'g.xml'), 'wb') as fh:
+                    fh.write(b'<extracted-g/>')
+                return MagicMock()
+
+            r = MemberReader(path)
+            # Force the unsupported-compression path on the underlying zipfile.
+            r._zip = MagicMock()
+            r._zip.read.side_effect = NotImplementedError
+            with patch('unzipper.unzipper.subprocess.run', side_effect=fake_unzip) as mock_run:
+                self.assertEqual(r.read('f.xml'), b'<extracted-f/>')
+                # Second read is served from the extraction dir — no new unzip call.
+                self.assertEqual(r.read('g.xml'), b'<extracted-g/>')
+            mock_run.assert_called_once()
+            args = mock_run.call_args[0][0]
+            self.assertEqual(args[:4], ['unzip', '-o', '-qq', '--'])
+            r.close()
 
 
 if __name__ == '__main__':

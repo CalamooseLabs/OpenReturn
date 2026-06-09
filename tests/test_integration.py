@@ -266,7 +266,8 @@ class TestPipelineEndToEnd(unittest.TestCase):
     def test_pipeline_fields_stored_count_matches_db(self):
         results = self._run(self._zip(**{'filing.xml': VALID_990_XML}))
         db_count = self.db.cursor.execute(
-            "SELECT COUNT(*) FROM reported_data WHERE filing_id = ?",
+            "SELECT COUNT(*) FROM reported_data rd JOIN filing f ON f.filing_id = rd.filing_id "
+            "WHERE f.uuid = ?",
             (results[0]['filing_id'],)
         ).fetchone()[0]
         self.assertEqual(results[0]['fields_stored'], db_count)

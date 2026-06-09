@@ -10,6 +10,7 @@ except ImportError:  # pragma: no cover
 
 from database.Score import ScoreDatabase
 from scoring.engine import _PATHS as _VALID_INPUTS, FORMULA_TYPES, FORMULA_INPUT_COUNTS, _FACTOR_PREFIX
+from scoring.graph import find_cycle
 
 _MODEL_KEYS  = {'version', 'description'}
 _FACTOR_KEYS = {'name', 'weight', 'formula_type', 'inputs', 'direction',
@@ -181,28 +182,9 @@ def validate_toml(data: dict) -> list[str]:
                 deps.add(inp[len(_FACTOR_PREFIX):])
         dep_graph[name] = deps
 
-    visited_c:  set[str] = set()
-    in_stack_c: set[str] = set()
-
-    def _find_cycle(name: str) -> list[str] | None:
-        if name in in_stack_c:
-            return [name]
-        if name in visited_c or name not in dep_graph:
-            return None
-        in_stack_c.add(name)
-        for dep in dep_graph[name]:
-            result = _find_cycle(dep)
-            if result is not None:
-                return [name] + result
-        in_stack_c.discard(name)
-        visited_c.add(name)
-        return None
-
-    for fname in dep_graph:
-        cycle = _find_cycle(fname)
-        if cycle:
-            issues.append(f"ERROR: circular factor dependency: {' → '.join(cycle)}")
-            break
+    cycle = find_cycle(dep_graph)
+    if cycle:
+        issues.append(f"ERROR: circular factor dependency: {' → '.join(cycle)}")
 
     if weights and abs(sum(weights) - 1.0) > 0.001:
         issues.append(f"WARNING: factor weights sum to {sum(weights):.4f}, expected 1.0")

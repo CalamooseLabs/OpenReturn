@@ -144,10 +144,9 @@ class FilingRouter(Router):
       year = self._qp(query_params, 'year')
       if not ein or not year:
         return {"error": "missing query params: ein, year"}
-      try:
-        year_int = int(year)
-      except ValueError:
-        return {"error": "year must be an integer"}
+      year_int, err = self._qp_int_or_error(query_params, 'year', field='year')
+      if err:
+        return err
       fmt = (self._qp(query_params, 'format') or 'json').lower()
       result = self.db.get_filing_data_by_ein_year(ein, year_int)
       if result is None:

@@ -342,6 +342,29 @@ class MemberReaderTestCase(unittest.TestCase):
             self.assertEqual(args[:4], ['unzip', '-o', '-qq', '--'])
             r.close()
 
+    def test_rejects_zip_slip_member_name(self):
+        """A member name that escapes the extraction dir is rejected (zip-slip)."""
+        with tempfile.TemporaryDirectory() as td:
+            path = os.path.join(td, 'a.zip')
+            _write_zip(path, {'f.xml': 'real'})
+
+            def fake_unzip(cmd, **kw):
+                d = cmd[cmd.index('-d') + 1]
+                with open(os.path.join(d, 'f.xml'), 'wb') as fh:
+                    fh.write(b'<ok/>')
+                return MagicMock()
+
+            r = MemberReader(path)
+            r._zip = MagicMock()
+            r._zip.read.side_effect = NotImplementedError
+            with patch('unzipper.unzipper.subprocess.run', side_effect=fake_unzip):
+                # Benign member reads fine (also forces the extraction fallback).
+                self.assertEqual(r.read('f.xml'), b'<ok/>')
+                # A traversal name is rejected before any file is opened.
+                with self.assertRaises(ValueError):
+                    r.read('../../../../etc/passwd.xml')
+            r.close()
+
 
 if __name__ == '__main__':
     unittest.main()

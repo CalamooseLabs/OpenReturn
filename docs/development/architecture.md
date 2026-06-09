@@ -13,8 +13,9 @@ src/
   server/        → Server (wraps HTTPServer, wires routers to routes)
   scoring/       → ScoringEngine
   unzipper/      → Unzipper (ZIP file iterator)
+  sources.py     → URL detection, ZIP-link discovery, downloads (for URL ingest)
   db.py          → Database init/migrate CLI commands
-  ingest.py      → Bulk ZIP ingestion CLI
+  ingest.py      → Bulk ZIP ingestion CLI (local directory or URL)
   models.py      → Scoring model registration CLI
   keys.py        → API key management CLI
   main.py        → Server entry point
@@ -38,7 +39,7 @@ SQLite connection manager. Opens (or creates) a `.db` file and runs setup/popula
 
 Extends `Database`. Loads `sql/setup/*.sql` (schema + `api_key` table) then `sql/populate/*.sql` on **every startup**. `populate/` is split by form — `00_reference` (states, forms, parts, and the core 990/EZ/PF/T structure), then `10_form_990`, `20_form_990ez`, `30_form_990pf`, `40_form_990t`, `50_return_header` — each loaded in sorted order. The `INSERT OR IGNORE` statements cover all five supported form types (990, 990-EZ, 990-N, 990-PF, 990-T), their parts/sections/lines/fields, states, and data types. First-run startup is slow (~seconds) because all rows are new; subsequent startups are fast because `INSERT OR IGNORE` skips existing rows instantly. FK enforcement is on, so file order matters: `50_return_header` depends on part 14 from `10_form_990`.
 
-The class itself is thin — its query/command methods come from the repository mixins in `src/database/IRS990/repositories/` (`ApiKeyRepository`, `FilingRepository`, `MetadataRepository`, `MigrationRepository`, `OrganizationRepository`, `ReportedDataRepository`), composed via multiple inheritance so the public interface stays flat. `__init__` wires the `_field_meta` cache and `_key_cache` the mixins rely on.
+The class itself is thin — its query/command methods come from the repository mixins in `src/database/IRS990/repositories/` (`ApiKeyRepository`, `FilingRepository`, `IngestRepository`, `MetadataRepository`, `MigrationRepository`, `OrganizationRepository`, `ReportedDataRepository`), composed via multiple inheritance so the public interface stays flat. `__init__` wires the `_field_meta` cache and `_key_cache` the mixins rely on.
 
 Key methods (defined in the mixin shown, called as `db.<method>`):
 
@@ -51,6 +52,7 @@ Key methods (defined in the mixin shown, called as `db.<method>`):
 | `store_reported_data(filing_id, values)` | Bulk insert `{field_id: value}` pairs |
 | `get_filing_data_by_ein_year(ein, year)` | Returns filing metadata + all field values |
 | `get_historical_values(ein)` | Returns `{xml_path: [float, ...]}` oldest-to-newest across all filings |
+| `get_ingested_sources()` / `record_ingested_zip(...)` | Read/write the `ingested_zip` table so URL ingest skips archives already loaded (`IngestRepository`) |
 | `list_organizations(search, limit, offset)` | Paginated org list with optional name substring match |
 | `create_api_key(name, rate_limit)` | SHA-256 hashes the raw key, stores hash; returns raw key once |
 | `validate_api_key(raw_key)` | Checks hash against DB; caches result in memory for the process lifetime |
@@ -178,7 +180,9 @@ See [Scoring Models](../scoring/models.md) for the full list of formula types an
 
 ## Ingest CLI (`src/ingest.py`)
 
-`openreturn-ingest` / `python3 src/ingest.py` processes one or more ZIP archives.
+`openreturn-ingest` / `python3 src/ingest.py` processes ZIP archives from a local directory **or an `http(s)://` URL**. `cmd_ingest` dispatches on `sources.is_url`: a path goes to `_cmd_ingest_dir` (pre-scan all ZIPs → bulk-load → loop), a URL to `_cmd_ingest_url`. Both share the per-ZIP processors (`_process_zip_seq` / `_process_zip_par`) and run-level state (`_Ctx`), so the bulk-load session, worker pool, and index drop/rebuild are identical across the two paths.
+
+**URL sources** (`src/sources.py`, stdlib `urllib` + `html.parser` only): a direct `.zip` URL is fetched as-is; any other URL is parsed as HTML and every `<a href>` whose path ends in `.zip` is kept — so on the IRS Form 990 downloads page the `apps.irs.gov` data archives are selected while CSV index files and `www.irs.gov` navigation links are ignored. Each discovered archive is downloaded to a cache dir, scanned, ingested, recorded in `ingested_zip`, then deleted (`--keep-downloads`/`--cache-dir` opt out). Archives already in `ingested_zip` are skipped unless `--force`; `--list` prints discovered URLs with their ingest status and exits. This is download→ingest→delete **per archive**, so peak disk stays bounded and an interrupted run resumes by re-doing only the in-flight archive.
 
 **Sequential mode** (`--workers 1`): reads + processes each XML in the main process via `UploadRouter._process_xml` (full `IRS990Parser`). Simple, low-memory, easy to debug.
 

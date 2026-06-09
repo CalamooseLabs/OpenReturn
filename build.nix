@@ -12,6 +12,10 @@ pkgs.python3Packages.buildPythonApplication {
   ];
 
   propagatedBuildInputs = with pkgs.python3Packages; [
+    # SQLCipher binding — enables optional at-rest DB encryption when a key is
+    # provided via DB_SECRET_KEY / DB_SECRET_KEY_FILE. Without it the app falls
+    # back to an unencrypted database (with a warning).
+    sqlcipher3
   ];
 
   postInstall = ''

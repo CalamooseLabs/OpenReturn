@@ -6,9 +6,35 @@ There are two ways to get data into OpenReturn: the **ingest CLI** for bulk load
 
 ## The Ingest CLI
 
-`openreturn-ingest` (or `python3 src/ingest.py` in dev) is designed for the annual IRS TEOS data releases, which typically arrive as dozens of ZIP archives each containing thousands of XML filings.
+`openreturn-ingest` (or `python3 src/ingest.py` in dev) is designed for the annual IRS TEOS data releases, which typically arrive as dozens of ZIP archives each containing thousands of XML filings. The source argument is either a **local directory** of `.zip` files or an **`http(s)://` URL** (see [Ingesting from a URL](#ingesting-from-a-url) below).
 
-Flags: `--workers N` (parallel parser processes, default = CPU count) and `--profile` (print a wall-clock timer plus a per-phase breakdown — read / insert / resolve / commit / checkpoint / worker-wait — and per-ZIP `read ms/file`, for diagnosing throughput).
+Flags: `--workers N` (parallel parser processes, default = CPU count) and `--profile` (print a wall-clock timer plus a per-phase breakdown — read / insert / resolve / commit / checkpoint / worker-wait — and per-ZIP `read ms/file`, for diagnosing throughput). URL sources add `--force`, `--keep-downloads`, `--cache-dir DIR`, and `--list` (all described below).
+
+### Ingesting from a URL
+
+Instead of a directory you can pass a URL. Two shapes are accepted:
+
+- **A direct `.zip` link** — e.g. `https://apps.irs.gov/pub/epostcard/990/xml/2024/2024_TEOS_XML_01A.zip`. The archive is downloaded and ingested directly.
+- **An HTML index page** — most usefully the IRS [Form 990 series downloads page](https://www.irs.gov/charities-non-profits/form-990-series-downloads). The page is fetched and every `<a href>` whose path ends in `.zip` is collected. The IRS data archives live on `apps.irs.gov`; the page's **CSV index files** (`index_YYYY.csv`) and ordinary **navigation links** end in something other than `.zip`, so they are ignored automatically. No site crawling happens — only links on the page you point at are considered.
+
+> **Point this only at a source you trust.** Every `.zip` link on the page becomes a download target regardless of which host it lives on (the IRS page deliberately spans `www.irs.gov` → `apps.irs.gov`), and HTTP redirects are followed. Downloaded bytes are only ever written to the cache dir and parsed as 990 XML — never executed or reflected — but a compromised or spoofed index page could still direct the downloader at arbitrary hosts.
+
+```bash
+# Pull every 990-series archive the IRS currently publishes
+openreturn ingest https://www.irs.gov/charities-non-profits/form-990-series-downloads
+
+# Just one archive
+openreturn ingest https://apps.irs.gov/pub/epostcard/990/xml/2024/2024_TEOS_XML_01A.zip
+
+# See what would be fetched, and which archives are already loaded, without downloading
+openreturn ingest --list https://www.irs.gov/charities-non-profits/form-990-series-downloads
+```
+
+**Already-processed archives are skipped.** Each archive that finishes ingesting is recorded in the `ingested_zip` table (keyed on its download URL). A later run discovers the same links, skips the ones already recorded, and ingests only what is new — so re-running after the IRS publishes a new month does the minimum work. The record is written only *after* an archive finishes, so an interrupted run re-does just the in-flight archive on the next pass. Pass `--force` to ingest every discovered archive regardless of the record.
+
+**Disk is bounded.** Archives are processed one at a time: download → ingest → **delete**, so peak disk usage is roughly one archive plus the database (not the whole corpus). By default downloads go to a temporary directory that is removed afterward. Use `--cache-dir DIR` to download into a directory you control, and `--keep-downloads` to retain the `.zip` files after ingest (e.g. to keep a local mirror).
+
+The exclusive-lock and index-rebuild behavior below applies to URL ingests exactly as it does to directory ingests — the lock is held for the whole run, and the indexes are rebuilt once at the end.
 
 ### What it does, step by step
 

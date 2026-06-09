@@ -46,6 +46,8 @@ OpenReturn ships a NixOS module. Add the flake as an input and enable the servic
 | `runAsRoot` | bool | `false` | Run as root instead of the dedicated service user (not recommended) |
 | `openFirewall` | bool | `true` | Open the firewall for the configured port |
 | `auth` | bool | `false` | Require API key authentication for all requests |
+| `database.secretKeyFile` | null or path | `null` | Path to a file holding the SQLCipher key; loaded at runtime via systemd credentials (never in the store). See [Database Encryption](#database-encryption) |
+| `database.secretKey` | null or string | `null` | SQLCipher key as a literal string (**insecure** — lands in the Nix store). Prefer `secretKeyFile` |
 | `models` | list of model submodules | `[]` | Scoring models to register automatically (see below) |
 
 ## Scoring Models
@@ -149,6 +151,48 @@ The service runs as a dedicated system user with a hardened systemd unit:
 When `port < 1024` (e.g. `port = 80`) the unit instead grants `CAP_NET_BIND_SERVICE` via `AmbientCapabilities` and locks the capability bounding set to that single capability. The process can bind the privileged port without running as root and without being able to acquire any other capability.
 
 The database file is written to `dataDir`, which is managed by systemd's `StateDirectory` directive.
+
+## Database Encryption
+
+Providing an encryption key turns on SQLCipher (AES-256) encryption of `OpenReturn.db`. The packaged build includes the `sqlcipher3` binding, so no extra setup is needed. The key is injected into **every** unit that touches the database (`init` creates it encrypted; `migrate`, `register-models`, and the server open it), so set the key once and the whole chain uses it.
+
+There are two ways to supply the key, designed to fit however your host manages secrets.
+
+### `database.secretKeyFile` (recommended)
+
+Point at a file whose contents are the key. The module loads it through systemd's `LoadCredential`, so the secret is exposed to the service as `$CREDENTIALS_DIRECTORY/db-secret-key` (mode `0400`, owned by the service user) and **never lands in the Nix store** or in `systemctl show`. This composes with any secret manager that can drop a file on the host:
+
+```nix
+# agenix
+services.openreturn.database.secretKeyFile = config.age.secrets.openreturn-db.path;
+
+# sops-nix
+services.openreturn.database.secretKeyFile = config.sops.secrets.openreturn-db.path;
+
+# plain file you provisioned out of band (must be readable by the service user)
+services.openreturn.database.secretKeyFile = "/run/secrets/openreturn-db-key";
+```
+
+Under the hood the module sets, on each unit:
+
+```ini
+LoadCredential=db-secret-key:/run/secrets/openreturn-db-key
+Environment=DB_SECRET_KEY_FILE=%d/db-secret-key   # %d = the credentials dir
+```
+
+and the app reads the key from that file via `DB_SECRET_KEY_FILE`.
+
+### `database.secretKey` (testing only)
+
+A literal string, injected as `Environment=DB_SECRET_KEY=…`. **This is insecure**: the value is written world-readable into the Nix store and shown by `systemctl show`. The module emits a build-time warning when it is used. Reserve it for throwaway or local testing:
+
+```nix
+services.openreturn.database.secretKey = "dev-only-passphrase";
+```
+
+Setting both `secretKeyFile` and `secretKey` is a configuration error (assertion failure). If neither is set, the database is unencrypted.
+
+> The key must stay stable across deploys — SQLCipher cannot open a database created with a different key. To rotate it you must re-key or re-create the database out of band.
 
 ## Restart Behaviour
 

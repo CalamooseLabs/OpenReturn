@@ -2,6 +2,7 @@ from database import Database
 from .repositories import (
   ApiKeyRepository,
   FilingRepository,
+  IngestRepository,
   MetadataRepository,
   MigrationRepository,
   OrganizationRepository,
@@ -16,6 +17,7 @@ class IRS990Database(
   MetadataRepository,
   OrganizationRepository,
   FilingRepository,
+  IngestRepository,
   ReportedDataRepository,
 ):
   """IRS Form 990 database.

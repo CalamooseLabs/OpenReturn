@@ -3,6 +3,7 @@ import io
 import sys
 import os
 import sqlite3
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -51,6 +52,70 @@ class TestOpenConnection(unittest.TestCase):
         mock_cipher.connect.assert_called_once_with(':memory:')
         mock_conn.execute.assert_called_once_with("PRAGMA key='testpassword'")
         self.assertIs(result, mock_conn)
+
+    def test_key_with_single_quote_is_escaped(self):
+        os.environ['DB_SECRET_KEY'] = "pa'ss"
+        mock_conn = MagicMock()
+        mock_cipher = MagicMock()
+        mock_cipher.connect.return_value = mock_conn
+        with patch.object(db_base, '_HAS_CIPHER', True), \
+             patch.object(db_base, '_sqlcipher', mock_cipher):
+            db_base._open_connection(':memory:')
+        mock_conn.execute.assert_called_once_with("PRAGMA key='pa''ss'")
+
+
+# ---------------------------------------------------------------------------
+# _resolve_db_key — DB_SECRET_KEY vs DB_SECRET_KEY_FILE
+# ---------------------------------------------------------------------------
+
+class TestResolveDbKey(unittest.TestCase):
+
+    def setUp(self):
+        for v in ('DB_SECRET_KEY', 'DB_SECRET_KEY_FILE'):
+            os.environ.pop(v, None)
+
+    def tearDown(self):
+        for v in ('DB_SECRET_KEY', 'DB_SECRET_KEY_FILE'):
+            os.environ.pop(v, None)
+
+    def test_none_when_unset(self):
+        self.assertIsNone(db_base._resolve_db_key())
+
+    def test_direct_env_key(self):
+        with patch.dict(os.environ, {'DB_SECRET_KEY': 'direct'}):
+            self.assertEqual(db_base._resolve_db_key(), 'direct')
+
+    def test_file_key_is_read_and_stripped(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = os.path.join(td, 'key')
+            with open(p, 'w') as f:
+                f.write('  filekey\n')
+            with patch.dict(os.environ, {'DB_SECRET_KEY_FILE': p}):
+                self.assertEqual(db_base._resolve_db_key(), 'filekey')
+
+    def test_direct_env_wins_over_file(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = os.path.join(td, 'key')
+            with open(p, 'w') as f:
+                f.write('filekey')
+            with patch.dict(os.environ, {'DB_SECRET_KEY': 'direct', 'DB_SECRET_KEY_FILE': p}):
+                self.assertEqual(db_base._resolve_db_key(), 'direct')
+
+    def test_empty_file_is_none(self):
+        with tempfile.TemporaryDirectory() as td:
+            p = os.path.join(td, 'key')
+            with open(p, 'w') as f:
+                f.write('   \n')
+            with patch.dict(os.environ, {'DB_SECRET_KEY_FILE': p}):
+                self.assertIsNone(db_base._resolve_db_key())
+
+    def test_unreadable_file_warns_and_returns_none(self):
+        with patch.dict(os.environ, {'DB_SECRET_KEY_FILE': '/no/such/openreturn/key'}):
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                result = db_base._resolve_db_key()
+            self.assertIsNone(result)
+            self.assertIn('could not be read', err.getvalue())
 
 
 class TestDatabaseBase(unittest.TestCase):
@@ -434,6 +499,67 @@ class TestIRS990DatabaseListMethods(unittest.TestCase):
             self.db.connection.commit()
             result = self.db.get_historical_values("444444444")
             self.assertEqual(result.get(xpath, []), [])
+
+
+# ---------------------------------------------------------------------------
+# IngestRepository — ingested_zip tracking
+# ---------------------------------------------------------------------------
+
+class TestIngestRepository(unittest.TestCase):
+
+    def setUp(self):
+        self.db = IRS990Database(path=":memory:")
+
+    def tearDown(self):
+        self.db.close()
+
+    def test_empty_sources_is_empty_set(self):
+        self.assertEqual(self.db.get_ingested_sources(), set())
+        self.assertEqual(self.db.list_ingested_zips(), [])
+
+    def test_record_then_get_sources(self):
+        self.db.record_ingested_zip(
+            "https://x/2024_TEOS_XML_01A.zip",
+            url="https://x/2024_TEOS_XML_01A.zip",
+            filename="2024_TEOS_XML_01A.zip",
+            etag='"abc"', last_modified="Mon, 01 Jan 2024 00:00:00 GMT",
+            content_length=12345, filings_stored=7,
+        )
+        self.assertEqual(
+            self.db.get_ingested_sources(), {"https://x/2024_TEOS_XML_01A.zip"}
+        )
+
+    def test_list_returns_full_record(self):
+        self.db.record_ingested_zip(
+            "https://x/a.zip", url="https://x/a.zip", filename="a.zip",
+            etag="E", last_modified="LM", content_length=10, filings_stored=3,
+        )
+        rows = self.db.list_ingested_zips()
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["source"], "https://x/a.zip")
+        self.assertEqual(row["url"], "https://x/a.zip")
+        self.assertEqual(row["filename"], "a.zip")
+        self.assertEqual(row["etag"], "E")
+        self.assertEqual(row["last_modified"], "LM")
+        self.assertEqual(row["content_length"], 10)
+        self.assertEqual(row["filings_stored"], 3)
+        self.assertIsNotNone(row["ingested_at"])
+
+    def test_record_is_upsert(self):
+        self.db.record_ingested_zip("https://x/a.zip", filename="a.zip", filings_stored=1)
+        self.db.record_ingested_zip("https://x/a.zip", filename="a.zip", filings_stored=99)
+        rows = self.db.list_ingested_zips()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["filings_stored"], 99)
+
+    def test_record_defaults(self):
+        self.db.record_ingested_zip("local/a.zip", filename="a.zip")
+        rows = self.db.list_ingested_zips()
+        self.assertEqual(rows[0]["url"], None)
+        self.assertEqual(rows[0]["etag"], None)
+        self.assertEqual(rows[0]["content_length"], None)
+        self.assertEqual(rows[0]["filings_stored"], 0)
 
 
 if __name__ == "__main__":

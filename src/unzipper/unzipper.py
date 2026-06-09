@@ -36,7 +36,14 @@ class MemberReader:
         # Unsupported compression — extract the whole archive once, then
         # serve this and every subsequent member from disk.
         self._extract_all()
-    with open(os.path.join(self._extract_dir, name), 'rb') as f:
+    # Guard against zip-slip: a malicious member name (e.g. '../../etc/passwd')
+    # could otherwise resolve outside the extraction dir and read an arbitrary
+    # file. Reject any name that escapes the extraction root.
+    root = os.path.realpath(self._extract_dir)
+    target = os.path.realpath(os.path.join(root, name))
+    if target != root and not target.startswith(root + os.sep):
+      raise ValueError(f"unsafe ZIP member path: {name!r}")
+    with open(target, 'rb') as f:
       return f.read()
 
   def _extract_all(self) -> None:

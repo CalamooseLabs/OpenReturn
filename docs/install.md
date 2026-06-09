@@ -58,7 +58,7 @@ python3 src/cli.py serve --testing --zip-dir /path/to/zips
 
 ## Ingesting Form 990 ZIPs
 
-The `openreturn ingest` subcommand processes IRS TEOS ZIP archives and loads all 990 XML filings into the database.
+The `openreturn ingest` subcommand processes IRS TEOS ZIP archives and loads all 990 XML filings into the database. The source is a **local directory** of `.zip` files or an **`http(s)://` URL** (a direct `.zip` link or the IRS Form 990 downloads page).
 
 ```bash
 # Ingest a directory of ZIPs (parallel workers by default)
@@ -72,7 +72,16 @@ python3 src/cli.py ingest --workers 1 /path/to/zip-dir/
 
 # Print a per-phase wall-clock breakdown (read / insert / resolve / …)
 python3 src/cli.py ingest --profile /path/to/zip-dir/
+
+# Ingest straight from the IRS — discovers every .zip on the page, skips ones
+# already ingested, downloads/ingests/deletes each in turn
+python3 src/cli.py ingest https://www.irs.gov/charities-non-profits/form-990-series-downloads
+
+# Dry run: list discovered archives and which are already ingested
+python3 src/cli.py ingest --list https://www.irs.gov/charities-non-profits/form-990-series-downloads
 ```
+
+For URL sources: `--force` re-ingests archives already recorded as processed, `--cache-dir DIR` downloads into a directory you control, and `--keep-downloads` retains the `.zip` files instead of deleting them after ingest. See [ingest.md](ingest.md#ingesting-from-a-url) for details.
 
 The ingest process:
 1. Opens each ZIP and lists `.xml` member files
@@ -85,13 +94,21 @@ Progress is shown per-ZIP with a bar and counts of stored/skipped/errored files.
 
 ## Database Encryption (optional)
 
-If a `DB_SECRET_KEY` is set, the database will be encrypted with AES-256 via SQLCipher. Create a `.env` file in the working directory:
+If an encryption key is provided, the database is encrypted with AES-256 via SQLCipher. The key can be supplied two ways:
 
-```bash
-DB_SECRET_KEY=your-secret-passphrase
-```
+- **`DB_SECRET_KEY`** — the key directly. Create a `.env` file in the working directory:
 
-`openreturn` reads `.env` on startup with `setdefault` semantics (existing env vars are never overridden). Requires `sqlcipher3` to be installed — without it, a warning is printed and the database remains unencrypted.
+  ```bash
+  DB_SECRET_KEY=your-secret-passphrase
+  ```
+
+  `openreturn` reads `.env` on startup with `setdefault` semantics (existing env vars are never overridden).
+
+- **`DB_SECRET_KEY_FILE`** — a path to a file whose contents are the key (trailing whitespace stripped). Use this for runtime secrets that should never sit in an environment variable or config file — systemd credentials, Docker/Compose secrets, agenix/sops-nix, etc. If both are set, `DB_SECRET_KEY` wins.
+
+The `nix build` package bundles the `sqlcipher3` binding, so encryption works out of the box; in a bare Python environment without `sqlcipher3` a warning is printed and the database remains unencrypted. The key must stay stable — SQLCipher cannot open a database created with a different key.
+
+On NixOS, set the key declaratively via `services.openreturn.database.secretKeyFile` (recommended) or `database.secretKey`; see [nixos.md](nixos.md#database-encryption).
 
 ## Building the Package
 

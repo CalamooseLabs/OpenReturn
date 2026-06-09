@@ -11,15 +11,44 @@ except ImportError:
     _HAS_CIPHER = False
 
 
-def _open_connection(db_path: str) -> sqlite3.Connection:
+def _resolve_db_key() -> str | None:
+    """Resolve the SQLCipher key from the environment.
+
+    ``DB_SECRET_KEY`` holds the key directly. ``DB_SECRET_KEY_FILE`` names a file
+    whose contents are the key (trailing whitespace stripped) — the form used
+    for runtime secrets that should never sit in an environment variable or the
+    Nix store (agenix, sops-nix, systemd credentials, Docker/Compose secrets).
+    The direct variable wins when both are set. Returns None when neither yields
+    a non-empty key.
+    """
     key = os.environ.get('DB_SECRET_KEY')
+    if key:
+        return key
+    key_file = os.environ.get('DB_SECRET_KEY_FILE')
+    if key_file:
+        try:
+            with open(key_file) as fh:
+                return fh.read().strip() or None
+        except OSError as exc:
+            print(
+                f"Warning: DB_SECRET_KEY_FILE ({key_file}) could not be read: {exc}",
+                file=sys.stderr,
+            )
+    return None
+
+
+def _open_connection(db_path: str) -> sqlite3.Connection:
+    key = _resolve_db_key()
     if key:
         if _HAS_CIPHER:
             conn = _sqlcipher.connect(db_path)
-            conn.execute(f"PRAGMA key='{key}'")
+            # PRAGMA takes no bind params; escape single quotes so a key
+            # containing one can't break (or inject into) the statement.
+            safe = key.replace("'", "''")
+            conn.execute(f"PRAGMA key='{safe}'")
             return conn
         print(
-            "Warning: DB_SECRET_KEY is set but sqlcipher3 is not installed — "
+            "Warning: a database key is set but sqlcipher3 is not installed — "
             "database will not be encrypted.",
             file=sys.stderr,
         )

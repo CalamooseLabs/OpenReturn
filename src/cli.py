@@ -44,12 +44,22 @@ def main() -> int:
                          help='Parallel XML parser processes for --zip-dir ingestion (default: CPU count)')
 
     # ── ingest ───────────────────────────────────────────────────────────────
-    ingest_p = sub.add_parser('ingest', help='Bulk-ingest a directory of 990 ZIP files')
-    ingest_p.add_argument('directory', help='Path to a directory of .zip files')
+    ingest_p = sub.add_parser('ingest', help='Bulk-ingest 990 ZIP files from a directory or URL')
+    ingest_p.add_argument('directory',
+                          help='Path to a directory of .zip files, or an http(s):// URL to a '
+                               'ZIP or to the IRS Form 990 series downloads page')
     ingest_p.add_argument('--workers', type=int, default=os.cpu_count() or 4,
                           help='Parallel XML parser processes (default: CPU count)')
     ingest_p.add_argument('--profile', action='store_true',
                           help='Print a per-phase wall-clock breakdown of the parallel ingest')
+    ingest_p.add_argument('--force', action='store_true',
+                          help='(URL sources) re-ingest archives even if already recorded as processed')
+    ingest_p.add_argument('--keep-downloads', dest='keep_downloads', action='store_true',
+                          help='(URL sources) keep downloaded ZIPs instead of deleting after ingest')
+    ingest_p.add_argument('--cache-dir', dest='cache_dir', default=None,
+                          help='(URL sources) directory to download ZIPs into (default: a temp dir, removed after)')
+    ingest_p.add_argument('--list', dest='list_sources', action='store_true',
+                          help='(URL sources) list discovered ZIP URLs and whether each is already ingested, then exit')
 
     # ── keys ─────────────────────────────────────────────────────────────────
     keys_p = sub.add_parser('keys', help='Manage API keys')

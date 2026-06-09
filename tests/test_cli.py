@@ -1027,5 +1027,410 @@ class TestIngestParallel(unittest.TestCase):
         self.assertIn("no XML files", out)
 
 
+# ---------------------------------------------------------------------------
+# ingest.py — URL source path (_cmd_ingest_url / _ingest_one_remote)
+# ---------------------------------------------------------------------------
+
+_URL_1 = "https://apps.irs.gov/pub/epostcard/990/xml/2024/2024_TEOS_XML_01A.zip"
+_URL_2 = "https://apps.irs.gov/pub/epostcard/990/xml/2024/2024_TEOS_XML_02A.zip"
+
+_PARSED = {
+    'status': 'parsed', 'ein': '123456789', 'name': 'Test Org', 'year': 2023,
+    'form_code': '990', 'file': 'f.xml', 'zip_filename': '2024_TEOS_XML_01A.zip',
+    'values': {},
+}
+
+
+def _fake_download(created, *, good=True, meta=None):
+    """Build a download_zip stand-in that writes a real (or corrupt) ZIP into the
+    destination dir and records the produced path in ``created``."""
+    def _dl(url, dest_dir, *, progress=True):
+        name = url.rstrip('/').split('/')[-1] or 'download.zip'
+        p = Path(dest_dir) / name
+        if good:
+            with zipfile.ZipFile(p, 'w') as zf:
+                zf.writestr('f.xml', _MINIMAL_XML)
+        else:
+            p.write_bytes(b'not a zip')
+        created.append(p)
+        return p, (meta or {'etag': '"e"', 'last_modified': 'LM', 'content_length': 123})
+    return _dl
+
+
+class TestIngestUrl(unittest.TestCase):
+
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory()
+        self.db_path = str(Path(self._td.name) / "OpenReturn.db")
+        # Populate schema + seed once so the in-ingest open skips re-populate.
+        ScoreDatabase(path=self.db_path).close()
+        self.created = []
+
+    def tearDown(self):
+        self._td.cleanup()
+
+    def _open_db(self):
+        return ScoreDatabase(path=self.db_path)
+
+    def _run(self, argv, discover=None, download=None, extra_patches=None):
+        patches = [patch('sys.argv', ['ingest'] + argv),
+                   patch('ingest.ScoreDatabase', side_effect=lambda *a, **k: ScoreDatabase(path=self.db_path)),
+                   patch('ingest.UploadRouter', return_value=MagicMock())]
+        if discover is not None:
+            patches.append(patch('ingest.sources.discover_zip_urls', discover))
+        if download is not None:
+            patches.append(patch('ingest.sources.download_zip', download))
+        if extra_patches:
+            patches.extend(extra_patches)
+        with contextlib.ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
+            buf, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+                result = ingest_mod.main()
+        return result, buf.getvalue(), err.getvalue()
+
+    # ── discovery edge cases ────────────────────────────────────────────────
+
+    def test_discovery_error_returns_one(self):
+        result, _, err = self._run(
+            [_URL_1], discover=MagicMock(side_effect=RuntimeError("boom")),
+        )
+        self.assertEqual(result, 1)
+        self.assertIn("Failed to read", err)
+
+    def test_no_links_returns_zero(self):
+        result, out, _ = self._run([_URL_1], discover=MagicMock(return_value=[]))
+        self.assertEqual(result, 0)
+        self.assertIn("No ZIP links found", out)
+
+    # ── list (dry run) ──────────────────────────────────────────────────────
+
+    def test_list_mode_shows_status_and_skips_download(self):
+        db = self._open_db()
+        db.record_ingested_zip(_URL_1, url=_URL_1, filename="2024_TEOS_XML_01A.zip")
+        db.close()
+        dl = MagicMock()
+        result, out, _ = self._run(
+            ['--list', 'https://x/page'],
+            discover=MagicMock(return_value=[_URL_1, _URL_2]),
+            download=dl,
+        )
+        self.assertEqual(result, 0)
+        self.assertIn("ingested", out)
+        self.assertIn("new", out)
+        dl.assert_not_called()
+
+    # ── nothing new ─────────────────────────────────────────────────────────
+
+    def test_all_recorded_nothing_new(self):
+        db = self._open_db()
+        db.record_ingested_zip(_URL_1, url=_URL_1, filename="a.zip")
+        db.record_ingested_zip(_URL_2, url=_URL_2, filename="b.zip")
+        db.close()
+        dl = MagicMock()
+        result, out, _ = self._run(
+            ['https://x/page'],
+            discover=MagicMock(return_value=[_URL_1, _URL_2]),
+            download=dl,
+        )
+        self.assertEqual(result, 0)
+        self.assertIn("Nothing new", out)
+        dl.assert_not_called()
+
+    # ── happy path (sequential) ─────────────────────────────────────────────
+
+    def test_sequential_download_ingest_record_delete(self):
+        router = MagicMock()
+        router._process_xml.return_value = {'status': 'stored', 'file': 'f.xml', 'ein': '1'}
+        result, out, _ = self._run(
+            ['--workers', '1', 'https://x/page'],
+            discover=MagicMock(return_value=[_URL_1]),
+            download=_fake_download(self.created),
+            extra_patches=[patch('ingest.UploadRouter', return_value=router)],
+        )
+        self.assertEqual(result, 0)
+        self.assertIn("Complete", out)
+        # Recorded in the DB with the stored count.
+        db = self._open_db()
+        rows = db.list_ingested_zips()
+        db.close()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["source"], _URL_1)
+        self.assertEqual(rows[0]["filename"], "2024_TEOS_XML_01A.zip")
+        self.assertEqual(rows[0]["filings_stored"], 1)
+        self.assertEqual(rows[0]["content_length"], 123)
+        # Downloaded file deleted afterward.
+        self.assertFalse(self.created[0].exists())
+
+    def test_force_reingests_recorded(self):
+        db = self._open_db()
+        db.record_ingested_zip(_URL_1, url=_URL_1, filename="2024_TEOS_XML_01A.zip", filings_stored=0)
+        db.close()
+        router = MagicMock()
+        router._process_xml.return_value = {'status': 'stored', 'file': 'f.xml', 'ein': '1'}
+        dl = MagicMock(side_effect=_fake_download(self.created))
+        result, out, _ = self._run(
+            ['--workers', '1', '--force', 'https://x/page'],
+            discover=MagicMock(return_value=[_URL_1]),
+            download=dl,
+            extra_patches=[patch('ingest.UploadRouter', return_value=router)],
+        )
+        self.assertEqual(result, 0)
+        dl.assert_called_once()
+        db = self._open_db()
+        self.assertEqual(db.list_ingested_zips()[0]["filings_stored"], 1)
+        db.close()
+
+    # ── failure handling ────────────────────────────────────────────────────
+
+    def test_download_failure_is_counted_not_recorded(self):
+        dl = MagicMock(side_effect=RuntimeError("network down"))
+        result, out, _ = self._run(
+            ['--workers', '1', 'https://x/page'],
+            discover=MagicMock(return_value=[_URL_1]),
+            download=dl,
+        )
+        self.assertEqual(result, 0)
+        self.assertIn("download failed", out)
+        db = self._open_db()
+        self.assertEqual(db.get_ingested_sources(), set())
+        db.close()
+
+    def test_corrupt_download_not_recorded(self):
+        result, out, _ = self._run(
+            ['--workers', '1', 'https://x/page'],
+            discover=MagicMock(return_value=[_URL_1]),
+            download=_fake_download(self.created, good=False),
+        )
+        self.assertEqual(result, 0)
+        self.assertIn("invalid ZIP", out)
+        db = self._open_db()
+        self.assertEqual(db.get_ingested_sources(), set())
+        db.close()
+
+    # ── download retention ──────────────────────────────────────────────────
+
+    def test_keep_downloads_with_cache_dir(self):
+        cache = Path(self._td.name) / "cache"
+        router = MagicMock()
+        router._process_xml.return_value = {'status': 'stored', 'file': 'f.xml', 'ein': '1'}
+        result, _, _ = self._run(
+            ['--workers', '1', '--keep-downloads', '--cache-dir', str(cache), 'https://x/page'],
+            discover=MagicMock(return_value=[_URL_1]),
+            download=_fake_download(self.created),
+            extra_patches=[patch('ingest.UploadRouter', return_value=router)],
+        )
+        self.assertEqual(result, 0)
+        self.assertTrue(self.created[0].exists())
+
+    def test_keep_downloads_with_temp_dir_prints_location(self):
+        keep_dir = Path(self._td.name) / "kept"
+        keep_dir.mkdir()
+        router = MagicMock()
+        router._process_xml.return_value = {'status': 'stored', 'file': 'f.xml', 'ein': '1'}
+        result, out, _ = self._run(
+            ['--workers', '1', '--keep-downloads', 'https://x/page'],
+            discover=MagicMock(return_value=[_URL_1]),
+            download=_fake_download(self.created),
+            extra_patches=[
+                patch('ingest.UploadRouter', return_value=router),
+                patch('ingest.tempfile.mkdtemp', return_value=str(keep_dir)),
+            ],
+        )
+        self.assertEqual(result, 0)
+        self.assertIn("Downloads kept in", out)
+        self.assertTrue(self.created[0].exists())
+
+    # ── parallel URL path ───────────────────────────────────────────────────
+
+    def test_parallel_url_path(self):
+        mock_future = MagicMock()
+        mock_future.result.return_value = [_PARSED]
+        mock_pool = MagicMock()
+        mock_pool.__enter__ = MagicMock(return_value=mock_pool)
+        mock_pool.__exit__ = MagicMock(return_value=False)
+        mock_pool.submit.return_value = mock_future
+
+        result, out, _ = self._run(
+            ['--workers', '2', 'https://x/page'],
+            discover=MagicMock(return_value=[_URL_1]),
+            download=_fake_download(self.created),
+            extra_patches=[
+                patch('ingest.ProcessPoolExecutor', return_value=mock_pool),
+                patch('ingest.as_completed', side_effect=lambda f: iter(f.keys())),
+            ],
+        )
+        self.assertEqual(result, 0)
+        db = self._open_db()
+        self.assertEqual(db.get_ingested_sources(), {_URL_1})
+        # The parsed filing was written through the bulk-load flush path.
+        self.assertEqual(
+            db.cursor.execute("SELECT COUNT(*) FROM filing").fetchone()[0], 1
+        )
+        db.close()
+
+    # ── direct .zip URL (no page scrape) ────────────────────────────────────
+
+    def test_direct_zip_url_dispatches_to_url_path(self):
+        router = MagicMock()
+        router._process_xml.return_value = {'status': 'stored', 'file': 'f.xml', 'ein': '1'}
+        # discover_zip_urls is NOT mocked here — the real one short-circuits a
+        # .zip URL to [url] without any network call.
+        result, out, _ = self._run(
+            ['--workers', '1', _URL_1],
+            download=_fake_download(self.created),
+            extra_patches=[patch('ingest.UploadRouter', return_value=router)],
+        )
+        self.assertEqual(result, 0)
+        db = self._open_db()
+        self.assertEqual(db.get_ingested_sources(), {_URL_1})
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# ingest.py — _fmt_duration
+# ---------------------------------------------------------------------------
+
+class TestFmtDuration(unittest.TestCase):
+
+    def test_sub_minute(self):
+        self.assertEqual(ingest_mod._fmt_duration(42.7), "42.7s")
+
+    def test_minutes(self):
+        self.assertEqual(ingest_mod._fmt_duration(125), "2m 05s")
+
+    def test_hours(self):
+        self.assertEqual(ingest_mod._fmt_duration(3725), "1h 02m 05s")
+
+
+# ---------------------------------------------------------------------------
+# ingest.py — parallel-path branches (batch flush, errors, --profile)
+# ---------------------------------------------------------------------------
+
+class TestIngestParallelBranches(unittest.TestCase):
+
+    def _run(self, argv, extra_patches):
+        with contextlib.ExitStack() as stack:
+            for p in extra_patches:
+                stack.enter_context(p)
+            buf, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+                with patch('sys.argv', ['ingest'] + argv):
+                    result = ingest_mod.main()
+        return result, buf.getvalue()
+
+    def _pool(self, result_value):
+        fut = MagicMock()
+        fut.result.return_value = result_value
+        pool = MagicMock()
+        pool.__enter__ = MagicMock(return_value=pool)
+        pool.__exit__ = MagicMock(return_value=False)
+        pool.submit.return_value = fut
+        return pool
+
+    @staticmethod
+    def _iter(futures):
+        return iter(futures.keys())
+
+    def test_read_exception_counts_error(self):
+        """reader.read() raising mid-batch is caught and counted (per-file except)."""
+        class _FailReader:
+            def __init__(self, *a):
+                pass
+            def __enter__(self):
+                return self
+            def __exit__(self, *e):
+                return False
+            def read(self, name):
+                raise OSError("boom")
+
+        with tempfile.TemporaryDirectory() as td:
+            zd = Path(td) / "zips"; zd.mkdir()
+            _make_zip(zd, "test.zip", {"a.xml": _MINIMAL_XML})
+            result, out = self._run(['--workers', '2', str(zd)], [
+                patch('ingest.ScoreDatabase', return_value=MagicMock()),
+                patch('ingest.UploadRouter', return_value=MagicMock()),
+                patch('ingest.ProcessPoolExecutor', return_value=self._pool([])),
+                patch('ingest.as_completed', side_effect=self._iter),
+                patch('ingest.MemberReader', _FailReader),
+            ])
+        self.assertEqual(result, 0)
+        self.assertIn("errors", out)
+
+    def test_batch_threshold_submits_multiple(self):
+        """>_BATCH_FILES files in a ZIP triggers a mid-loop submit then a final one."""
+        files = {f"f{i:03d}.xml": _MINIMAL_XML for i in range(ingest_mod._BATCH_FILES + 1)}
+        pool = self._pool([])
+        with tempfile.TemporaryDirectory() as td:
+            zd = Path(td) / "zips"; zd.mkdir()
+            _make_zip(zd, "big.zip", files)
+            result, _ = self._run(['--workers', '2', str(zd)], [
+                patch('ingest.ScoreDatabase', return_value=MagicMock()),
+                patch('ingest.UploadRouter', return_value=MagicMock()),
+                patch('ingest.ProcessPoolExecutor', return_value=pool),
+                patch('ingest.as_completed', side_effect=self._iter),
+            ])
+        self.assertEqual(result, 0)
+        self.assertEqual(pool.submit.call_count, 2)  # batch of 50, then 1
+
+    def test_midzip_flush_when_buffer_exceeds_threshold(self):
+        """pending_data crossing _DATA_ROWS_PER_FLUSH flushes mid-ZIP."""
+        parsed = {
+            'status': 'parsed', 'ein': '1', 'name': 'N', 'year': 2023,
+            'form_code': '990', 'file': 'f.xml', 'zip_filename': 'test.zip',
+            'values': {1: 'v'},
+        }
+        with tempfile.TemporaryDirectory() as td:
+            zd = Path(td) / "zips"; zd.mkdir()
+            _make_zip(zd, "test.zip", {"f.xml": _MINIMAL_XML})
+            result, _ = self._run(['--workers', '2', str(zd)], [
+                patch('ingest.ScoreDatabase', return_value=MagicMock()),
+                patch('ingest.UploadRouter', return_value=MagicMock()),
+                patch('ingest.ProcessPoolExecutor', return_value=self._pool([parsed])),
+                patch('ingest.as_completed', side_effect=self._iter),
+                patch('ingest._DATA_ROWS_PER_FLUSH', 0),
+            ])
+        self.assertEqual(result, 0)
+
+    def test_parallel_badzip_caught(self):
+        """MemberReader raising BadZipFile mid-parallel is caught and reported."""
+        class _BadReader:
+            def __init__(self, *a):
+                raise zipfile.BadZipFile("bad")
+
+        with tempfile.TemporaryDirectory() as td:
+            zd = Path(td) / "zips"; zd.mkdir()
+            _make_zip(zd, "test.zip", {"a.xml": _MINIMAL_XML})
+            result, out = self._run(['--workers', '2', str(zd)], [
+                patch('ingest.ScoreDatabase', return_value=MagicMock()),
+                patch('ingest.UploadRouter', return_value=MagicMock()),
+                patch('ingest.ProcessPoolExecutor', return_value=self._pool([])),
+                patch('ingest.as_completed', side_effect=self._iter),
+                patch('ingest.MemberReader', _BadReader),
+            ])
+        self.assertEqual(result, 0)
+        self.assertIn("corrupt ZIP", out)
+
+    def test_profile_output(self):
+        """--profile prints the per-phase breakdown after a parallel run."""
+        parsed = {
+            'status': 'parsed', 'ein': '1', 'name': 'N', 'year': 2023,
+            'form_code': '990', 'file': 'f.xml', 'zip_filename': 'test.zip',
+            'values': {},
+        }
+        with tempfile.TemporaryDirectory() as td:
+            zd = Path(td) / "zips"; zd.mkdir()
+            _make_zip(zd, "test.zip", {"f.xml": _MINIMAL_XML})
+            result, out = self._run(['--workers', '2', '--profile', str(zd)], [
+                patch('ingest.ScoreDatabase', return_value=MagicMock()),
+                patch('ingest.UploadRouter', return_value=MagicMock()),
+                patch('ingest.ProcessPoolExecutor', return_value=self._pool([parsed])),
+                patch('ingest.as_completed', side_effect=self._iter),
+            ])
+        self.assertEqual(result, 0)
+        self.assertIn("Profile", out)
+
+
 if __name__ == '__main__':  # pragma: no cover
     unittest.main()

@@ -36,6 +36,26 @@ let
 
   hasModels = cfg.models != [];
 
+  # ---------------------------------------------------------------------------
+  # Database encryption key injection
+  #
+  # The app reads the SQLCipher key from DB_SECRET_KEY (literal) or
+  # DB_SECRET_KEY_FILE (a path). For a file we use systemd credentials so the
+  # secret stays out of the Nix store and out of `systemctl show`; `%d` expands
+  # to the per-service credentials directory at runtime. Every unit that opens
+  # the database (init creates it encrypted; migrate/register-models/serve open
+  # it) gets the same injection.
+  # ---------------------------------------------------------------------------
+
+  dbSecretServiceConfig =
+    if cfg.database.secretKeyFile != null then {
+      LoadCredential = [ "db-secret-key:${cfg.database.secretKeyFile}" ];
+      Environment    = [ "DB_SECRET_KEY_FILE=%d/db-secret-key" ];
+    } else if cfg.database.secretKey != null then {
+      # Escape `%` so it is not read as a systemd specifier in Environment=.
+      Environment = [ "DB_SECRET_KEY=${lib.replaceStrings [ "%" ] [ "%%" ] cfg.database.secretKey}" ];
+    } else {};
+
 in {
   options.services.openreturn = {
     enable = lib.mkEnableOption "openreturn IRS 990 API server";
@@ -103,6 +123,37 @@ in {
       type = lib.types.bool;
       default = false;
       description = "Require API key authentication for all requests.";
+    };
+
+    database = {
+      secretKeyFile = lib.mkOption {
+        type = lib.types.nullOr lib.types.path;
+        default = null;
+        example = "/run/secrets/openreturn-db-key";
+        description = ''
+          Path to a file whose contents are the SQLCipher encryption key. The
+          file is loaded at runtime via systemd credentials (`LoadCredential`)
+          and never enters the Nix store or the process environment of other
+          units, so it composes with agenix, sops-nix, `systemd-creds`, or any
+          tool that drops a secret file on the host readable by the service.
+
+          Setting this (or `database.secretKey`) enables at-rest encryption of
+          the database. Mutually exclusive with `database.secretKey`.
+        '';
+      };
+
+      secretKey = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = ''
+          SQLCipher encryption key given as a literal string.
+
+          INSECURE: the value is copied verbatim into the world-readable Nix
+          store and is visible via `systemctl show`. Use it only for throwaway
+          or local testing; prefer `database.secretKeyFile` everywhere else.
+          Mutually exclusive with `database.secretKeyFile`.
+        '';
+      };
     };
 
     models = lib.mkOption {
@@ -182,6 +233,16 @@ in {
   };
 
   config = lib.mkIf cfg.enable {
+    assertions = [{
+      assertion = !(cfg.database.secretKey != null && cfg.database.secretKeyFile != null);
+      message = "services.openreturn: set at most one of database.secretKey and database.secretKeyFile, not both.";
+    }];
+
+    warnings = lib.optional (cfg.database.secretKey != null) (
+      "services.openreturn.database.secretKey is written world-readable into the Nix store and shown by "
+      + "`systemctl show`. Use database.secretKeyFile (agenix/sops-nix/systemd credentials) for real secrets."
+    );
+
     environment.systemPackages = [ cfg.package ];
 
     # Clear any prior failed/rate-limited state before switch-to-configuration
@@ -226,7 +287,7 @@ in {
         ReadWritePaths   = [ cfg.dataDir ];
         ProtectHome      = true;
         NoNewPrivileges  = true;
-      };
+      } // dbSecretServiceConfig;
 
       script = ''
         ${cfg.package}/bin/openreturn init
@@ -258,7 +319,7 @@ in {
         ReadWritePaths   = [ cfg.dataDir ];
         ProtectHome      = true;
         NoNewPrivileges  = true;
-      };
+      } // dbSecretServiceConfig;
 
       script = ''
         ${cfg.package}/bin/openreturn migrate
@@ -287,7 +348,7 @@ in {
         ReadWritePaths   = [ cfg.dataDir ];
         ProtectHome      = true;
         NoNewPrivileges  = true;
-      };
+      } // dbSecretServiceConfig;
 
       script = lib.concatMapStrings (tomlFile: ''
         ${cfg.package}/bin/openreturn models register --skip-existing ${tomlFile}
@@ -320,7 +381,8 @@ in {
           ++ lib.optional cfg.auth "--auth"
         );
 
-        Environment = "PYTHONUNBUFFERED=1";
+        Environment = [ "PYTHONUNBUFFERED=1" ] ++ (dbSecretServiceConfig.Environment or []);
+        LoadCredential = dbSecretServiceConfig.LoadCredential or [];
 
         Restart = "on-failure";
         RestartSec = "5s";

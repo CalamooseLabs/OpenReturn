@@ -23,7 +23,9 @@ class OrgRouter(Router):
         return {"error": "limit and offset must be integers"}
       limit  = min(limit, 500)
       offset = max(offset, 0)
-      return self.db.list_organizations(search=search, limit=limit, offset=offset)
+      favorites_only = (self._qp(query_params, 'favorite') or '').strip().lower() in ('1', 'true', 'yes')
+      return self.db.list_organizations(search=search, limit=limit, offset=offset,
+                                        favorites_only=favorites_only)
 
     @self.get('/detail')
     def get_organization(query_params: dict, body: Any, headers: HTTPMessage):
@@ -61,4 +63,15 @@ class OrgRouter(Router):
         self.db.upsert_organization(data['ein'], data['name'])
       except sqlite3.IntegrityError as e:
         return {"error": str(e)}
+      return self.db.get_organization(data['ein'])
+
+    @self.post('/favorite')
+    def set_favorite(query_params: dict, body: Any, headers: HTTPMessage):
+      data, err = self._require_fields(body, 'ein', 'is_favorite')
+      if err:
+        return err
+      raw = data['is_favorite']
+      is_favorite = raw if isinstance(raw, bool) else str(raw).strip().lower() in ('1', 'true', 'yes')
+      if not self.db.set_favorite(data['ein'], is_favorite):
+        return {"error": f"organization not found: {data['ein']}"}
       return self.db.get_organization(data['ein'])

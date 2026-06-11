@@ -70,6 +70,7 @@ List organizations with optional name search and pagination.
 | `search` | string | — | Case-insensitive substring match on organization name |
 | `limit` | integer | `50` | Results per page (max 500) |
 | `offset` | integer | `0` | Number of results to skip |
+| `favorite` | boolean | `false` | When truthy (`1`/`true`/`yes`), return only favorited organizations |
 
 **Response**
 
@@ -82,6 +83,7 @@ List organizations with optional name search and pagination.
     {
       "ein": "010234567",
       "name": "ACME NONPROFIT INC",
+      "is_favorite": false,
       "created_at": "2025-01-15 10:23:45",
       "updated_at": "2025-01-15 10:23:45"
     }
@@ -107,6 +109,7 @@ Fetch a single organization by EIN.
 {
   "ein": "010234567",
   "name": "ACME NONPROFIT INC",
+  "is_favorite": false,
   "created_at": "2025-01-15 10:23:45",
   "updated_at": "2025-01-15 10:23:45"
 }
@@ -130,6 +133,7 @@ Fetch an organization together with all its filing metadata and convenience link
 {
   "ein": "010234567",
   "name": "ACME NONPROFIT INC",
+  "is_favorite": false,
   "created_at": "2025-01-15 10:23:45",
   "updated_at": "2025-01-15 10:23:45",
   "filings": [
@@ -165,6 +169,22 @@ Upsert an organization (insert if EIN is new, no-op if it already exists).
 ```
 
 **Response** — the current organization record (same shape as `GET /organizations/detail`).
+
+---
+
+### `POST /organizations/favorite`
+
+Mark an organization as favorited (or unfavorited). The organization must already exist.
+
+**Request body**
+
+```json
+{ "ein": "010234567", "is_favorite": true }
+```
+
+`is_favorite` accepts a JSON boolean; the strings `"1"`/`"true"`/`"yes"` (and `1`) are also coerced to true, anything else to false.
+
+**Response** — the updated organization record (same shape as `GET /organizations/detail`), or `{"error": "organization not found: <ein>"}` if no organization has that EIN.
 
 ---
 

@@ -9,8 +9,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 from router.Org import OrgRouter
 
 
-ORG_ALPHA = {"ein": "111111111", "name": "Alpha Org", "created_at": "2024-01-01", "updated_at": "2024-01-01"}
-ORG_BETA  = {"ein": "222222222", "name": "Beta Org",  "created_at": "2024-01-02", "updated_at": "2024-01-02"}
+ORG_ALPHA = {"ein": "111111111", "name": "Alpha Org", "is_favorite": False, "created_at": "2024-01-01", "updated_at": "2024-01-01"}
+ORG_BETA  = {"ein": "222222222", "name": "Beta Org",  "is_favorite": False, "created_at": "2024-01-02", "updated_at": "2024-01-02"}
 
 FILING_ONE = {
     "filing_id": "uuid-abc-123", "year": 2023, "ein": "111111111",
@@ -62,6 +62,9 @@ class TestOrgRouterRegistration(unittest.TestCase):
     def test_post_organizations_registered(self):
         self.assertIn("/organizations", self.router.routes["POST"])
 
+    def test_post_organizations_favorite_registered(self):
+        self.assertIn("/organizations/favorite", self.router.routes["POST"])
+
     def test_custom_prefix_applied(self):
         router2 = OrgRouter(prefix='/api/orgs', db=MagicMock())
         self.assertIn("/api/orgs", router2.routes["GET"])
@@ -75,7 +78,7 @@ class TestOrgRouterRegistration(unittest.TestCase):
         self.assertEqual(set(self.router.routes["GET"].keys()), expected)
 
     def test_no_unexpected_post_routes(self):
-        expected = {"/organizations"}
+        expected = {"/organizations", "/organizations/favorite"}
         self.assertEqual(set(self.router.routes["POST"].keys()), expected)
 
 
@@ -105,7 +108,15 @@ class TestListOrganizations(unittest.TestCase):
 
     def test_calls_list_organizations(self):
         self._call()
-        self.db.list_organizations.assert_called_once_with(search=None, limit=50, offset=0)
+        self.db.list_organizations.assert_called_once_with(search=None, limit=50, offset=0, favorites_only=False)
+
+    def test_favorite_param_filters(self):
+        self._call(favorite="true")
+        self.db.list_organizations.assert_called_once_with(search=None, limit=50, offset=0, favorites_only=True)
+
+    def test_favorite_param_falsey_does_not_filter(self):
+        self._call(favorite="0")
+        self.db.list_organizations.assert_called_once_with(search=None, limit=50, offset=0, favorites_only=False)
 
     def test_empty_list_when_no_orgs(self):
         result = self._call()
@@ -365,6 +376,76 @@ class TestGetOrganizationFull(unittest.TestCase):
         self.db.list_filings.return_value = [dict(FILING_ONE)]
         result = self._call(ein="111111111")
         self.assertIn("uuid-abc-123", result["filings"][0]["links"]["data"])
+
+
+# ---------------------------------------------------------------------------
+# POST /organizations/favorite
+# ---------------------------------------------------------------------------
+
+class TestSetFavorite(unittest.TestCase):
+
+    def setUp(self):
+        self.router, self.db = _make_router()
+        self.db.set_favorite.return_value = True
+        self.db.get_organization.return_value = {**ORG_ALPHA, "is_favorite": True}
+
+    def _call(self, body=None):
+        return _call(self.router, "POST", "/organizations/favorite", body=body)
+
+    def test_valid_body_calls_set_favorite(self):
+        self._call({"ein": "111111111", "is_favorite": True})
+        self.db.set_favorite.assert_called_once_with("111111111", True)
+
+    def test_unfavorite_passes_false(self):
+        self._call({"ein": "111111111", "is_favorite": False})
+        self.db.set_favorite.assert_called_once_with("111111111", False)
+
+    def test_returns_updated_org(self):
+        result = self._call({"ein": "111111111", "is_favorite": True})
+        self.assertTrue(result["is_favorite"])
+
+    def test_calls_get_organization_after_set(self):
+        self._call({"ein": "111111111", "is_favorite": True})
+        self.db.get_organization.assert_called_once_with("111111111")
+
+    def test_string_true_coerced(self):
+        self._call({"ein": "111111111", "is_favorite": "true"})
+        self.db.set_favorite.assert_called_once_with("111111111", True)
+
+    def test_string_false_coerced(self):
+        self._call({"ein": "111111111", "is_favorite": "false"})
+        self.db.set_favorite.assert_called_once_with("111111111", False)
+
+    def test_int_one_coerced(self):
+        self._call({"ein": "111111111", "is_favorite": 1})
+        self.db.set_favorite.assert_called_once_with("111111111", True)
+
+    def test_not_found_returns_error(self):
+        self.db.set_favorite.return_value = False
+        result = self._call({"ein": "999999999", "is_favorite": True})
+        self.assertIn("error", result)
+
+    def test_not_found_error_contains_ein(self):
+        self.db.set_favorite.return_value = False
+        result = self._call({"ein": "999999999", "is_favorite": True})
+        self.assertIn("999999999", result["error"])
+
+    def test_not_found_does_not_call_get_organization(self):
+        self.db.set_favorite.return_value = False
+        self._call({"ein": "999999999", "is_favorite": True})
+        self.db.get_organization.assert_not_called()
+
+    def test_missing_ein_returns_error(self):
+        result = self._call({"is_favorite": True})
+        self.assertIn("error", result)
+
+    def test_missing_is_favorite_returns_error(self):
+        result = self._call({"ein": "111111111"})
+        self.assertIn("error", result)
+
+    def test_string_body_returns_error(self):
+        result = self._call("not a dict")
+        self.assertIn("error", result)
 
 
 if __name__ == "__main__":

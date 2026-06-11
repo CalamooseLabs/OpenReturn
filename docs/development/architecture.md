@@ -53,7 +53,8 @@ Key methods (defined in the mixin shown, called as `db.<method>`):
 | `get_filing_data_by_ein_year(ein, year)` | Returns filing metadata + all field values |
 | `get_historical_values(ein)` | Returns `{xml_path: [float, ...]}` oldest-to-newest across all filings |
 | `get_ingested_sources()` / `record_ingested_zip(...)` | Read/write the `ingested_zip` table so URL ingest skips archives already loaded (`IngestRepository`) |
-| `list_organizations(search, limit, offset)` | Paginated org list with optional name substring match |
+| `list_organizations(search, limit, offset, favorites_only)` | Paginated org list with optional name substring match; `favorites_only` restricts to favorited orgs |
+| `set_favorite(ein, is_favorite)` | Sets the org's `is_favorite` flag and bumps `updated_at`; returns False if the EIN doesn't exist |
 | `create_api_key(name, rate_limit)` | SHA-256 hashes the raw key, stores hash; returns raw key once |
 | `validate_api_key(raw_key)` | Checks hash against DB; caches result in memory for the process lifetime |
 | `revoke_api_key(key_id)` | Marks key inactive and clears the in-memory cache |

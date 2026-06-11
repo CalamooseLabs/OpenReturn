@@ -336,8 +336,32 @@ class TestIRS990DatabaseListMethods(unittest.TestCase):
         result = self.db.list_organizations()
         self.assertIn("ein", result["organizations"][0])
         self.assertIn("name", result["organizations"][0])
+        self.assertIn("is_favorite", result["organizations"][0])
         self.assertIn("created_at", result["organizations"][0])
         self.assertIn("updated_at", result["organizations"][0])
+
+    def test_list_organizations_default_not_favorite(self):
+        self.db.upsert_organization("111111111", "Alpha Org")
+        result = self.db.list_organizations()
+        self.assertIs(result["organizations"][0]["is_favorite"], False)
+
+    def test_list_organizations_favorites_only_filters(self):
+        self.db.upsert_organization("111111111", "Alpha Org")
+        self.db.upsert_organization("222222222", "Beta Org")
+        self.db.set_favorite("111111111", True)
+        result = self.db.list_organizations(favorites_only=True)
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(result["organizations"][0]["ein"], "111111111")
+        self.assertTrue(result["organizations"][0]["is_favorite"])
+
+    def test_list_organizations_favorites_only_with_search(self):
+        self.db.upsert_organization("111111111", "Alpha Org")
+        self.db.upsert_organization("222222222", "Beta Org")
+        self.db.set_favorite("111111111", True)
+        self.db.set_favorite("222222222", True)
+        result = self.db.list_organizations(search="Beta", favorites_only=True)
+        self.assertEqual(result["total"], 1)
+        self.assertEqual(result["organizations"][0]["ein"], "222222222")
 
     # --- get_organization ---
 
@@ -348,9 +372,38 @@ class TestIRS990DatabaseListMethods(unittest.TestCase):
         self.assertEqual(result["ein"], "111111111")
         self.assertEqual(result["name"], "Alpha Org")
 
+    def test_get_organization_has_is_favorite(self):
+        self.db.upsert_organization("111111111", "Alpha Org")
+        result = self.db.get_organization("111111111")
+        self.assertIs(result["is_favorite"], False)
+
     def test_get_organization_not_found_returns_none(self):
         result = self.db.get_organization("999999999")
         self.assertIsNone(result)
+
+    # --- set_favorite ---
+
+    def test_set_favorite_marks_org(self):
+        self.db.upsert_organization("111111111", "Alpha Org")
+        self.db.set_favorite("111111111", True)
+        self.assertTrue(self.db.get_organization("111111111")["is_favorite"])
+
+    def test_set_favorite_unmarks_org(self):
+        self.db.upsert_organization("111111111", "Alpha Org")
+        self.db.set_favorite("111111111", True)
+        self.db.set_favorite("111111111", False)
+        self.assertFalse(self.db.get_organization("111111111")["is_favorite"])
+
+    def test_set_favorite_returns_true_when_org_exists(self):
+        self.db.upsert_organization("111111111", "Alpha Org")
+        self.assertTrue(self.db.set_favorite("111111111", True))
+
+    def test_set_favorite_returns_false_when_org_absent(self):
+        self.assertFalse(self.db.set_favorite("999999999", True))
+
+    def test_set_favorite_absent_org_creates_nothing(self):
+        self.db.set_favorite("999999999", True)
+        self.assertIsNone(self.db.get_organization("999999999"))
 
     # --- list_filings ---
 
@@ -560,6 +613,40 @@ class TestIngestRepository(unittest.TestCase):
         self.assertEqual(rows[0]["etag"], None)
         self.assertEqual(rows[0]["content_length"], None)
         self.assertEqual(rows[0]["filings_stored"], 0)
+
+
+# ---------------------------------------------------------------------------
+# set_favorite persistence — needs a real file DB + second connection so an
+# uncommitted write would be invisible (a :memory: single-connection test
+# cannot tell a committed write from an uncommitted one).
+# ---------------------------------------------------------------------------
+
+class TestSetFavoritePersists(unittest.TestCase):
+
+    def setUp(self):
+        fd, self.path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        self.db = IRS990Database(path=self.path)
+
+    def tearDown(self):
+        self.db.close()
+        for suffix in ("", "-wal", "-shm"):
+            with contextlib.suppress(FileNotFoundError):
+                os.remove(self.path + suffix)
+
+    def test_set_favorite_visible_to_second_connection(self):
+        self.db.upsert_organization("111111111", "Alpha Org")
+        self.db.commit()  # persist the org itself (upsert does not commit)
+        self.db.set_favorite("111111111", True)
+
+        other = sqlite3.connect(self.path)
+        try:
+            value = other.execute(
+                "SELECT is_favorite FROM organization WHERE ein = ?", ("111111111",)
+            ).fetchone()[0]
+        finally:
+            other.close()
+        self.assertEqual(value, 1)
 
 
 if __name__ == "__main__":

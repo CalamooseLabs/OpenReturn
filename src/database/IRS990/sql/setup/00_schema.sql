@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS organization (
   ein CHARACTER(10) PRIMARY KEY,
   name TEXT NOT NULL,
   business_address_id CHARACTER(36),
+  is_favorite INTEGER NOT NULL DEFAULT 0,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (business_address_id) REFERENCES address (uuid)
@@ -115,6 +116,8 @@ CREATE INDEX IF NOT EXISTS idx_reported_data_field ON reported_data (field_id);
 CREATE INDEX IF NOT EXISTS idx_filing_org ON filing (organization_id);
 
 CREATE INDEX IF NOT EXISTS idx_organization_name ON organization (name);
+
+CREATE INDEX IF NOT EXISTS idx_organization_favorite ON organization (is_favorite);
 
 CREATE TABLE IF NOT EXISTS migration (
   name       TEXT PRIMARY KEY,

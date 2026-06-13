@@ -12,11 +12,68 @@ from database.Score import ScoreDatabase
 from scoring.engine import _PATHS as _VALID_INPUTS, FORMULA_TYPES, FORMULA_INPUT_COUNTS, _FACTOR_PREFIX
 from scoring.graph import find_cycle
 
-_MODEL_KEYS  = {'version', 'description'}
+_MODEL_KEYS  = {'version', 'description', 'type', 'mode'}
 _FACTOR_KEYS = {'name', 'weight', 'formula_type', 'inputs', 'direction',
-                'benchmark_lo', 'benchmark_hi', 'formula_description'}
+                'benchmark_lo', 'benchmark_hi', 'formula_description', 'scale'}
 _FACTOR_REQUIRED = {'name', 'weight', 'formula_type', 'inputs', 'direction',
                     'benchmark_lo', 'benchmark_hi'}
+
+_MODES = ('computed', 'manual')
+_MANUAL_SCALES = ('benchmark', 'normalized', 'percent')
+# A manual (graded) factor: a person supplies a value + comment via the grading
+# API. No formula/inputs; `scale` says how the value maps to [0,1].
+_MANUAL_FACTOR_REQUIRED = {'name', 'weight', 'scale'}
+
+
+def _validate_manual_factor(factor: dict, i: int, issues: list, seen_names: set,
+                            weights: list) -> None:
+    label = factor.get('name', '?') if isinstance(factor, dict) else '?'
+    prefix = f"factor[{i}] ({label})"
+    if not isinstance(factor, dict):
+        issues.append(f"ERROR: {prefix} must be a table")
+        return
+
+    for key in factor:
+        if key not in _FACTOR_KEYS:
+            issues.append(f"ERROR: {prefix}: unknown key '{key}'")
+    for req in _MANUAL_FACTOR_REQUIRED:
+        if req not in factor:
+            issues.append(f"ERROR: {prefix}: missing required field '{req}'")
+
+    name = factor.get('name')
+    if isinstance(name, str):
+        if name in seen_names:
+            issues.append(f"ERROR: {prefix}: duplicate factor name '{name}'")
+        seen_names.add(name)
+
+    weight = factor.get('weight')
+    if weight is not None:
+        if not isinstance(weight, (int, float)) or float(weight) < 0:
+            issues.append(f"ERROR: {prefix}: weight must be a non-negative number, got: {weight!r}")
+        else:
+            weights.append(float(weight))
+
+    ft = factor.get('formula_type')
+    if ft is not None and ft != 'manual':
+        issues.append(f"ERROR: {prefix}: manual-model factors must omit formula_type "
+                      f"or set it to 'manual', got: {ft!r}")
+    if 'inputs' in factor and factor['inputs'] not in ([], None):
+        issues.append(f"ERROR: {prefix}: manual factors take no inputs")
+
+    scale = factor.get('scale')
+    if scale is not None and scale not in _MANUAL_SCALES:
+        issues.append(f"ERROR: {prefix}: scale must be one of {list(_MANUAL_SCALES)}, got: {scale!r}")
+
+    # benchmark scale reuses direction + benchmark_lo/hi (like computed factors)
+    if scale == 'benchmark':
+        direction = factor.get('direction')
+        if direction not in ('higher', 'lower'):
+            issues.append(f"ERROR: {prefix}: scale 'benchmark' requires direction 'higher' or 'lower'")
+        lo, hi = factor.get('benchmark_lo'), factor.get('benchmark_hi')
+        if not isinstance(lo, (int, float)) or not isinstance(hi, (int, float)):
+            issues.append(f"ERROR: {prefix}: scale 'benchmark' requires numeric benchmark_lo/benchmark_hi")
+        elif float(lo) >= float(hi):
+            issues.append(f"ERROR: {prefix}: benchmark_lo ({lo}) must be less than benchmark_hi ({hi})")
 
 
 def validate_toml(data: dict) -> list[str]:
@@ -54,6 +111,12 @@ def validate_toml(data: dict) -> list[str]:
         if not isinstance(v, int) or v <= 0:
             issues.append(f"ERROR: [model].version must be a positive integer, got: {v!r}")
 
+    mode = model.get('mode', 'computed')
+    if mode not in _MODES:
+        issues.append(f"ERROR: [model].mode must be one of {list(_MODES)}, got: {mode!r}")
+    if 'type' in model and not isinstance(model['type'], str):
+        issues.append(f"ERROR: [model].type must be a string, got: {model['type']!r}")
+
     # [[factor]] list
     factors = data.get('factor', [])
     if not isinstance(factors, list):
@@ -66,6 +129,15 @@ def validate_toml(data: dict) -> list[str]:
     seen_names: set[str] = set()
     weights: list[float] = []
 
+    # Manual (graded) models validate their factors differently and have no
+    # formulas/inputs/dependency graph — handle them and return early.
+    if mode == 'manual':
+        for i, factor in enumerate(factors):
+            _validate_manual_factor(factor, i, issues, seen_names, weights)
+        if weights and abs(sum(weights) - 1.0) > 0.001:
+            issues.append(f"WARNING: factor weights sum to {sum(weights):.4f}, expected 1.0")
+        return issues
+
     for i, factor in enumerate(factors):
         label = factor.get('name', '?') if isinstance(factor, dict) else '?'
         prefix = f"factor[{i}] ({label})"
@@ -77,6 +149,9 @@ def validate_toml(data: dict) -> list[str]:
         for key in factor:
             if key not in _FACTOR_KEYS:
                 issues.append(f"ERROR: {prefix}: unknown key '{key}'")
+        if 'scale' in factor:
+            issues.append(f"ERROR: {prefix}: 'scale' is for manual models only "
+                          f"(set [model].mode = 'manual')")
 
         for req in _FACTOR_REQUIRED:
             if req not in factor:
@@ -217,6 +292,16 @@ def cmd_register(args) -> None:
 
     db = ScoreDatabase(path=args.db)
     description = data['model'].get('description')
+    mode = data['model'].get('mode', 'computed')
+    model_type = data['model'].get('type')
+
+    if model_type is not None:
+        valid_types = {t['code'] for t in db.list_model_types()}
+        if model_type not in valid_types:
+            print(f"ERROR: unknown model type '{model_type}'. Known types: "
+                  f"{sorted(valid_types)}", file=sys.stderr)
+            db.close()
+            sys.exit(1)
 
     existing = db.cursor.execute(
         "SELECT 1 FROM score_model WHERE version = ?", (version,)
@@ -231,49 +316,70 @@ def cmd_register(args) -> None:
         sys.exit(1)
 
     db.cursor.execute(
-        "INSERT INTO score_model (version, description) VALUES (?, ?)",
-        (version, description)
+        "INSERT INTO score_model (version, description, model_type, scoring_mode) "
+        "VALUES (?, ?, ?, ?)",
+        (version, description, model_type, mode)
     )
     model_id = db.cursor.lastrowid
 
     for factor in data['factor']:
-        db.cursor.execute(
-            """
-            INSERT INTO score_factor
-              (model_id, name, weight, formula_type, inputs, direction,
-               benchmark_lo, benchmark_hi, formula_description)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                model_id,
-                factor['name'],
-                factor['weight'],
-                factor['formula_type'],
-                json.dumps(factor['inputs']),
-                factor['direction'],
-                factor['benchmark_lo'],
-                factor['benchmark_hi'],
-                factor.get('formula_description'),
+        if mode == 'manual':
+            db.cursor.execute(
+                """
+                INSERT INTO score_factor
+                  (model_id, name, weight, formula_type, inputs, direction,
+                   benchmark_lo, benchmark_hi, manual_scale, formula_description)
+                VALUES (?, ?, ?, 'manual', '[]', ?, ?, ?, ?, ?)
+                """,
+                (
+                    model_id,
+                    factor['name'],
+                    factor['weight'],
+                    factor.get('direction', 'higher'),
+                    factor.get('benchmark_lo', 0.0),
+                    factor.get('benchmark_hi', 1.0),
+                    factor['scale'],
+                    factor.get('formula_description'),
+                )
             )
-        )
+        else:
+            db.cursor.execute(
+                """
+                INSERT INTO score_factor
+                  (model_id, name, weight, formula_type, inputs, direction,
+                   benchmark_lo, benchmark_hi, formula_description)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    model_id,
+                    factor['name'],
+                    factor['weight'],
+                    factor['formula_type'],
+                    json.dumps(factor['inputs']),
+                    factor['direction'],
+                    factor['benchmark_lo'],
+                    factor['benchmark_hi'],
+                    factor.get('formula_description'),
+                )
+            )
 
     db.connection.commit()
-    print(f"Registered model version {version} with {n_factors} factors.")
+    kind = f"{mode} {model_type or ''}".strip()
+    print(f"Registered {kind} model version {version} with {n_factors} factors.")
     db.close()
 
 
 def cmd_list(args) -> None:
     db = ScoreDatabase(path=args.db)
-    rows = db.cursor.execute(
-        "SELECT version, description, created_at FROM score_model ORDER BY version"
-    ).fetchall()
-    if not rows:
-        print("No models registered.")
-    else:
-        for r in rows:
-            desc = f" — {r[1]}" if r[1] else ""
-            print(f"  v{r[0]}{desc}  (created {r[2]})")
+    models = db.list_models()
     db.close()
+    if not models:
+        print("No models registered.")
+        return
+    for m in models:
+        tags = f"[{m['model_type'] or '?'}/{m['scoring_mode']}]"
+        desc = f" — {m['description']}" if m['description'] else ""
+        print(f"  v{m['version']} {tags}{desc}  (created {m['created_at']})")
 
 
 def main() -> None:

@@ -9,14 +9,15 @@ src/
                    IRS990/sql/{setup,populate,migrations}/
                    Score/sql/{setup,populate,migrations}/
   parser/        → Parser (base) / IRS990Parser
-  router/        → Router (base) / UploadRouter / OrgRouter / FilingRouter / ScoreRouter
+  router/        → Router (base) / UploadRouter / OrgRouter / FilingRouter / ScoreRouter / DocsRouter
+  openapi.py     → OpenAPI 3.1 spec builder (served at /openapi.json, dumped by `openreturn openapi`)
   server/        → Server (wraps HTTPServer, wires routers to routes)
   scoring/       → ScoringEngine
   unzipper/      → Unzipper (ZIP file iterator)
   sources.py     → URL detection, ZIP-link discovery, downloads (for URL ingest)
   db.py          → Database init/migrate/reset CLI commands
   ingest.py      → Bulk ZIP ingestion CLI + ingested-archive management (forget/purge) + background run
-  daemon.py      → Double-fork background runner, PID file, cooperative-stop flag (used by ingest --background/--stop)
+  daemon.py      → Double-fork background runner + PID-file helpers + cooperative-stop flag (ingest --background/--stop/--schedule, server single-instance via server.pid, ingest --restart-server)
   status.py      → `openreturn status` snapshot (DB size, counts, encryption, migrations, server + ingest probe)
   models.py      → Scoring model registration CLI
   keys.py        → API key management CLI
@@ -25,9 +26,112 @@ src/
 
 Each layer has a base class in its package `__init__.py` and a concrete implementation in a subpackage. For example, `database/__init__.py` exports `Database`; `database/IRS990/` contains `IRS990Database`.
 
+```mermaid
+graph TD
+  client([HTTP client]) --> server[Server<br/>HTTPServer + auth/rate-limit]
+  server --> routers{{Routers}}
+  routers --> org[OrgRouter]
+  routers --> filing[FilingRouter]
+  routers --> score[ScoreRouter]
+  routers --> upload[UploadRouter]
+  routers --> docs[DocsRouter<br/>/openapi.json, /docs]
+  score --> engine[ScoringEngine]
+  upload --> parser[IRS990Parser]
+  org --> db[(ScoreDatabase<br/>SQLite)]
+  filing --> db
+  score --> db
+  engine --> db
+  upload --> db
+  ingestcli[ingest CLI] --> parser
+  ingestcli --> db
+  parser -.-> db
+```
+
 ---
 
 ## Database Layer
+
+### Schema (entity-relationship)
+
+The 990 form structure (`form → part → section → line → field`) is reference data; `organization`, `filing`, and `reported_data` are the ingested data; the `score_*` tables hold scoring models and results. `reported_data.filing_id` references the integer `filing.filing_id`, while `organization_score.filing_id` references the public `filing.uuid`.
+
+```mermaid
+erDiagram
+  ORGANIZATION ||--o{ FILING : files
+  FILING ||--o{ REPORTED_DATA : "has values"
+  FIELD ||--o{ REPORTED_DATA : populates
+  FORM ||--o{ PART : contains
+  PART ||--o{ SECTION : contains
+  SECTION ||--o{ LINE : contains
+  LINE ||--o{ FIELD : contains
+  FORM ||--o{ FILING : "form_code"
+  MODEL_TYPE ||--o{ SCORE_MODEL : categorizes
+  SCORE_MODEL ||--o{ SCORE_FACTOR : defines
+  FILING ||--o{ ORGANIZATION_SCORE : "scored (uuid)"
+  SCORE_MODEL ||--o{ ORGANIZATION_SCORE : under
+  ORGANIZATION_SCORE ||--o{ ORGANIZATION_SCORE_FACTOR : "breaks down"
+  SCORE_FACTOR ||--o{ ORGANIZATION_SCORE_FACTOR : results
+
+  ORGANIZATION {
+    string ein PK
+    string name
+    int is_favorite
+  }
+  FILING {
+    int filing_id PK
+    string uuid UK
+    string organization_id FK
+    int year
+    string form_code FK
+    string zip_filename
+  }
+  REPORTED_DATA {
+    int value_id PK
+    int filing_id FK
+    int field_id FK
+    string raw_value
+  }
+  FIELD {
+    int field_id PK
+    int line_id FK
+    string xml_path
+    string box_label
+  }
+  MODEL_TYPE {
+    string code PK
+    string name
+  }
+  SCORE_MODEL {
+    int model_id PK
+    int version UK
+    string model_type FK
+    string scoring_mode
+  }
+  SCORE_FACTOR {
+    int factor_id PK
+    int model_id FK
+    string name
+    real weight
+    string formula_type
+    string manual_scale
+  }
+  ORGANIZATION_SCORE {
+    int score_id PK
+    string filing_id FK
+    int model_id FK
+    real total_score
+  }
+  ORGANIZATION_SCORE_FACTOR {
+    int value_id PK
+    int score_id FK
+    int factor_id FK
+    real raw_value
+    real weighted_value
+    string comment
+  }
+```
+
+Reference/auxiliary tables not shown: `address`, `state`, `data_type`, `organization_type` (reference); `api_key`, `migration`, `ingested_zip` (operational).
 
 ### `Database` (`src/database/base.py`)
 
@@ -67,7 +171,7 @@ Key methods (defined in the mixin shown, called as `db.<method>`):
 
 ### `ScoreDatabase` (`src/database/Score/score.py`)
 
-Extends `IRS990Database`. Loads its own `Score/sql/setup/*.sql` and `Score/sql/populate/*.sql` (after the inherited IRS990 schema) and adds scoring tables (`score_model`, `score_factor`, `organization_score`, `score_factor_value`).
+Extends `IRS990Database`. Loads its own `Score/sql/setup/*.sql` and `Score/sql/populate/*.sql` (after the inherited IRS990 schema) and adds scoring tables (`model_type`, `score_model`, `score_factor`, `organization_score`, `organization_score_factor`). A model declares a `model_type` (seeded category — financial / governance / whole_person / christ_centeredness) and a `scoring_mode`: **computed** (factors evaluated from formulas) or **manual** (factors graded by a person via `POST /scores/grade`, with a `manual_scale` and a `comment` per factor). `_migrate_model_columns()` ALTERs these columns onto pre-existing databases. `ScoringEngine.calculate` rejects manual models; `grade()` records a value+comment, normalizes per `manual_scale`, and recomputes the total.
 
 Key methods:
 
@@ -91,7 +195,7 @@ Generic XML DOM walker. Parses a file with `xml.etree.ElementTree`.
 - `getElem(path)` — builds a namespaced XPath query from a `/`-delimited path string and returns the element's text. Tracks call counts per path in `foundElements` to cycle through repeated elements.
 - `tree(depth, tagStrip)` — recursive DOM-to-dict conversion.
 
-**Critical gotcha**: `foundElements` is a **class-level dict**, shared across all `Parser` instances in a process. It must be explicitly reset between parses (the ingest pipeline calls `Parser.foundElements.clear()` between files). Failing to do so causes wrong results when processing multiple XML files sequentially.
+**Note**: `foundElements` is an **instance-level dict** (`self.foundElements`, initialized in `__init__`), so each `Parser` instance gets its own. Each XML file is parsed with a fresh `Parser()` (one per filing in `UploadRouter`/the ingest workers), so the call counts start clean per file with no need to reset shared state.
 
 ### `IRS990Parser` (`src/parser/IRS990/irs990.py`)
 
@@ -155,6 +259,30 @@ Wraps Python's `http.server.HTTPServer`. Wires routers to routes via `include_ro
 - JSON bodies are auto-parsed; `multipart/form-data` is passed as raw bytes.
 - Debug mode (`--debug`) logs every request and response with ANSI color.
 
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant S as Server (RequestHandler)
+  participant H as Route handler
+  participant DB as ScoreDatabase
+  C->>S: HTTP request
+  alt --auth and route is secured
+    S->>DB: validate_api_key(key)
+    DB-->>S: rate limit or None
+    opt invalid key
+      S-->>C: 401 Unauthorized
+    end
+    opt over rate limit
+      S-->>C: 429 + Retry-After
+    end
+  end
+  S->>H: handler(query_params, body, headers)
+  H->>DB: query / mutate
+  DB-->>H: rows
+  H-->>S: dict | (body, content_type) | str
+  S-->>C: 200 JSON/HTML/XML (or {"error": …})
+```
+
 ---
 
 ## Scoring Engine (`src/scoring/engine.py`)
@@ -183,7 +311,7 @@ See [Scoring Models](../scoring/models.md) for the full list of formula types an
 
 ## Ingest CLI (`src/ingest.py`)
 
-`openreturn-ingest` / `python3 src/ingest.py` processes ZIP archives from a local directory **or an `http(s)://` URL**. `cmd_ingest` dispatches on `sources.is_url`: a path goes to `_cmd_ingest_dir` (pre-scan all ZIPs → bulk-load → loop), a URL to `_cmd_ingest_url`. Both share the per-ZIP processors (`_process_zip_seq` / `_process_zip_par`) and run-level state (`_Ctx`), so the bulk-load session, worker pool, and index drop/rebuild are identical across the two paths.
+`openreturn ingest` / `python3 src/ingest.py` processes ZIP archives from a local directory **or an `http(s)://` URL**. `cmd_ingest` dispatches on `sources.is_url`: a path goes to `_cmd_ingest_dir` (pre-scan all ZIPs → bulk-load → loop), a URL to `_cmd_ingest_url`. Both share the per-ZIP processors (`_process_zip_seq` / `_process_zip_par`) and run-level state (`_Ctx`), so the bulk-load session, worker pool, and index drop/rebuild are identical across the two paths.
 
 **URL sources** (`src/sources.py`, stdlib `urllib` + `html.parser` only): a direct `.zip` URL is fetched as-is; any other URL is parsed as HTML and every `<a href>` whose path ends in `.zip` is kept — so on the IRS Form 990 downloads page the `apps.irs.gov` data archives are selected while CSV index files and `www.irs.gov` navigation links are ignored. Each discovered archive is downloaded to a cache dir, scanned, ingested, recorded in `ingested_zip`, then deleted (`--keep-downloads`/`--cache-dir` opt out). Archives already in `ingested_zip` are skipped unless `--force`; `--list` prints discovered URLs with their ingest status and exits. This is download→ingest→delete **per archive**, so peak disk stays bounded and an interrupted run resumes by re-doing only the in-flight archive.
 
@@ -206,12 +334,13 @@ All commands are dispatched through `src/cli.py` (the unified `openreturn` binar
 | `openreturn init` | `src/db.py` → `cmd_init` | Initialize database schema and seed data |
 | `openreturn migrate` | `src/db.py` → `cmd_migrate` | Apply pending schema migrations |
 | `openreturn reset` | `src/db.py` → `cmd_reset` | Delete the DB files (main + WAL + SHM) after confirmation |
-| `openreturn serve` | `src/main.py` → `cmd_serve` | Start the API server |
+| `openreturn serve` | `src/main.py` → `cmd_serve` | Start the API server (single-instance; records `server.pid`) |
 | `openreturn ingest` | `src/ingest.py` → `cmd_ingest` | Bulk-ingest ZIP archives; also `--background`/`--stop` and `--ingested`/`--forget`/`--purge` management |
 | `openreturn status` | `src/status.py` → `cmd_status` | DB size, row counts, encryption, migrations, server + background-ingest probe |
+| `openreturn openapi` | `src/openapi.py` → `cmd_openapi` | Print/dump the OpenAPI 3.1 spec |
 | `openreturn keys` | `src/keys.py` | Manage API keys |
 | `openreturn models` | `src/models.py` | Register and list scoring models |
 
 `cmd_init` opens the database (triggering the `sql/populate/` files on first run via `populate_guard="form"`), prints form/field counts, and closes. `cmd_migrate` discovers `.sql` files in `src/database/IRS990/sql/migrations/`, compares against the `migration` tracking table, and applies anything pending in filename order. `cmd_reset` deletes the DB files after a typed confirmation, refusing while a background ingest holds the database open.
 
-`cmd_ingest` also fronts ingested-archive management: `--ingested` lists the `ingested_zip` table; `--forget PATTERN`/`--forget-all` remove tracking records only (re-ingestable); `--purge PATTERN`/`--purge-all` delete stored filing data (filings → `reported_data` cascade, plus scores deleted first since `organization_score` has no cascade). `--background` double-forks via `src/daemon.py` (PID file + log file), and `--stop` sets a cooperative stop flag (SIGTERM) so the ingest loop breaks at an archive boundary and still runs the normal index-rebuild/checkpoint finalize. `status.py` opens the DB with a raw read connection (never running setup/populate), so it reports a clean snapshot even when an ingest holds the exclusive lock (shown as *locked*).
+`cmd_ingest` also fronts ingested-archive management: `--ingested` lists the `ingested_zip` table; `--forget PATTERN`/`--forget-all` remove tracking records only (re-ingestable); `--purge PATTERN`/`--purge-all` delete stored filing data (filings → `reported_data` cascade, plus scores deleted first since `organization_score` has no cascade). `--background` double-forks via `src/daemon.py` (PID file + log file), and `--stop` sets a cooperative stop flag (SIGTERM) so the ingest loop breaks at an archive boundary and still runs the normal index-rebuild/checkpoint finalize. `--schedule WHEN` waits until a parsed time before ingesting (relative `+30m` / clock `HH:MM` / absolute `YYYY-MM-DD HH:MM`), interruptible by `--stop`. `--restart-server` stops the single-instance server (recorded in `server.pid` by `cmd_serve`) before the run and relaunches it detached afterward; it is skipped when the server is systemd-managed. `cmd_serve` itself refuses to start a second instance while `server.pid` is live and handles SIGTERM as a clean shutdown (removing the PID file), so an external stop or `systemctl stop` is graceful. `status.py` opens the DB with a raw read connection (never running setup/populate), so it reports a clean snapshot even when an ingest holds the exclusive lock (shown as *locked*).

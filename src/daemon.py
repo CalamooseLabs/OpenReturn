@@ -24,9 +24,13 @@ from pathlib import Path
 
 # PID/log files live in the current working directory — the same place the
 # server, ingest, and keys commands expect OpenReturn.db (the data dir on a
-# NixOS deploy). Keep them relative so each data dir tracks its own ingest.
+# NixOS deploy). Keep them relative so each data dir tracks its own state.
 DEFAULT_PIDFILE = "ingest.pid"
 DEFAULT_LOG = "ingest.log"
+# The API server records its own PID file (single-instance guard); the ingest
+# --restart-server path reads it to stop/restart a running server.
+SERVER_PIDFILE = "server.pid"
+SERVER_LOG = "server.log"
 
 _stop_requested = False
 
@@ -140,15 +144,21 @@ def _redirect_std(log_path: str) -> None:
     sys.stderr = os.fdopen(2, "w", buffering=1, closefd=False)
 
 
-def spawn_background(run, log_path: str, pidfile: str, meta: dict) -> int:
+def spawn_background(run, log_path: str, pidfile: str | None, meta: dict) -> int:
     """Fork a detached daemon that runs ``run()`` and return its PID.
 
     Uses the classic double-fork so the daemon is reparented to init and cannot
-    reacquire a controlling terminal. The grandchild writes the PID file and
-    reports its PID to the original process over a pipe, so the returned value
-    is accurate and the PID file already exists by the time this returns. In the
+    reacquire a controlling terminal. The grandchild reports its PID to the
+    original process over a pipe, so the returned value is accurate. In the
     daemon, ``run()`` is executed and the process exits; this never returns
     there.
+
+    ``pidfile`` — when set, the daemon writes it (and removes it on exit) and the
+    file exists by the time this returns. Pass None when ``run`` manages its own
+    PID file (the API server records ``server.pid`` itself); in that case there
+    is no synchronization guarantee for the run's own file — it is written
+    asynchronously after this returns, so a caller that needs to observe it must
+    poll (see ingest._restart_server).
     """
     r, w = os.pipe()
     pid = os.fork()
@@ -170,12 +180,14 @@ def spawn_background(run, log_path: str, pidfile: str, meta: dict) -> int:
         # Grandchild (the daemon).
         _redirect_std(log_path)
         daemon_pid = os.getpid()
-        write_pidfile(pidfile, {**meta, "pid": daemon_pid})
+        if pidfile is not None:
+            write_pidfile(pidfile, {**meta, "pid": daemon_pid})
         os.write(w, str(daemon_pid).encode())
         os.close(w)
 
         install_stop_handler()
-        atexit.register(remove_pidfile, pidfile)
+        if pidfile is not None:
+            atexit.register(remove_pidfile, pidfile)
         rc = 0
         try:
             rc = run() or 0
@@ -185,10 +197,11 @@ def spawn_background(run, log_path: str, pidfile: str, meta: dict) -> int:
             traceback.print_exc()
             rc = 1
         finally:
-            remove_pidfile(pidfile)
+            if pidfile is not None:
+                remove_pidfile(pidfile)
             # os._exit (used so the forked daemon never runs the parent's
             # atexit/cleanup) skips stdio buffer flushing — do it explicitly or
-            # the log file loses all the ingest's buffered output.
+            # the log file loses all the daemon's buffered output.
             sys.stdout.flush()
             sys.stderr.flush()
         os._exit(rc)

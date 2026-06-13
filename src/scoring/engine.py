@@ -73,6 +73,22 @@ _HISTORICAL_TYPES = frozenset({
 })
 
 
+def _fmt_num(v) -> str:
+    """Render a number for the debug walkthrough's substituted formulas: integral
+    floats lose the trailing '.0', others use compact 6-significant-figure form,
+    and None (a missing input) shows as 'None'."""
+    if v is None:
+        return "None"
+    if isinstance(v, bool):
+        return str(v)
+    if isinstance(v, (int, float)):
+        f = float(v)
+        if f == int(f) and abs(f) < 1e15:
+            return str(int(f))
+        return f"{f:.6g}"
+    return str(v)
+
+
 class ScoringEngine:
     def __init__(self, db) -> None:
         self.db = db
@@ -84,6 +100,13 @@ class ScoringEngine:
 
         vals = self._load_values(filing['fields'])
         factors = self.db.get_factors(model_version)
+        if not factors:
+            raise ValueError(f"Score model version {model_version} has no factors")
+        model = self.db.get_model(model_version)
+        if model and model.get('scoring_mode') == 'manual':
+            raise ValueError(
+                f"Score model version {model_version} is manual — grade its factors "
+                f"via POST /scores/grade instead of calculate")
         sorted_factors = self._topo_sort(factors)
 
         needs_history = any(f['formula_type'] in _HISTORICAL_TYPES for f in sorted_factors)
@@ -197,15 +220,15 @@ class ScoringEngine:
         # --- Fixed 2-input ---
         if formula_type == 'ratio':
             n, d = inputs[0], inputs[1]
-            return n / d if d else None
+            return n / d if n is not None and d else None
 
         if formula_type == 'ratio_positive':
             n, d = inputs[0], inputs[1]
-            return n / d if d and d > 0 else None
+            return n / d if n is not None and d and d > 0 else None
 
         if formula_type == 'growth':
             cy, py = inputs[0], inputs[1]
-            return cy / py - 1.0 if py and py != 0 else None
+            return cy / py - 1.0 if cy is not None and py else None
 
         if formula_type == 'difference':
             a, b = inputs[0], inputs[1]
@@ -277,3 +300,306 @@ class ScoringEngine:
             return max(0.0, min(1.0, (raw - lo) / span))
         else:
             return max(0.0, min(1.0, (hi - raw) / span))
+
+    # ── Debug / walkthrough ──────────────────────────────────────────────────
+    # A read-only trace of a model evaluation: for each factor, what the formula
+    # is, what it looks like with this filing's numbers substituted in, every
+    # variable, and — for field inputs — where the value is grabbed from (form,
+    # part, section, line, xml_path). Reuses _compute_factor/_normalize so the
+    # numbers shown are exactly what calculate() would persist; nothing is
+    # written to the database.
+
+    def debug(self, ein: str, year: int, model_version: int = 1) -> dict:
+        filing = self.db.get_filing_data_by_ein_year(ein, year)
+        if filing is None:
+            raise ValueError(f"No filing found for EIN {ein} year {year}")
+
+        fields = filing['fields']
+        vals = self._load_values(fields)
+        raw_by_path = {f['xml_path']: f.get('value')
+                       for f in fields if f.get('xml_path')}
+
+        factors = self.db.get_factors(model_version)
+        if not factors:
+            raise ValueError(f"Score model version {model_version} has no factors")
+        model = self.db.get_model(model_version)
+        if model and model.get('scoring_mode') == 'manual':
+            return self._debug_manual(ein, year, filing, model, factors)
+        sorted_factors = self._topo_sort(factors)
+
+        needs_history = any(f['formula_type'] in _HISTORICAL_TYPES for f in sorted_factors)
+        historical = self.db.get_historical_values(ein) if needs_history else {}
+
+        source_cache: dict[str, dict | None] = {}
+
+        def source_for(path: str) -> dict | None:
+            if path not in source_cache:
+                source_cache[path] = self.db.get_field_source(path)
+            return source_cache[path]
+
+        computed: dict[str, float | None] = {}
+        traces: list[dict] = []
+        total = 0.0
+        for f in sorted_factors:
+            raw = self._compute_factor(f, vals, computed, historical)
+            computed[f['name']] = raw
+            normalized = self._normalize(f, raw)
+            weighted = normalized * f['weight']
+            total += weighted
+            traces.append(self._debug_factor(
+                f, vals, raw_by_path, computed, historical, source_for,
+                raw, normalized, weighted))
+
+        return {
+            "ein": ein,
+            "year": year,
+            "filing_id": filing['filing_id'],
+            "form_code": filing.get('form_code'),
+            "model_version": model_version,
+            "model_type": (model or {}).get('model_type'),
+            "scoring_mode": "computed",
+            "total_score": total,
+            "evaluation_order": [f['name'] for f in sorted_factors],
+            "factors": traces,
+        }
+
+    def _debug_factor(self, factor: dict, vals, raw_by_path, computed, historical,
+                      source_for, raw, normalized, weighted) -> dict:
+        ftype = factor['formula_type']
+        keys = json.loads(factor['inputs'])
+        is_hist = ftype in _HISTORICAL_TYPES
+
+        variables = [
+            self._describe_variable(k, vals, raw_by_path, computed, historical, source_for, is_hist)
+            for k in keys
+        ]
+
+        return {
+            "factor_id":           factor['factor_id'],
+            "name":                factor['name'],
+            "formula_type":        ftype,
+            "weight":              factor['weight'],
+            "formula_description": factor['formula_description'],
+            "inputs":              keys,
+            "variables":           variables,
+            "formula":             self._render_formula(ftype, keys, variables, raw),
+            "normalization":       self._render_normalization(factor, raw, normalized),
+            "raw_value":           raw,
+            "normalized":          normalized,
+            "weighted_value":      weighted,
+        }
+
+    def _describe_variable(self, key: str, vals, raw_by_path, computed, historical,
+                           source_for, is_hist: bool) -> dict:
+        if key.startswith(_FACTOR_PREFIX):
+            name = key[len(_FACTOR_PREFIX):]
+            return {"key": key, "kind": "factor", "references": name,
+                    "value": computed.get(name)}
+        try:
+            return {"key": key, "kind": "literal", "value": float(key)}
+        except (ValueError, TypeError):
+            pass
+        path = _PATHS.get(key)
+        if path is None:
+            return {"key": key, "kind": "unknown", "value": None,
+                    "note": "not a known field key, numeric literal, or factor reference"}
+        var = {
+            "key":       key,
+            "kind":      "field",
+            "xml_path":  path,
+            "value":     vals.get(path),
+            "raw_value": raw_by_path.get(path),
+            "present":   path in vals,
+            "source":    source_for(path),
+        }
+        if is_hist:
+            var["series"] = historical.get(path, [])
+        return var
+
+    def _render_formula(self, ftype: str, keys: list, variables: list, raw) -> dict:
+        if ftype in _HISTORICAL_TYPES:
+            key = keys[0] if keys else "?"
+            series = variables[0].get("series", []) if variables else []
+            expression = self._hist_expr(ftype, f"{key}[all years]")
+            substituted = self._hist_expr(ftype, "[" + ", ".join(_fmt_num(x) for x in series) + "]")
+        else:
+            expression = self._expr(ftype, list(keys))
+            sub_vals = [v.get("value") for v in variables]
+            if ftype == 'working_capital':
+                # The engine treats the first three inputs (cash, savings,
+                # accts_pay) as 0.0 when missing; reflect that in the substituted
+                # formula so it matches the actual computation rather than showing
+                # a misleading "None".
+                sub_vals = [0.0 if (i < 3 and v is None) else v
+                            for i, v in enumerate(sub_vals)]
+            substituted = self._expr(ftype, [_fmt_num(v) for v in sub_vals])
+        note = None
+        if raw is None:
+            note = ("formula returned no value — a required input was missing or a "
+                    "denominator was zero")
+        return {"type": ftype, "expression": expression, "substituted": substituted,
+                "raw_value": raw, "computable": raw is not None, "note": note}
+
+    @staticmethod
+    def _expr(ftype: str, t: list) -> str:
+        joined = ", ".join(t)
+        if ftype in ('ratio', 'ratio_positive'):
+            return f"{t[0]} / {t[1]}"
+        if ftype == 'growth':
+            return f"({t[0]} / {t[1]}) - 1"
+        if ftype == 'difference':
+            return f"{t[0]} - {t[1]}"
+        if ftype == 'product':
+            return f"{t[0]} * {t[1]}"
+        if ftype == 'clamp':
+            return f"max({t[1]}, min({t[2]}, {t[0]}))"
+        if ftype == 'abs_value':
+            return f"|{t[0]}|"
+        if ftype == 'inverse':
+            return f"1 / {t[0]}"
+        if ftype == 'working_capital':
+            return f"({t[0]} + {t[1]} - {t[2]}) / {t[3]}"
+        if ftype == 'sum_ratio':
+            return f"({t[0]} + {t[1]}) / {t[2]}"
+        if ftype == 'sum':
+            return " + ".join(t) if t else "0"
+        if ftype == 'average':
+            return f"mean({joined})"
+        if ftype in ('min', 'max', 'median'):
+            return f"{ftype}({joined})"
+        return joined
+
+    @staticmethod
+    def _hist_expr(ftype: str, s: str) -> str:
+        return {
+            'running_average':          f"mean({s})",
+            'cumulative_sum':           f"sum({s})",
+            'historical_min':           f"min({s})",
+            'historical_max':           f"max({s})",
+            'cagr':                     f"(last({s}) / first({s})) ^ (1 / (n - 1)) - 1",
+            'historical_std_dev':       f"pstdev({s})",
+            'coefficient_of_variation': f"pstdev({s}) / |mean({s})|",
+        }.get(ftype, f"{ftype}({s})")
+
+    @staticmethod
+    def _render_normalization(factor: dict, raw, normalized) -> dict:
+        lo, hi = factor['benchmark_lo'], factor['benchmark_hi']
+        direction = factor['direction']
+        span = _fmt_num(hi - lo)
+        # `expression` is the pure template (lo/hi/raw symbolic, like
+        # formula.expression); the numbers live in benchmark_lo/hi + substituted.
+        if direction == 'higher':
+            expression = "clamp01((raw - lo) / (hi - lo))"
+            substituted = (f"clamp01(({_fmt_num(raw)} - {_fmt_num(lo)}) / {span})"
+                           if raw is not None else "raw is None → 0.0")
+        else:
+            expression = "clamp01((hi - raw) / (hi - lo))"
+            substituted = (f"clamp01(({_fmt_num(hi)} - {_fmt_num(raw)}) / {span})"
+                           if raw is not None else "raw is None → 0.0")
+        return {"direction": direction, "benchmark_lo": lo, "benchmark_hi": hi,
+                "expression": expression, "substituted": substituted,
+                "normalized": normalized}
+
+    # ── Manual / graded models ───────────────────────────────────────────────
+    # A manual model's factors are scored by a person: a value + comment supplied
+    # via grade(), not computed from a formula. How the value maps to [0,1]
+    # depends on the factor's manual_scale.
+
+    def _normalize_manual(self, factor: dict, raw) -> float:
+        """Map a grader's entered value to [0,1] per the factor's manual_scale:
+        'benchmark' (via benchmark_lo/hi + direction, like computed), 'percent'
+        (0–100 ÷ 100), or 'normalized' (already in [0,1]). None → 0.0."""
+        if raw is None:
+            return 0.0
+        scale = factor.get('manual_scale') or 'normalized'
+        if scale == 'benchmark':
+            return self._normalize(factor, raw)
+        if scale == 'percent':
+            return max(0.0, min(1.0, raw / 100.0))
+        return max(0.0, min(1.0, raw))  # 'normalized'
+
+    @staticmethod
+    def _manual_norm_render(factor: dict, raw) -> dict:
+        """Describe how a manual factor's value maps to [0,1], for the debug view."""
+        scale = factor.get('manual_scale') or 'normalized'
+        if scale == 'percent':
+            expression = "clamp01(value / 100)"
+            substituted = f"clamp01({_fmt_num(raw)} / 100)" if raw is not None else "no value yet"
+        elif scale == 'benchmark':
+            return {"scale": "benchmark",
+                    **ScoringEngine._render_normalization(factor, raw, None)}
+        else:
+            expression = "clamp01(value)"
+            substituted = f"clamp01({_fmt_num(raw)})" if raw is not None else "no value yet"
+        return {"scale": scale, "expression": expression, "substituted": substituted}
+
+    def grade(self, score_id: int, factor_id: int, value, comment: str | None = None) -> dict:
+        """Record a grader's value (+ optional comment) for one manual factor,
+        recompute the score total, and return the updated score. Validates that
+        the score belongs to a manual model and the factor is part of that model."""
+        score = self.db.get_score(score_id)
+        if score is None:
+            raise ValueError(f"Score {score_id} not found")
+        if score.get('scoring_mode') != 'manual':
+            raise ValueError(
+                f"Score {score_id} is for a computed model — grading applies to manual models")
+        valid = {f['factor_id'] for f in self.db.get_factors(score['model_version'])}
+        if factor_id not in valid:
+            raise ValueError(
+                f"Factor {factor_id} is not part of model version {score['model_version']}")
+        if value is not None and (isinstance(value, bool)
+                                  or not isinstance(value, (int, float))
+                                  or not math.isfinite(value)):
+            raise ValueError(f"factor value must be a finite number, got: {value!r}")
+        factor = self.db.get_factor(factor_id)
+        if factor is None:  # pragma: no cover — in `valid` but vanished (consistency)
+            raise ValueError(f"Factor {factor_id} not found")
+        weighted = self._normalize_manual(factor, value) * factor['weight']
+        self.db.grade_factor(score_id, factor_id, value, weighted, comment)
+        self.db.finalize_score(score_id, self.db.sum_weighted(score_id))
+        return self.db.get_score(score_id)
+
+    def _debug_manual(self, ein: str, year: int, filing: dict, model: dict,
+                      factors: list[dict]) -> dict:
+        """Walkthrough for a manual model: each factor's grading guidance and
+        scale, plus the grader's value/comment and how it normalized — read from
+        the stored score for this filing+model, if one has been graded."""
+        version = model['version']
+        graded: dict[int, dict] = {}
+        total = None
+        score_id = self.db.get_score_id_for(ein, year, version)
+        stored = self.db.get_score(score_id) if score_id is not None else None
+        if stored is not None:
+            total = stored['total_score']
+            graded = {f['factor_id']: f for f in stored['factors']}
+
+        traces = []
+        for f in factors:
+            g = graded.get(f['factor_id'])
+            raw = g['raw_value'] if g else None
+            normalized = self._normalize_manual(f, raw)
+            weighted = g['weighted_value'] if g and g['weighted_value'] is not None \
+                else normalized * f['weight']
+            traces.append({
+                "factor_id":           f['factor_id'],
+                "name":                f['name'],
+                "kind":                "manual",
+                "weight":              f['weight'],
+                "manual_scale":        f.get('manual_scale') or 'normalized',
+                "guidance":            f['formula_description'],
+                "graded":              g is not None,
+                "value":               raw,
+                "comment":             g['comment'] if g else None,
+                "normalization":       self._manual_norm_render(f, raw),
+                "normalized":          normalized,
+                "weighted_value":      weighted,
+            })
+
+        return {
+            "ein": ein, "year": year, "filing_id": filing['filing_id'],
+            "form_code": filing.get('form_code'), "model_version": version,
+            "model_type": model.get('model_type'), "scoring_mode": "manual",
+            "graded": stored is not None,
+            "total_score": total if total is not None else 0.0,
+            "factors": traces,
+        }

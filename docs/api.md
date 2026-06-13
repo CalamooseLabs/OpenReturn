@@ -10,6 +10,27 @@ All responses are `application/json` unless a `format` parameter requests an alt
 
 ---
 
+## OpenAPI Specification
+
+The full API is described by a machine-readable **OpenAPI 3.1** document, served by the running server and always public (not gated by `--auth`):
+
+| Route | Returns |
+|-------|---------|
+| `GET /openapi.json` | The OpenAPI 3.1 spec (point code generators / Postman / Swagger at this) |
+| `GET /docs` | Interactive API docs (Redoc, rendered from the spec) |
+
+You can also dump the spec without running the server:
+
+```bash
+openreturn openapi                 # print to stdout
+openreturn openapi -o openapi.json # write to a file
+openreturn openapi --compact       # minified
+```
+
+The sections below are the human-readable reference; the OpenAPI document is the source of truth for integrators and is kept in lock-step with the routes by a test.
+
+---
+
 ## Authentication
 
 When the server is started with `--auth`, every route requires a valid API key.
@@ -20,12 +41,12 @@ Authorization: Bearer <key>
 X-API-Key: <key>
 ```
 
-Keys are managed with the `openreturn-keys` CLI:
+Keys are managed with the `openreturn keys` CLI:
 
 ```bash
-openreturn-keys create "my-app"          # create and print a new key
-openreturn-keys list                     # list all keys
-openreturn-keys revoke <key_id>          # deactivate a key
+openreturn keys create "my-app"          # create and print a new key
+openreturn keys list                     # list all keys
+openreturn keys revoke <key_id>          # deactivate a key
 ```
 
 A `401` is returned if the key is missing or invalid.
@@ -286,7 +307,7 @@ Fetch all reported field values for a filing, with full line/section/part metada
 }
 ```
 
-Alternate formats return `text/plain` (markdown), `text/html`, or `application/xml` with the same data in a tabular layout.
+Alternate formats render the same data as a table: `format=md` returns a Markdown table and `format=html` an HTML table (both served with the default `text/html` content type), while `format=xml` returns an XML document with the `application/xml` content type. An unrecognized `format` falls back to the JSON object.
 
 ---
 
@@ -424,16 +445,23 @@ Fetch a score including per-factor breakdown.
   "year": 2023,
   "total_score": 72.4,
   "scored_at": "2025-06-01 14:00:00",
+  "model_type": "financial",
+  "scoring_mode": "computed",
   "factors": [
     {
+      "factor_id": 1,
       "name": "Revenue Growth",
       "weight": 0.25,
       "raw_value": 0.12,
-      "weighted_value": 18.6
+      "weighted_value": 18.6,
+      "comment": null,
+      "manual_scale": null
     }
   ]
 }
 ```
+
+For a **manual** model, `scoring_mode` is `"manual"`, each factor's `manual_scale` is set, and `comment` holds the grader's note (see [`POST /scores/grade`](#post-scoresgrade)).
 
 ---
 
@@ -478,6 +506,113 @@ Fetch scores for all registered model versions for a given EIN + tax year.
 
 ---
 
+### `GET /scores/debug`
+
+Trace a scoring-model evaluation against a filing, factor by factor — the formula, the formula with this filing's numbers substituted in, every variable, and, for each field input, exactly where the value is grabbed from (form, part, section, line, column, box label, `xml_path`, `field_id`). This is **read-only**: it computes everything in-memory and persists nothing. The numbers it shows are identical to what `POST /scores/calculate` would compute and store.
+
+**Query parameters**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `ein` | string | yes* | 9-digit EIN (with `year`) |
+| `year` | integer | yes* | Tax year (with `ein`) |
+| `filing_id` | string | yes* | Filing UUID — an alternative to `ein` + `year` |
+| `version` | integer | no | Model version (default `1`) |
+
+\* Provide either `filing_id`, or both `ein` and `year`.
+
+**Response**
+
+`factors` are returned in **evaluation order** (dependencies first). Each factor carries `variables` (resolved inputs with their source), `formula` (`expression` symbolic + `substituted` with numbers + `raw_value`), and `normalization` (how the raw value maps to `[0, 1]` and is weighted).
+
+```json
+{
+  "ein": "010234567",
+  "year": 2023,
+  "filing_id": "550e8400-e29b-41d4-a716-446655440000",
+  "form_code": "990",
+  "model_version": 1,
+  "total_score": 0.7332,
+  "evaluation_order": ["Program Expense", "Admin Expense", "..."],
+  "factors": [
+    {
+      "factor_id": 1,
+      "name": "Program Expense",
+      "formula_type": "ratio",
+      "weight": 0.05,
+      "formula_description": "Average Program Expenses ÷ Average Total Expenses",
+      "inputs": ["prog", "total_exp"],
+      "variables": [
+        {
+          "key": "prog",
+          "kind": "field",
+          "xml_path": "ReturnData/IRS990/TotalFunctionalExpensesGrp/ProgramServicesAmt",
+          "value": 812000.0,
+          "raw_value": "812000",
+          "present": true,
+          "source": {
+            "field_id": 284,
+            "xml_path": "ReturnData/IRS990/TotalFunctionalExpensesGrp/ProgramServicesAmt",
+            "sub_letter": null,
+            "column_code": "B",
+            "box_label": "Total functional expenses — Program",
+            "data_type": "CURRENCY",
+            "line":    { "number": "25", "label": "Total functional expenses", "data_type": "CURRENCY" },
+            "section": { "code": "NONE", "name": null },
+            "part":    { "number": "IX", "name": "Statement of Functional Expenses" },
+            "form":    { "code": "990", "name": "990" }
+          }
+        },
+        {
+          "key": "total_exp",
+          "kind": "field",
+          "xml_path": "ReturnData/IRS990/TotalFunctionalExpensesGrp/TotalAmt",
+          "value": 950000.0,
+          "raw_value": "950000",
+          "present": true,
+          "source": { "field_id": 283, "column_code": "A", "box_label": "Total functional expenses — Total",
+                      "line": { "number": "25", "label": "Total functional expenses", "data_type": "CURRENCY" },
+                      "part": { "number": "IX", "name": "Statement of Functional Expenses" },
+                      "form": { "code": "990", "name": "990" } }
+        }
+      ],
+      "formula": {
+        "type": "ratio",
+        "expression": "prog / total_exp",
+        "substituted": "812000 / 950000",
+        "raw_value": 0.8547368421052631,
+        "computable": true,
+        "note": null
+      },
+      "normalization": {
+        "direction": "higher",
+        "benchmark_lo": 0.6,
+        "benchmark_hi": 0.85,
+        "expression": "clamp01((raw - lo) / (hi - lo))",
+        "substituted": "clamp01((0.854737 - 0.6) / 0.25)",
+        "normalized": 1.0
+      },
+      "raw_value": 0.8547368421052631,
+      "normalized": 1.0,
+      "weighted_value": 0.05
+    }
+  ]
+}
+```
+
+**Variable kinds**
+
+| `kind` | Fields | Meaning |
+|--------|--------|---------|
+| `field` | `xml_path`, `value`, `raw_value`, `present`, `source` (+ `series` for historical formulas) | A Form 990 field key; `source` traces it to form/part/section/line. `present` is `false` when the filing has no value for it (`value` is then `null`). |
+| `literal` | `value` | A numeric literal from the model (e.g. a `clamp` bound). |
+| `factor` | `references`, `value` | A `factor:<name>` reference; `value` is that factor's raw computed value. |
+| `unknown` | `note` | The key is not a known field, literal, or factor reference. |
+
+When a formula can't be computed (a required input is missing, or a denominator is zero), `formula.computable` is `false`, `formula.note` explains why, `raw_value` is `null`, and `normalized`/`weighted_value` are `0.0` — the walkthrough still shows the substituted formula (with `None` where the value is missing) so you can see exactly which input was unavailable.
+
+---
+
 ### `GET /scores/factors`
 
 Return the factor definitions for a scoring model version.
@@ -493,6 +628,8 @@ Return the factor definitions for a scoring model version.
 ```json
 {
   "model_version": 1,
+  "model_type": "financial",
+  "scoring_mode": "computed",
   "factors": [
     {
       "factor_id": 1,
@@ -503,8 +640,30 @@ Return the factor definitions for a scoring model version.
       "direction": "higher",
       "benchmark_lo": 0.0,
       "benchmark_hi": 0.2,
-      "formula_description": "Year-over-year revenue growth rate"
+      "formula_description": "Year-over-year revenue growth rate",
+      "manual_scale": null
     }
+  ]
+}
+```
+
+For a **manual** model, `scoring_mode` is `"manual"` and each factor carries a non-null `manual_scale` (`benchmark` / `normalized` / `percent`) instead of a formula; `formula_description` is the grader's guidance. See [Scoring Models → Manual Models](scoring/models.md#manual-graded-models).
+
+---
+
+### `GET /scores/types`
+
+List the available model categories (the seeded `model_type` codes).
+
+**Response**
+
+```json
+{
+  "types": [
+    { "code": "christ_centeredness", "name": "Christ-Centeredness", "description": "Mission and faith alignment" },
+    { "code": "financial",  "name": "Financial Health", "description": "Quantitative financial ratios computed from 990 data" },
+    { "code": "governance", "name": "Governance", "description": "Board composition, policies, and oversight" },
+    { "code": "whole_person", "name": "Whole-Person", "description": "Holistic organizational and staff well-being" }
   ]
 }
 ```
@@ -521,7 +680,7 @@ Return the factor definitions for a scoring model version.
 { "ein": "010234567", "year": 2023, "model_version": 1 }
 ```
 
-`model_version` defaults to `1` if omitted.
+`model_version` defaults to `1` if omitted. A **manual** model is rejected (`{"error": "… is manual — grade its factors via POST /scores/grade …"}`); grade it instead of computing it.
 
 **Response** — same shape as `GET /scores/detail`.
 
@@ -584,3 +743,24 @@ Set the total score on an existing score record.
 ```json
 { "score_id": 1, "total_score": 72.4 }
 ```
+
+---
+
+### `POST /scores/grade`
+
+Record a grader's value and optional comment for one factor of a **manual** model, then recompute and return the score. Create the score first with `POST /scores` (using the manual model's version). Repeatable — each call upserts that factor and recomputes `total_score` from all graded factors.
+
+**Request body**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `score_id` | integer | yes | The score to grade (from `POST /scores`) |
+| `factor_id` | integer | yes | A factor of that score's model |
+| `value` | number | yes | The grader's value, on the factor's `scale` (e.g. 0–100 for `percent`) |
+| `comment` | string | no | The grader's explanation, stored with the factor |
+
+```json
+{ "score_id": 12, "factor_id": 30, "value": 80, "comment": "2 insiders of 9" }
+```
+
+**Response** — the updated score (same shape as `GET /scores/detail`); each factor includes its `raw_value`, `comment`, and `weighted_value`. Errors with `{"error": …}` if the score is for a computed model, or the factor isn't part of the model.

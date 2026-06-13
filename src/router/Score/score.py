@@ -1,3 +1,4 @@
+import math
 import sqlite3
 from typing import Any
 from http.client import HTTPMessage
@@ -21,7 +22,41 @@ class ScoreRouter(Router):
     @self.get('/factors')
     def get_factors(query_params: dict, body: Any, headers: HTTPMessage):
       version = self._qp_int(query_params, 'version', default=1)
-      return {"model_version": version, "factors": self.db.get_factors(version)}
+      model = self.db.get_model(version)
+      return {
+        "model_version": version,
+        "model_type": model.get("model_type") if model else None,
+        "scoring_mode": model.get("scoring_mode") if model else "computed",
+        "factors": self.db.get_factors(version),
+      }
+
+    @self.get('/types')
+    def list_model_types(query_params: dict, body: Any, headers: HTTPMessage):
+      """The available model categories (financial, governance, …)."""
+      return {"types": self.db.list_model_types()}
+
+    # --- Manual (graded) scoring ---
+
+    @self.post('/grade')
+    def grade_factor(query_params: dict, body: Any, headers: HTTPMessage):
+      """Record a grader's value + comment for one factor of a *manual* model and
+      return the updated score. Body: {score_id, factor_id, value, comment?}."""
+      data, err = self._require_fields(body, 'score_id', 'factor_id', 'value')
+      if err:
+        return err
+      try:
+        score_id = int(data['score_id'])
+        factor_id = int(data['factor_id'])
+        value = float(data['value'])
+      except (TypeError, ValueError):
+        return {"error": "score_id and factor_id must be integers, value a number"}
+      if not math.isfinite(value):  # reject JSON Infinity / NaN
+        return {"error": "value must be a finite number"}
+      comment = data.get('comment')
+      try:
+        return self.engine.grade(score_id, factor_id, value, comment)
+      except ValueError as e:
+        return {"error": str(e)}
 
     # --- Scores ---
 
@@ -134,6 +169,33 @@ class ScoreRouter(Router):
       if score is None:
         return {"error": f"no score found for EIN {ein} year {year}"}
       return score
+
+    @self.get('/debug')
+    def debug_score(query_params: dict, body: Any, headers: HTTPMessage):
+      """Trace a model evaluation: per factor, the formula, the formula with this
+      filing's numbers substituted in, every variable, and where each field input
+      is grabbed from (form / part / section / line / xml_path). Read-only — does
+      not persist a score. Accepts filing_id, or ein + year; version defaults 1."""
+      version = self._qp_int(query_params, 'version', default=1)
+      filing_id = self._qp(query_params, 'filing_id')
+      if filing_id:
+        filing = self.db.get_filing(filing_id)
+        if filing is None:
+          return {"error": f"filing not found: {filing_id}"}
+        ein, year = filing['ein'], filing['year']
+      else:
+        ein = self._qp(query_params, 'ein')
+        if not ein:
+          return {"error": "provide filing_id, or ein and year"}
+        year, err = self._qp_int_or_error(query_params, 'year', field='year')
+        if err:
+          return err
+        if year is None:
+          return {"error": "missing query param: year"}
+      try:
+        return self.engine.debug(ein, year, version)
+      except ValueError as e:
+        return {"error": str(e)}
 
     @self.get('/compare')
     def compare_scores(query_params: dict, body: Any, headers: HTTPMessage):

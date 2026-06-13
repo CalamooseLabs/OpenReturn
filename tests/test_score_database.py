@@ -219,7 +219,7 @@ class TestGetFactors(ScoreDbTestCase):
         expected_keys = {
             "factor_id", "name", "weight",
             "formula_type", "inputs", "direction",
-            "benchmark_lo", "benchmark_hi", "formula_description",
+            "benchmark_lo", "benchmark_hi", "formula_description", "manual_scale",
         }
         for f in self.factors:
             self.assertEqual(set(f.keys()), expected_keys)
@@ -767,7 +767,8 @@ class TestGetScore(ScoreDbTestCase):
     def test_result_has_no_unexpected_keys(self):
         result = self.db.get_score(self.score_id)
         expected_keys = {"score_id", "ein", "model_version", "filing_id",
-                         "year", "total_score", "scored_at", "factors"}
+                         "year", "total_score", "scored_at", "factors",
+                         "model_type", "scoring_mode"}
         self.assertEqual(set(result.keys()), expected_keys)
 
     def test_factor_null_raw_value_preserved(self):

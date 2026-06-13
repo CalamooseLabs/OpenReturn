@@ -15,11 +15,12 @@ let
     "\n[[factor]]\n"
     + "name               = \"${f.name}\"\n"
     + "weight             = ${toString f.weight}\n"
-    + "formula_type       = \"${f.formula_type}\"\n"
-    + "inputs             = ${mkInputList f.inputs}\n"
-    + "direction          = \"${f.direction}\"\n"
-    + "benchmark_lo       = ${toString f.benchmark_lo}\n"
-    + "benchmark_hi       = ${toString f.benchmark_hi}\n"
+    + lib.optionalString (f.formula_type != null) "formula_type       = \"${f.formula_type}\"\n"
+    + lib.optionalString (f.inputs != null)       "inputs             = ${mkInputList f.inputs}\n"
+    + lib.optionalString (f.scale != null)        "scale              = \"${f.scale}\"\n"
+    + lib.optionalString (f.direction != null)    "direction          = \"${f.direction}\"\n"
+    + lib.optionalString (f.benchmark_lo != null) "benchmark_lo       = ${toString f.benchmark_lo}\n"
+    + lib.optionalString (f.benchmark_hi != null) "benchmark_hi       = ${toString f.benchmark_hi}\n"
     + lib.optionalString (f.formula_description != null)
         "formula_description = \"${f.formula_description}\"\n";
 
@@ -29,6 +30,8 @@ let
       + "version = ${toString model.version}\n"
       + lib.optionalString (model.description != null)
           "description = \"${model.description}\"\n"
+      + lib.optionalString (model.type != null) "type = \"${model.type}\"\n"
+      + lib.optionalString (model.mode != "computed") "mode = \"${model.mode}\"\n"
       + lib.concatMapStrings mkFactor model.factors
     );
 
@@ -170,6 +173,28 @@ in {
             description = "Optional human-readable description of the model.";
           };
 
+          type = lib.mkOption {
+            type = lib.types.nullOr lib.types.str;
+            default = null;
+            example = "governance";
+            description = ''
+              Model category — one of the seeded `model_type` codes (`financial`,
+              `governance`, `whole_person`, `christ_centeredness`). Validated at
+              registration.
+            '';
+          };
+
+          mode = lib.mkOption {
+            type = lib.types.enum [ "computed" "manual" ];
+            default = "computed";
+            description = ''
+              `computed` (default): factors are evaluated from formulas over 990
+              data. `manual`: factors are graded by a person (a value + comment
+              supplied via the grading API); set each factor's `scale` instead of
+              `formula_type`/`inputs`.
+            '';
+          };
+
           factors = lib.mkOption {
             type = lib.types.listOf (lib.types.submodule {
               options = {
@@ -184,34 +209,49 @@ in {
                 };
 
                 formula_type = lib.mkOption {
-                  type = lib.types.str;
-                  description = "Formula type (e.g. ratio, growth, clamp, cagr).";
+                  type = lib.types.nullOr lib.types.str;
+                  default = null;
+                  description = "Formula type for a computed model (e.g. ratio, growth, clamp, cagr). Omit for manual factors.";
                 };
 
                 inputs = lib.mkOption {
-                  type = lib.types.listOf lib.types.str;
-                  description = "Ordered input keys (field keys, numeric literals, or factor:<name>).";
+                  type = lib.types.nullOr (lib.types.listOf lib.types.str);
+                  default = null;
+                  description = "Ordered input keys for a computed factor (field keys, numeric literals, or factor:<name>). Omit for manual factors.";
+                };
+
+                scale = lib.mkOption {
+                  type = lib.types.nullOr (lib.types.enum [ "benchmark" "normalized" "percent" ]);
+                  default = null;
+                  description = ''
+                    For a manual (graded) factor: how the grader's entered value maps to
+                    [0,1] — `benchmark` (via direction + benchmark_lo/hi), `normalized`
+                    (already 0–1), or `percent` (0–100 ÷ 100). Omit for computed factors.
+                  '';
                 };
 
                 direction = lib.mkOption {
-                  type = lib.types.enum [ "higher" "lower" ];
-                  description = "Which end of the benchmark range scores best.";
+                  type = lib.types.nullOr (lib.types.enum [ "higher" "lower" ]);
+                  default = null;
+                  description = "Which end of the benchmark range scores best (computed factors, and manual factors with scale = benchmark).";
                 };
 
                 benchmark_lo = lib.mkOption {
-                  type = lib.types.number;
+                  type = lib.types.nullOr lib.types.number;
+                  default = null;
                   description = "Lower bound for normalization.";
                 };
 
                 benchmark_hi = lib.mkOption {
-                  type = lib.types.number;
+                  type = lib.types.nullOr lib.types.number;
+                  default = null;
                   description = "Upper bound for normalization (must be > benchmark_lo).";
                 };
 
                 formula_description = lib.mkOption {
                   type = lib.types.nullOr lib.types.str;
                   default = null;
-                  description = "Optional human-readable description of what the factor measures.";
+                  description = "Human-readable description of what the factor measures (computed) or grading guidance (manual).";
                 };
               };
             });

@@ -96,18 +96,48 @@ services.openreturn = {
 };
 ```
 
+### Model fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `version` | positive int | yes | Unique model version; bump to register a new model |
+| `description` | string or null | no | Human-readable description |
+| `type` | string or null | no | Category — a seeded `model_type` code (`financial`, `governance`, `whole_person`, `christ_centeredness`) |
+| `mode` | `"computed"` or `"manual"` | no (default `"computed"`) | `computed` = formula factors; `manual` = human-graded factors (set each factor's `scale`) |
+| `factors` | list | yes | The factors (fields below) |
+
 ### Factor fields
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `name` | string | yes | Unique factor name; used in `factor:<name>` references |
 | `weight` | number | yes | Contribution weight (≥ 0); set to `0` for intermediate factors |
-| `formula_type` | string | yes | Formula type — see [Scoring Models](scoring/models.md) for the full list |
-| `inputs` | list of strings | yes | Ordered input keys, numeric literals, or `factor:<name>` references |
-| `direction` | `"higher"` or `"lower"` | yes | Which end of the benchmark range scores best |
-| `benchmark_lo` | number | yes | Lower bound for normalization |
-| `benchmark_hi` | number | yes | Upper bound (must be > `benchmark_lo`) |
-| `formula_description` | string or null | no | Human-readable description |
+| `formula_type` | string or null | computed only | Formula type — see [Scoring Models](scoring/models.md) for the full list |
+| `inputs` | list of strings or null | computed only | Ordered input keys, numeric literals, or `factor:<name>` references |
+| `scale` | `"benchmark"`/`"normalized"`/`"percent"` or null | manual only | How a grader's value maps to `[0,1]` (see [Manual Models](scoring/models.md#manual-graded-models)) |
+| `direction` | `"higher"` or `"lower"` or null | computed, or manual with `scale = "benchmark"` | Which end of the benchmark range scores best |
+| `benchmark_lo` | number or null | as above | Lower bound for normalization |
+| `benchmark_hi` | number or null | as above | Upper bound (must be > `benchmark_lo`) |
+| `formula_description` | string or null | no | Description (computed) or grader guidance (manual) |
+
+A **manual** (graded) model omits `formula_type`/`inputs` and sets `scale` per factor:
+
+```nix
+{
+  version = 5;
+  type    = "governance";
+  mode    = "manual";
+  factors = [
+    { name = "Board Independence"; weight = 0.5; scale = "percent";
+      formula_description = "What share of voting board members are independent?"; }
+    { name = "Conflict-of-Interest Policy"; weight = 0.5; scale = "benchmark";
+      direction = "higher"; benchmark_lo = 1; benchmark_hi = 5;
+      formula_description = "Rate 1–5 the strength of the policy."; }
+  ];
+}
+```
+
+Manual-model factors are then scored through the [grading API](api.md#post-scoresgrade), not computed.
 
 ### How model registration works
 
@@ -128,6 +158,14 @@ Model versions are immutable once registered — changing a factor's formula wit
 The registration service will register the new version. The old version remains in the database and any scores computed under it are preserved. Use `GET /scores/compare?ein=...&year=...` to see results under both versions side by side.
 
 ## Systemd Service Chain
+
+```mermaid
+graph LR
+  init[openreturn-init<br/>schema + seed] --> migrate[openreturn-migrate<br/>apply migrations]
+  migrate --> models[openreturn-register-models<br/>optional]
+  models --> server[openreturn<br/>API server]
+  migrate -.->|no models| server
+```
 
 The module creates up to four services that run in dependency order before the API server starts:
 
@@ -196,7 +234,7 @@ Setting both `secretKeyFile` and `secretKey` is a configuration error (assertion
 
 ## Restart Behaviour
 
-The unit restarts automatically on failure with a 5-second delay between attempts. If the service crashes 5 times within 60 seconds systemd stops retrying and marks it failed — this prevents a broken startup from looping forever.
+The unit restarts automatically on failure with a 5-second delay between attempts. The start-limit window is disabled (`StartLimitIntervalSec = 0`), so systemd does **not** give up after a burst of failures — it keeps retrying every 5 seconds. (An activation script clears any prior failed/rate-limited state on each `nixos-rebuild switch` so configuration changes always take effect immediately.)
 
 ```bash
 # Inspect what went wrong
@@ -226,7 +264,7 @@ sudo -u openreturn openreturn ingest --stop   # cooperative stop when needed
 sudo systemctl start openreturn
 ```
 
-Run it as the service user so the log/PID files and any database writes have the right ownership. If the database is encrypted, that shell needs the key too — export `DB_SECRET_KEY_FILE=<path>` (the same file `database.secretKeyFile` points at) before invoking.
+Run it as the service user so the log/PID files and any database writes have the right ownership. If the database is encrypted, that shell needs the key too — export `DB_SECRET_KEY_FILE=<path>` (the same file `database.secretKeyFile` points at) before invoking. Do **not** rely on `openreturn ingest --restart-server` here — it detects the systemd-managed server and deliberately leaves it for systemd, so use `systemctl stop/start` (above) to bracket the ingest.
 
 **Transient systemd unit** — supervised by systemd, with output in the journal:
 

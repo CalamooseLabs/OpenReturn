@@ -2,16 +2,29 @@
 #! nix-shell -i python3 -p python3
 
 import argparse
+import os
+import signal
 import sys
+import threading
+from datetime import datetime
 from pathlib import Path
 
+import daemon
 from console import _B, _R, _DIM, _CYN, _GRN, _YLW, _MAG, _RED
 from database.Score import ScoreDatabase
 from router.Upload import UploadRouter
 from router.Org import OrgRouter
 from router.Filing import FilingRouter
 from router.Score import ScoreRouter
+from router.Docs import DocsRouter
 from server import Server
+
+
+def _raise_keyboard_interrupt(*_args):
+    """SIGTERM handler so a stopped server shuts down cleanly (Server.run already
+    handles KeyboardInterrupt), which lets it remove its PID file. Used so
+    `ingest --restart-server` and `systemctl stop` are graceful, not a hard kill."""
+    raise KeyboardInterrupt
 
 # Tables populated by populate.sql — shown as row counts only
 _REFERENCE_TABLES = {
@@ -88,6 +101,18 @@ def cmd_serve(args) -> int:
     if args.testing:
       Path("OpenReturn.db").unlink(missing_ok=True)
 
+    # Single-instance guard: only one server per data directory. A stale PID file
+    # (server crashed) is detected and cleared by running_daemon. Skipped in
+    # --testing mode, which is a self-contained dev reset.
+    if not args.testing:
+      existing = daemon.running_daemon(daemon.SERVER_PIDFILE)
+      if existing:
+        print(f"\n{_RED}OpenReturn server already running{_R} "
+              f"(PID {existing.get('pid')} on "
+              f"{existing.get('host', '?')}:{existing.get('port', '?')}).", file=sys.stderr)
+        print(f"  {_DIM}Stop it first, or check: openreturn status{_R}\n", file=sys.stderr)
+        return 1
+
     db = ScoreDatabase()
     upload_router = UploadRouter(db=db, secure_by_default=True, workers=args.workers)
 
@@ -115,9 +140,24 @@ def cmd_serve(args) -> int:
     app.include_router(OrgRouter(db=db, secure_by_default=True))
     app.include_router(FilingRouter(db=db, secure_by_default=True))
     app.include_router(ScoreRouter(db=db, secure_by_default=True))
-    app.run()
+    # Public discovery routes (/openapi.json, /docs) — not gated by --auth.
+    app.include_router(DocsRouter(base_url=f"http://{args.host}:{args.port}"))
 
-    db.close()
+    # Treat SIGTERM like Ctrl-C so the server shuts down cleanly and removes its
+    # PID file (signal handlers must be installed on the main thread).
+    if threading.current_thread() is threading.main_thread():
+      signal.signal(signal.SIGTERM, _raise_keyboard_interrupt)
+
+    daemon.write_pidfile(daemon.SERVER_PIDFILE, {
+      "role": "server", "pid": os.getpid(), "host": args.host, "port": args.port,
+      "auth": bool(args.auth), "debug": bool(args.debug),
+      "started_at": datetime.now().isoformat(timespec="seconds"),
+    })
+    try:
+      app.run()
+    finally:
+      daemon.remove_pidfile(daemon.SERVER_PIDFILE)
+      db.close()
     return 0
 
 

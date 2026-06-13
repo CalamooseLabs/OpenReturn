@@ -34,7 +34,8 @@ The project maintains **100% statement coverage**. PRs that reduce coverage shou
 |-----------|---------------|
 | `tests/test_scoring_engine.py` | `src/scoring/engine.py` |
 | `tests/test_models.py` | `src/models.py` |
-| `tests/test_database.py` | `src/database/IRS990/irs990.py` + `src/database/IRS990/repositories/`, `src/database/Score/score.py` |
+| `tests/test_database.py` | `src/database/IRS990/irs990.py` + `src/database/IRS990/repositories/` |
+| `tests/test_score_database.py` | `src/database/Score/score.py` |
 | `tests/test_expanded_forms.py` | `src/database/IRS990/sql/populate/*.sql` (990-EZ/N/PF/T schema) |
 | `tests/test_db_commands.py` | `src/db.py` (`init`, `migrate`, `reset`) |
 | `tests/test_cli.py` | `src/ingest.py` (directory **and** URL paths) |
@@ -47,8 +48,14 @@ The project maintains **100% statement coverage**. PRs that reduce coverage shou
 | `tests/test_org_router.py` | `src/router/Org/org.py` |
 | `tests/test_filing_router.py` | `src/router/Filing/filing.py` |
 | `tests/test_score_router.py` | `src/router/Score/score.py` |
+| `tests/test_score_debug.py` | `src/scoring/engine.py` (`debug()` walkthrough) + `GET /scores/debug` + `get_field_source` |
+| `tests/test_model_types.py` | model types + manual scoring: `src/models.py` (manual TOML), `src/scoring/engine.py` (`_normalize_manual`/`grade`), `src/database/Score/score.py` |
+| `tests/test_openapi.py` | `src/openapi.py` (spec + route-coverage anti-drift) + `src/router/Docs/docs.py` |
 | `tests/test_api_keys.py` | `src/keys.py` |
-| `tests/test_server.py` | `src/server/server.py` |
+| `tests/test_server_auth.py` | `src/server/server.py` (auth/rate-limit paths) |
+| `tests/test_server_coverage.py` | `src/server/server.py` (request handling, formats, errors) |
+| `tests/test_serve_instance.py` | `src/main.py` `cmd_serve` (single-instance guard, server.pid) |
+| `tests/test_ingest_schedule.py` | `src/ingest.py` `--schedule` / `--restart-server` helpers |
 
 ## Notes on Parallel Ingest Coverage
 

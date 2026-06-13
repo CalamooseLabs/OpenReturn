@@ -3,6 +3,7 @@
 
 import argparse
 import os
+import re
 import shutil
 import signal
 import sys
@@ -12,7 +13,7 @@ import uuid
 import zipfile
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import daemon
@@ -432,17 +433,174 @@ def cmd_ingest(args) -> int:
               "(or use --ingested / --forget / --purge / --stop)", file=sys.stderr)
         return 2
 
-    if getattr(args, 'background', False):
-        return _cmd_ingest_background(args)
+    # Validate --schedule up front so a bad time fails immediately, before any
+    # fork or long-running work.
+    schedule_target = None
+    if getattr(args, 'schedule', None):
+        try:
+            schedule_target = _parse_schedule(args.schedule)
+        except ValueError as exc:
+            print(f"ingest: invalid --schedule: {exc}", file=sys.stderr)
+            return 2
 
-    if sources.is_url(args.directory):
-        return _cmd_ingest_url(args, args.directory)
-    return _cmd_ingest_dir(args, args.directory)
+    if getattr(args, 'background', False):
+        return _cmd_ingest_background(args, schedule_target)
+
+    return _run_ingest(args, args.directory, schedule_target)
+
+
+# ── Scheduled / server-managed run ───────────────────────────────────────────
+
+def _run_ingest(args, source: str, schedule_target=None) -> int:
+    """Shared body for a foreground or background ingest: optionally wait until a
+    scheduled time, optionally stop a running server (and restart it afterwards),
+    then ingest the source. Both the foreground path and the background daemon's
+    ``run()`` funnel through here so scheduling and server management behave the
+    same either way."""
+    if schedule_target is not None and not _wait_until(schedule_target):
+        print(f"\n{_YLW}Cancelled before scheduled start — nothing ingested.{_R}")
+        return 0
+
+    restart_cfg = _stop_running_server() if getattr(args, 'restart_server', False) else None
+    try:
+        if sources.is_url(source):
+            return _cmd_ingest_url(args, source)
+        return _cmd_ingest_dir(args, source)
+    finally:
+        if restart_cfg is not None:
+            _restart_server(restart_cfg)
+
+
+def _parse_schedule(s: str, now: datetime | None = None):
+    """Parse a --schedule value into an absolute datetime. Accepts a relative
+    delay (``+30s`` / ``+15m`` / ``+2h`` / ``+1d``), a clock time (``HH:MM`` or
+    ``HH:MM:SS``, the next future occurrence), or an absolute ``YYYY-MM-DD HH:MM``
+    (space or ``T`` separator, optional seconds)."""
+    s = s.strip()
+    now = now or datetime.now()
+
+    m = re.fullmatch(r'\+(\d+)\s*([smhd])', s, re.IGNORECASE)
+    if m:
+        secs = int(m.group(1)) * {'s': 1, 'm': 60, 'h': 3600, 'd': 86400}[m.group(2).lower()]
+        return now + timedelta(seconds=secs)
+
+    for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M', '%Y-%m-%dT%H:%M'):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            pass
+
+    m = re.fullmatch(r'(\d{1,2}):(\d{2})(?::(\d{2}))?', s)
+    if m:
+        hh, mm, ss = int(m.group(1)), int(m.group(2)), int(m.group(3) or 0)
+        if not (0 <= hh < 24 and 0 <= mm < 60 and 0 <= ss < 60):
+            raise ValueError(f"time out of range: '{s}'")
+        target = now.replace(hour=hh, minute=mm, second=ss, microsecond=0)
+        return target if target > now else target + timedelta(days=1)
+
+    raise ValueError(f"unrecognized time '{s}' — use +30m, HH:MM, or YYYY-MM-DD HH:MM")
+
+
+def _wait_until(target) -> bool:
+    """Sleep until ``target``. Returns True when reached, False if cancelled — a
+    cooperative stop (background ``--stop``) or Ctrl-C (foreground). Polls in 1 s
+    steps so a stop signal during a long wait is honoured promptly."""
+    if (target - datetime.now()).total_seconds() <= 0:
+        return True
+    print(f"\n{_B}Scheduled{_R}  start at "
+          f"{_CYN}{target.isoformat(sep=' ', timespec='seconds')}{_R}  "
+          f"{_DIM}(in {_fmt_duration((target - datetime.now()).total_seconds())}){_R}", flush=True)
+    try:
+        while True:
+            remaining = (target - datetime.now()).total_seconds()
+            if remaining <= 0:
+                return True
+            if daemon.stop_requested():
+                return False
+            time.sleep(min(remaining, 1.0))
+    except KeyboardInterrupt:
+        return False
+
+
+def _systemd_active(unit: str = 'openreturn.service') -> bool:
+    try:
+        from status import _systemd_state
+        return _systemd_state(unit) == 'active'
+    except Exception:  # noqa: BLE001 — best effort; absence of systemd is fine
+        return False
+
+
+def _stop_running_server() -> dict | None:
+    """Stop the managed API server (``server.pid``) so ingest can take the
+    exclusive DB lock, returning its launch config for a later restart. Returns
+    None when there is nothing to restart: no server running, or a systemd-managed
+    server (which we must not fight — use ``systemctl`` there)."""
+    info = daemon.running_daemon(daemon.SERVER_PIDFILE)
+    if not info:
+        print(f"{_DIM}--restart-server: no managed server running; nothing to stop.{_R}")
+        return None
+    if _systemd_active():
+        print(f"{_YLW}--restart-server: server looks systemd-managed — leaving it to systemd "
+              f"(use 'systemctl stop/start openreturn'). Continuing without restart.{_R}")
+        return None
+    pid = info['pid']
+    print(f"{_YLW}Stopping server (PID {pid}) for ingest…{_R}", flush=True)
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return None
+    for _ in range(100):  # up to ~10s for a clean shutdown that releases the DB
+        time.sleep(0.1)
+        if not daemon.pid_alive(pid):
+            break
+    else:
+        # SIGTERM didn't take (handler missing / hung) — escalate so ingest isn't
+        # blocked by a locked database.
+        print(f"{_RED}Server did not exit after SIGTERM — sending SIGKILL.{_R}")
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        for _ in range(30):  # ~3s for the kernel to reap it
+            time.sleep(0.1)
+            if not daemon.pid_alive(pid):
+                break
+        daemon.remove_pidfile(daemon.SERVER_PIDFILE)  # SIGKILL can't clean up
+    return {k: info.get(k) for k in ('host', 'port', 'auth', 'debug')}
+
+
+def _restart_server(cfg: dict) -> None:
+    """Relaunch the API server detached, with the config it was running under.
+
+    Confirms the relaunch by waiting for the new ``server.pid`` to appear (the
+    server writes it itself, slightly after the detach returns), so the success
+    message isn't printed before the server is actually back."""
+    from types import SimpleNamespace
+    from main import cmd_serve
+    ns = SimpleNamespace(
+        host=cfg.get('host') or 'localhost', port=cfg.get('port') or 8080,
+        auth=bool(cfg.get('auth')), debug=bool(cfg.get('debug')),
+        testing=False, zip_dir=None, workers=None,
+    )
+    meta = {"role": "server", "host": ns.host, "port": ns.port,
+            "started_at": datetime.now().isoformat(timespec='seconds')}
+    # pidfile=None: cmd_serve writes server.pid itself (single-instance record).
+    pid = daemon.spawn_background(lambda: cmd_serve(ns), daemon.SERVER_LOG, None, meta)
+    if pid > 0:
+        for _ in range(50):  # up to ~5s for cmd_serve to write server.pid
+            time.sleep(0.1)
+            live = daemon.running_daemon(daemon.SERVER_PIDFILE)
+            if live and live.get("pid") == pid:
+                print(f"{_GRN}Restarted server (PID {pid}) on {ns.host}:{ns.port}{_R}  "
+                      f"{_DIM}→ {daemon.SERVER_LOG}{_R}")
+                return
+    print(f"{_RED}Server restart could not be confirmed — check {daemon.SERVER_LOG} "
+          f"and 'openreturn status'.{_R}")
 
 
 # ── Background run / stop ────────────────────────────────────────────────────
 
-def _cmd_ingest_background(args) -> int:
+def _cmd_ingest_background(args, schedule_target=None) -> int:
     pidfile = daemon.DEFAULT_PIDFILE
     running = daemon.running_daemon(pidfile)
     if running:
@@ -478,12 +636,12 @@ def _cmd_ingest_background(args) -> int:
         "workers": args.workers,
         "started_at": datetime.now().isoformat(timespec='seconds'),
     }
+    if schedule_target is not None:
+        meta["scheduled_for"] = schedule_target.isoformat(sep=' ', timespec='seconds')
 
     def run() -> int:
         print(f"\n{'=' * 52}\n{meta['started_at']}  ingest {source}\n{'=' * 52}", flush=True)
-        if sources.is_url(source):
-            return _cmd_ingest_url(args, source)
-        return _cmd_ingest_dir(args, source)
+        return _run_ingest(args, source, schedule_target)
 
     try:
         pid = daemon.spawn_background(run, log_path, pidfile, meta)
@@ -497,6 +655,8 @@ def _cmd_ingest_background(args) -> int:
     print(f"\n{_B}{_GRN}Background ingest started{_R}")
     print(f"  {'PID':<8}{_CYN}{pid}{_R}")
     print(f"  {'Source':<8}{source}")
+    if schedule_target is not None:
+        print(f"  {'When':<8}{_CYN}{meta['scheduled_for']}{_R}")
     print(f"  {'Log':<8}{log_path}")
     print(f"  {_DIM}tail -f {log_path}         # watch output{_R}")
     print(f"  {_DIM}openreturn status         # check progress{_R}")
@@ -872,6 +1032,18 @@ def _add_ingest_arguments(ap) -> None:
     ap.add_argument(
         '--stop', action='store_true',
         help='Stop a running background ingest (finishes the current archive first), then exit',
+    )
+    ap.add_argument(
+        '--schedule', metavar='WHEN', default=None,
+        help='Delay the ingest until WHEN: a relative delay (+30m, +2h, +1d), a '
+             'clock time (HH:MM, next occurrence), or YYYY-MM-DD HH:MM. Pair with '
+             '--background to wait without holding the terminal.',
+    )
+    ap.add_argument(
+        '--restart-server', dest='restart_server', action='store_true',
+        help='Stop the running OpenReturn server before ingesting and restart it '
+             'afterward (so it is not broken by the exclusive DB lock). Skipped '
+             'for a systemd-managed server — use systemctl there.',
     )
     # Ingested-archive management
     ap.add_argument(

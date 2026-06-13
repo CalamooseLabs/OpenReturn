@@ -84,13 +84,17 @@ class TestScoreRouterRegistration(unittest.TestCase):
     def test_get_compare_registered(self):
         self.assertIn("/scores/compare", self.router.routes["GET"])
 
+    def test_get_debug_registered(self):
+        self.assertIn("/scores/debug", self.router.routes["GET"])
+
     def test_no_unexpected_get_routes(self):
         expected = {"/scores/factors", "/scores", "/scores/filing", "/scores/detail",
-                    "/scores/lookup", "/scores/compare"}
+                    "/scores/lookup", "/scores/compare", "/scores/debug", "/scores/types"}
         self.assertEqual(set(self.router.routes["GET"].keys()), expected)
 
     def test_no_unexpected_post_routes(self):
-        expected = {"/scores", "/scores/factors", "/scores/finalize", "/scores/calculate"}
+        expected = {"/scores", "/scores/factors", "/scores/finalize", "/scores/calculate",
+                    "/scores/grade"}
         self.assertEqual(set(self.router.routes["POST"].keys()), expected)
 
 
@@ -789,6 +793,110 @@ class TestCompareScores(unittest.TestCase):
         ]
         result = self._call(ein="111111111", year="2023")
         self.assertEqual(len(result["scores"]), 2)
+
+
+class TestDebugRoute(unittest.TestCase):
+
+    def setUp(self):
+        self.router, self.db = _make_router()
+        self.router.engine.debug = MagicMock(return_value={"ok": True, "total_score": 0.5})
+
+    def _call(self, **qp):
+        return _call(self.router, "GET", "/scores/debug", _qp(**qp) if qp else {})
+
+    def test_ein_year_calls_engine_debug(self):
+        result = self._call(ein="111111111", year="2023")
+        self.router.engine.debug.assert_called_once_with("111111111", 2023, 1)
+        self.assertEqual(result["ok"], True)
+
+    def test_version_passed_through(self):
+        self._call(ein="111111111", year="2023", version="2")
+        self.router.engine.debug.assert_called_once_with("111111111", 2023, 2)
+
+    def test_filing_id_resolves_to_ein_year(self):
+        self.db.get_filing.return_value = {"ein": "222222222", "year": 2021}
+        self._call(filing_id="abc-uuid")
+        self.db.get_filing.assert_called_once_with("abc-uuid")
+        self.router.engine.debug.assert_called_once_with("222222222", 2021, 1)
+
+    def test_filing_id_not_found(self):
+        self.db.get_filing.return_value = None
+        result = self._call(filing_id="missing")
+        self.assertIn("error", result)
+        self.router.engine.debug.assert_not_called()
+
+    def test_missing_ein_and_filing_id(self):
+        result = self._call(year="2023")
+        self.assertIn("error", result)
+
+    def test_missing_year(self):
+        result = self._call(ein="111111111")
+        self.assertIn("error", result)
+
+    def test_non_integer_year(self):
+        result = self._call(ein="111111111", year="abc")
+        self.assertIn("error", result)
+
+    def test_engine_value_error_becomes_error_response(self):
+        self.router.engine.debug.side_effect = ValueError("No filing found")
+        result = self._call(ein="111111111", year="2023")
+        self.assertEqual(result, {"error": "No filing found"})
+
+
+class TestTypesRoute(unittest.TestCase):
+
+    def test_lists_model_types(self):
+        router, db = _make_router()
+        db.list_model_types.return_value = [{"code": "financial", "name": "Financial Health",
+                                             "description": "d"}]
+        result = _call(router, "GET", "/scores/types")
+        self.assertEqual(result["types"][0]["code"], "financial")
+
+
+class TestGradeRoute(unittest.TestCase):
+
+    def setUp(self):
+        self.router, self.db = _make_router()
+        self.router.engine.grade = MagicMock(return_value={"score_id": 7, "total_score": 0.8})
+
+    def _call(self, body):
+        return _call(self.router, "POST", "/scores/grade", body=body)
+
+    def test_grade_success(self):
+        result = self._call({"score_id": 7, "factor_id": 3, "value": 80, "comment": "good"})
+        self.router.engine.grade.assert_called_once_with(7, 3, 80.0, "good")
+        self.assertEqual(result["total_score"], 0.8)
+
+    def test_grade_missing_fields(self):
+        result = self._call({"score_id": 7})
+        self.assertIn("error", result)
+        self.router.engine.grade.assert_not_called()
+
+    def test_grade_non_numeric(self):
+        result = self._call({"score_id": "x", "factor_id": 3, "value": 1})
+        self.assertIn("error", result)
+
+    def test_grade_value_error_propagates(self):
+        self.router.engine.grade.side_effect = ValueError("computed model")
+        result = self._call({"score_id": 7, "factor_id": 3, "value": 1})
+        self.assertEqual(result, {"error": "computed model"})
+
+    def test_grade_rejects_non_finite_value(self):
+        result = self._call({"score_id": 7, "factor_id": 3, "value": float("inf")})
+        self.assertIn("finite", result["error"])
+        self.router.engine.grade.assert_not_called()
+
+
+class TestFactorsRouteModelHeader(unittest.TestCase):
+
+    def test_factors_includes_model_type_and_mode(self):
+        router, db = _make_router()
+        db.get_model.return_value = {"version": 1, "model_type": "governance",
+                                     "scoring_mode": "manual"}
+        db.get_factors.return_value = []
+        result = _call(router, "GET", "/scores/factors", _qp(version="1"))
+        self.assertEqual(result["model_type"], "governance")
+        self.assertEqual(result["scoring_mode"], "manual")
 
 
 if __name__ == "__main__":

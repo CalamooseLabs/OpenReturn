@@ -10,9 +10,14 @@ build
 result
 ingest.log
 ingest.pid
+server.log
+server.pid
 GIT_COMMIT_MSG
 CLAUDE.md
 .coverage
 .coveragerc
 .coveragerc*
 .claude/
+
+# Generated GitHub wiki (build with tools/build_wiki.py)
+wiki/

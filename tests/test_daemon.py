@@ -179,6 +179,19 @@ class TestSpawnBackground(unittest.TestCase):
         self.assertTrue(self._wait_gone(pid))
         self.assertIn("hello-from-daemon", Path(self.log).read_text())
 
+    def test_pidfile_none_skips_pidfile_but_still_runs(self):
+        marker = os.path.join(self.td, 'marker2')
+
+        def run():
+            Path(marker).write_text("ran")
+            return 0
+
+        pid = daemon.spawn_background(run, self.log, None, {"role": "server"})
+        self.assertGreater(pid, 0)
+        self.assertTrue(self._wait_gone(pid))
+        self.assertTrue(os.path.exists(marker))
+        self.assertFalse(os.path.exists(self.pf))  # no pidfile managed
+
     def test_nonzero_return_code_still_cleans_pidfile(self):
         def run():
             return 3

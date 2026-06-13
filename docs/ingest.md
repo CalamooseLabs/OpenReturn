@@ -6,9 +6,36 @@ There are two ways to get data into OpenReturn: the **ingest CLI** for bulk load
 
 ## The Ingest CLI
 
-`openreturn-ingest` (or `python3 src/ingest.py` in dev) is designed for the annual IRS TEOS data releases, which typically arrive as dozens of ZIP archives each containing thousands of XML filings. The source argument is either a **local directory** of `.zip` files or an **`http(s)://` URL** (see [Ingesting from a URL](#ingesting-from-a-url) below).
+`openreturn ingest` (or `python3 src/ingest.py` in dev) is designed for the annual IRS TEOS data releases, which typically arrive as dozens of ZIP archives each containing thousands of XML filings. The source argument is either a **local directory** of `.zip` files or an **`http(s)://` URL** (see [Ingesting from a URL](#ingesting-from-a-url) below).
 
-Flags: `--workers N` (parallel parser processes, default = CPU count) and `--profile` (print a wall-clock timer plus a per-phase breakdown — read / insert / resolve / commit / checkpoint / worker-wait — and per-ZIP `read ms/file`, for diagnosing throughput). URL sources add `--force`, `--keep-downloads`, `--cache-dir DIR`, and `--list` (all described below). `--background` runs the ingest detached (see [Running in the background](#running-ingest-in-the-background)); `--ingested`, `--forget`, and `--purge` manage already-ingested archives (see [Managing ingested archives](#managing-ingested-archives)).
+Flags: `--workers N` (parallel parser processes, default = CPU count) and `--profile` (print a wall-clock timer plus a per-phase breakdown — read / insert / resolve / commit / checkpoint / worker-wait — and per-ZIP `read ms/file`, for diagnosing throughput). URL sources add `--force`, `--keep-downloads`, `--cache-dir DIR`, and `--list` (all described below). `--background` runs the ingest detached (see [Running in the background](#running-ingest-in-the-background)); `--schedule` delays it until a set time (see [Scheduling an ingest](#scheduling-an-ingest)); `--restart-server` stops and restarts the API server around the run (see [Restarting the server around an ingest](#restarting-the-server-around-an-ingest)); `--ingested`, `--forget`, and `--purge` manage already-ingested archives (see [Managing ingested archives](#managing-ingested-archives)).
+
+### Ingest flow
+
+```mermaid
+flowchart TD
+  start([openreturn ingest …]) --> mgmt{management flag?}
+  mgmt -->|--stop / --ingested / --forget / --purge| manage[run management action] --> done([exit])
+  mgmt -->|source given| bg{--background?}
+  bg -->|yes| daemon[double-fork daemon<br/>write ingest.pid + log] --> run
+  bg -->|no| run[run ingest]
+  run --> sched{--schedule?}
+  sched -->|yes| wait[wait until time<br/>--stop cancels] --> rs
+  sched -->|no| rs
+  rs{--restart-server?}
+  rs -->|yes| stopsrv[stop running server] --> src
+  rs -->|no| src
+  src{URL or directory?}
+  src -->|directory| dir[pre-scan all ZIPs]
+  src -->|URL| url[discover ZIP links<br/>skip already-ingested]
+  dir --> bulk[begin bulk-load<br/>drop indexes]
+  url --> bulk
+  bulk --> loop[per ZIP: parse → buffer → flush<br/>check cooperative stop]
+  loop --> finish[rebuild indexes + checkpoint WAL]
+  finish --> restart{restarted server?}
+  restart -->|yes| startsrv[relaunch server detached] --> done
+  restart -->|no| done
+```
 
 ### Ingesting from a URL
 
@@ -58,6 +85,36 @@ openreturn status                 # confirm it has exited
 ```
 
 Because the daemon writes `ingest.pid`/`ingest.log` in the current directory, run `--background`/`--stop` from the data directory (where `OpenReturn.db` lives). On a NixOS deployment that is `dataDir` (`/var/lib/openreturn`); see [Running ingest on a NixOS host](nixos.md#running-ingest-on-the-server) for a systemd-supervised alternative.
+
+### Scheduling an ingest
+
+`--schedule WHEN` delays the ingest until a chosen time — handy for running the annual IRS drop overnight. `WHEN` is one of:
+
+- a **relative delay** — `+30s`, `+15m`, `+2h`, `+1d`
+- a **clock time** — `02:00` or `02:00:30` (the next future occurrence; rolls to tomorrow if already past today)
+- an **absolute datetime** — `2026-07-01 02:00` (or `2026-07-01T02:00`, optional seconds)
+
+Pair it with `--background` so the waiting daemon doesn't hold your terminal:
+
+```bash
+openreturn ingest --background --schedule 02:00 \
+  https://www.irs.gov/charities-non-profits/form-990-series-downloads
+```
+
+`openreturn status` shows a scheduled background ingest as `waiting until <time>`, and `openreturn ingest --stop` cancels it during the wait (nothing is ingested). In the foreground, `--schedule` simply blocks until the time (Ctrl-C cancels). A bad `WHEN` is rejected immediately, before anything forks.
+
+### Restarting the server around an ingest
+
+Because ingest takes the database's exclusive lock, a running API server gets `database is locked` errors for the duration (see [Why ingest breaks the running server](#why-ingest-breaks-the-running-server)). `--restart-server` automates the stop/start dance for the **built-in** server: it stops the running server, ingests, then relaunches the server detached with the same host/port/auth/debug it was using.
+
+```bash
+openreturn ingest --restart-server /path/to/irs-zips/
+# Stopping server (PID 12345) for ingest…
+# … ingest …
+# Restarted server (PID 12350) on localhost:8080  → server.log
+```
+
+The server is single-instance (it records `server.pid`; a second `openreturn serve` is refused), which is what lets `--restart-server` find and manage it. This flag is for a **manually-run** server only — if the server is **systemd-managed** the flag detects that and leaves it alone (systemd would just restart it and fight the ingest); on NixOS use `systemctl stop openreturn` / `systemctl start openreturn` instead (see [Running ingest on a NixOS host](nixos.md#running-ingest-on-the-server)). `--restart-server` combines with `--schedule` and `--background`: the server is only stopped once the scheduled time arrives.
 
 ### Managing ingested archives
 
@@ -170,7 +227,7 @@ After all ZIPs are processed:
 2. Opens the in-memory ZIP and iterates over XML members
 3. For each XML: calls `_process_xml()` — parses with `IRS990Parser`, upserts the organization, creates the filing record, stores all field values, and returns a result dict
 4. Calls `db.commit()` once at the end
-5. Returns a summary `{stored, errors, results}`
+5. Returns a summary `{status: "complete", stored, errors, results}`
 
 **Key differences from the CLI:**
 
@@ -189,7 +246,7 @@ The upload endpoint commits everything in a single transaction. For a ZIP with t
 
 ## Why Ingest Breaks the Running Server
 
-Running `openreturn-ingest` while the API server is up will cause the server to return errors for the duration of the ingest run.
+Running `openreturn ingest` while the API server is up will cause the server to return errors for the duration of the ingest run.
 
 **Exclusive lock**
 
@@ -218,14 +275,14 @@ With `wal_autocheckpoint` raised to 16000 pages, the WAL file is not checkpointe
 ```bash
 # NixOS managed service
 systemctl stop openreturn
-openreturn-ingest /path/to/irs-zips/
+openreturn ingest /path/to/irs-zips/
 systemctl start openreturn
 
-# Dev / manual
-# Stop the server (Ctrl-C or kill)
-python3 src/ingest.py /path/to/irs-zips/
-python3 src/main.py   # restart
+# Dev / manual — let ingest stop and restart the built-in server for you
+openreturn ingest --restart-server /path/to/irs-zips/
 ```
+
+For a manually-run server, [`--restart-server`](#restarting-the-server-around-an-ingest) handles the stop/start automatically (it is skipped for a systemd-managed server, where `systemctl` is the right tool).
 
 **Use parallel mode for large datasets.** The default (`--workers` = CPU count) is significantly faster than `--workers 1` for large IRS drops because XML parsing is CPU-bound and fully parallelizes. The database write phase is single-process regardless of worker count, so doubling workers roughly doubles parse throughput up to the point where DB writes become the bottleneck.
 

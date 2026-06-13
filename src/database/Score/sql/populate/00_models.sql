@@ -1,4 +1,5 @@
-INSERT OR IGNORE INTO score_model (version, description) VALUES (1, 'Initial scoring model');
+INSERT OR IGNORE INTO score_model (version, description, model_type, scoring_mode)
+  VALUES (1, 'Initial scoring model', 'financial', 'computed');
 
 INSERT OR IGNORE INTO score_factor
   (model_id, name, weight, formula_type, inputs, direction, benchmark_lo, benchmark_hi, formula_description)

@@ -830,7 +830,7 @@ class TestCmdList(unittest.TestCase):
 
     def test_list_with_no_models_prints_message(self):
         mock_db = MagicMock()
-        mock_db.cursor.execute.return_value.fetchall.return_value = []
+        mock_db.list_models.return_value = []
         with patch('models.ScoreDatabase', return_value=mock_db), \
              patch('builtins.print') as mock_print:
             cmd_list(self._args())

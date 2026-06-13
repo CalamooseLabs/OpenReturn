@@ -56,6 +56,8 @@ python3 src/cli.py serve --auth           # require a valid API key on all route
 python3 src/cli.py serve --testing --zip-dir /path/to/zips
 ```
 
+The server is **single-instance** per data directory: on start it records a `server.pid` file, and a second `serve` is refused while one is running (a stale PID file from a crash is detected and cleared automatically). `SIGTERM` (and `systemctl stop`) shut it down cleanly and remove the PID file. `openreturn status` reports the running instance, and [`openreturn ingest --restart-server`](ingest.md#restarting-the-server-around-an-ingest) uses it to stop and restart the server around a bulk ingest.
+
 ## Ingesting Form 990 ZIPs
 
 The `openreturn ingest` subcommand processes IRS TEOS ZIP archives and loads all 990 XML filings into the database. The source is a **local directory** of `.zip` files or an **`http(s)://` URL** (a direct `.zip` link or the IRS Form 990 downloads page).
@@ -87,7 +89,7 @@ The ingest process:
 1. Opens each ZIP and lists `.xml` member files
 2. Parses each XML: extracts EIN, name, tax year, form code, and all recognized XPath field values
 3. Upserts organization, creates filing record, stores field values
-4. Skips unsupported form types (anything other than 990, 990EZ, 990PF, 990T)
+4. Skips unsupported form types (anything not marked supported in the `form` table — by default 990, 990EZ, 990N, 990PF, 990T)
 5. Deduplicates: if a filing for the same EIN + year already exists the ingested data lands under the existing UUID
 
 Progress is shown per-ZIP with a bar and counts of stored/skipped/errored files.

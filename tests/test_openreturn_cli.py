@@ -225,6 +225,19 @@ class TestCliDispatch(unittest.TestCase):
             self._run(['ingest', '--stop'])
         self.assertTrue(captured['stop'])
 
+    def test_ingest_schedule_and_restart_server_flags(self):
+        captured = {}
+
+        def fake_ingest(args):
+            captured['schedule'] = args.schedule
+            captured['restart_server'] = args.restart_server
+            return 0
+
+        with patch('ingest.cmd_ingest', fake_ingest), patch('cli._load_env'):
+            self._run(['ingest', '/data/zips', '--schedule', '02:00', '--restart-server'])
+        self.assertEqual(captured['schedule'], '02:00')
+        self.assertTrue(captured['restart_server'])
+
     def test_ingest_forget_and_purge_flags(self):
         captured = {}
 

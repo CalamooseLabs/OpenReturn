@@ -5,8 +5,35 @@ class ScoreDatabase(IRS990Database):
   def __init__(self, name="OpenReturn", path: str | None = None) -> None:
     super().__init__(name, path=path)
     self._run_dir("sql/setup", "Score")
+    self._migrate_model_columns()
     if not self._table_has_rows("score_model"):
       self._run_dir("sql/populate", "Score")
+
+  def _migrate_model_columns(self) -> None:
+    """Add the model-type / manual-scoring columns to databases created before
+    they existed (fresh DBs get them from sql/setup). Each ALTER is independent
+    and ignored if the column is already present."""
+    for ddl in (
+      "ALTER TABLE score_model ADD COLUMN model_type TEXT REFERENCES model_type (code)",
+      "ALTER TABLE score_model ADD COLUMN scoring_mode TEXT NOT NULL DEFAULT 'computed'",
+      "ALTER TABLE score_factor ADD COLUMN manual_scale TEXT",
+      "ALTER TABLE organization_score_factor ADD COLUMN comment TEXT",
+    ):
+      try:
+        self.cursor.execute(ddl)
+      except Exception as exc:
+        # Expected when the column already exists; re-raise anything else so a
+        # genuine migration failure isn't silently swallowed. (String match keeps
+        # this binding-agnostic across sqlite3 / sqlcipher3.)
+        if 'duplicate column' not in str(exc).lower():
+          raise
+    # Backfill pre-existing models as financial/computed (the only kind before).
+    try:
+      self.cursor.execute(
+        "UPDATE score_model SET model_type = 'financial' WHERE model_type IS NULL")
+    except Exception:
+      pass
+    self.connection.commit()
 
   def get_model_id(self, version: int = 1) -> int:
     row = self.cursor.execute(
@@ -20,7 +47,8 @@ class ScoreDatabase(IRS990Database):
     rows = self.cursor.execute(
       """
       SELECT sf.factor_id, sf.name, sf.weight, sf.formula_type, sf.inputs,
-             sf.direction, sf.benchmark_lo, sf.benchmark_hi, sf.formula_description
+             sf.direction, sf.benchmark_lo, sf.benchmark_hi, sf.formula_description,
+             sf.manual_scale
       FROM score_factor sf
       JOIN score_model sm ON sm.model_id = sf.model_id
       WHERE sm.version = ?
@@ -28,20 +56,81 @@ class ScoreDatabase(IRS990Database):
       """,
       (model_version,)
     ).fetchall()
-    return [
-      {
-        "factor_id":          r[0],
-        "name":               r[1],
-        "weight":             r[2],
-        "formula_type":       r[3],
-        "inputs":             r[4],
-        "direction":          r[5],
-        "benchmark_lo":       r[6],
-        "benchmark_hi":       r[7],
-        "formula_description":r[8],
-      }
-      for r in rows
-    ]
+    return [self._factor_row(r) for r in rows]
+
+  @staticmethod
+  def _factor_row(r) -> dict:
+    return {
+      "factor_id":          r[0],
+      "name":               r[1],
+      "weight":             r[2],
+      "formula_type":       r[3],
+      "inputs":             r[4],
+      "direction":          r[5],
+      "benchmark_lo":       r[6],
+      "benchmark_hi":       r[7],
+      "formula_description":r[8],
+      "manual_scale":       r[9],
+    }
+
+  def get_factor(self, factor_id: int) -> dict | None:
+    row = self.cursor.execute(
+      """
+      SELECT factor_id, name, weight, formula_type, inputs, direction,
+             benchmark_lo, benchmark_hi, formula_description, manual_scale
+      FROM score_factor WHERE factor_id = ?
+      """,
+      (factor_id,)
+    ).fetchone()
+    return self._factor_row(row) if row else None
+
+  def get_model(self, version: int = 1) -> dict | None:
+    """Model header — version, description, category type, and scoring mode."""
+    row = self.cursor.execute(
+      "SELECT version, description, model_type, scoring_mode, created_at "
+      "FROM score_model WHERE version = ?",
+      (version,)
+    ).fetchone()
+    if not row:
+      return None
+    return {"version": row[0], "description": row[1], "model_type": row[2],
+            "scoring_mode": row[3] or "computed", "created_at": row[4]}
+
+  def list_model_types(self) -> list[dict]:
+    rows = self.cursor.execute(
+      "SELECT code, name, description FROM model_type ORDER BY code"
+    ).fetchall()
+    return [{"code": r[0], "name": r[1], "description": r[2]} for r in rows]
+
+  def list_models(self) -> list[dict]:
+    rows = self.cursor.execute(
+      "SELECT version, description, model_type, scoring_mode, created_at "
+      "FROM score_model ORDER BY version"
+    ).fetchall()
+    return [{"version": r[0], "description": r[1], "model_type": r[2],
+             "scoring_mode": r[3] or "computed", "created_at": r[4]} for r in rows]
+
+  def grade_factor(self, score_id: int, factor_id: int, raw_value: float | None,
+                   weighted_value: float | None, comment: str | None = None) -> None:
+    """Upsert a single (manually graded) factor result — the grader's value, its
+    weighted contribution, and an optional comment/explanation."""
+    self.cursor.execute(
+      """
+      INSERT OR REPLACE INTO organization_score_factor
+        (score_id, factor_id, raw_value, weighted_value, comment)
+      VALUES (?, ?, ?, ?, ?)
+      """,
+      (score_id, factor_id, raw_value, weighted_value, comment)
+    )
+    self.connection.commit()
+
+  def sum_weighted(self, score_id: int) -> float:
+    row = self.cursor.execute(
+      "SELECT COALESCE(SUM(weighted_value), 0.0) FROM organization_score_factor "
+      "WHERE score_id = ?",
+      (score_id,)
+    ).fetchone()
+    return row[0] if row else 0.0
 
   def create_score(self, filing_id: str, model_version: int = 1) -> int:
     model_id = self.get_model_id(model_version)
@@ -116,6 +205,21 @@ class ScoreDatabase(IRS990Database):
       return None
     return self.get_score(row[0])
 
+  def get_score_id_for(self, ein: str, year: int, model_version: int) -> int | None:
+    """Most-recent score_id for an EIN + year under a specific model version."""
+    row = self.cursor.execute(
+      """
+      SELECT os.score_id
+      FROM organization_score os
+      JOIN filing f ON f.uuid = os.filing_id
+      JOIN score_model sm ON sm.model_id = os.model_id
+      WHERE f.organization_id = ? AND f.year = ? AND sm.version = ?
+      ORDER BY os.scored_at DESC LIMIT 1
+      """,
+      (ein, year, model_version)
+    ).fetchone()
+    return row[0] if row else None
+
   def get_score_by_ein_year(self, ein: str, year: int) -> dict | None:
     row = self.cursor.execute(
       """
@@ -188,7 +292,8 @@ class ScoreDatabase(IRS990Database):
   def get_score(self, score_id: int) -> dict | None:
     row = self.cursor.execute(
       """
-      SELECT os.score_id, f.organization_id, sm.version, f.uuid, f.year, os.total_score, os.scored_at
+      SELECT os.score_id, f.organization_id, sm.version, f.uuid, f.year,
+             os.total_score, os.scored_at, sm.model_type, sm.scoring_mode
       FROM organization_score os
       JOIN score_model sm ON sm.model_id = os.model_id
       JOIN filing f ON f.uuid = os.filing_id
@@ -200,7 +305,8 @@ class ScoreDatabase(IRS990Database):
       return None
     factors = self.cursor.execute(
       """
-      SELECT sf.name, sf.weight, osf.raw_value, osf.weighted_value
+      SELECT sf.name, sf.weight, osf.raw_value, osf.weighted_value, osf.comment,
+             sf.factor_id, sf.manual_scale
       FROM organization_score_factor osf
       JOIN score_factor sf ON sf.factor_id = osf.factor_id
       WHERE osf.score_id = ?
@@ -216,8 +322,11 @@ class ScoreDatabase(IRS990Database):
       "year": row[4],
       "total_score": row[5],
       "scored_at": row[6],
+      "model_type": row[7],
+      "scoring_mode": row[8] or "computed",
       "factors": [
-        {"name": f[0], "weight": f[1], "raw_value": f[2], "weighted_value": f[3]}
+        {"factor_id": f[5], "name": f[0], "weight": f[1], "raw_value": f[2],
+         "weighted_value": f[3], "comment": f[4], "manual_scale": f[6]}
         for f in factors
       ],
     }

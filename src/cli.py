@@ -69,6 +69,10 @@ def main() -> int:
                           help='Log file for --background (default: ingest.log in the working directory)')
     ingest_p.add_argument('--stop', action='store_true',
                           help='Stop a running background ingest (finishes the current archive first), then exit')
+    ingest_p.add_argument('--schedule', metavar='WHEN', default=None,
+                          help='Delay the ingest until WHEN (+30m / HH:MM / YYYY-MM-DD HH:MM); pair with --background')
+    ingest_p.add_argument('--restart-server', dest='restart_server', action='store_true',
+                          help='Stop the running server before ingesting and restart it afterward (not for systemd)')
     ingest_p.add_argument('--ingested', action='store_true',
                           help='List archives recorded as already ingested, then exit')
     ingest_p.add_argument('--forget', metavar='PATTERN', default=None,
@@ -82,6 +86,12 @@ def main() -> int:
                           help='Delete ALL stored filings, reported values, and scores, then exit')
     ingest_p.add_argument('--yes', '-y', action='store_true',
                           help='Skip the confirmation prompt for --purge / --purge-all')
+
+    # ── openapi ──────────────────────────────────────────────────────────────
+    openapi_p = sub.add_parser('openapi', help='Print the OpenAPI 3.1 spec (also served at /openapi.json)')
+    openapi_p.add_argument('--output', '-o', default=None, help='Write to a file instead of stdout')
+    openapi_p.add_argument('--base-url', dest='base_url', default=None, help='servers[0].url in the spec')
+    openapi_p.add_argument('--compact', action='store_true', help='Minified JSON')
 
     # ── status ─────────────────────────────────────────────────────────────────
     status_p = sub.add_parser('status', help='Show database size, row counts, server and background-ingest status')
@@ -143,6 +153,10 @@ def main() -> int:
     if args.command == 'ingest':
         from ingest import cmd_ingest
         return cmd_ingest(args)
+
+    if args.command == 'openapi':
+        from openapi import cmd_openapi
+        return cmd_openapi(args)
 
     if args.command == 'status':
         from status import cmd_status

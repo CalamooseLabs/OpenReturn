@@ -158,6 +158,7 @@ def gather(args) -> dict:
             "host": args.host, "port": args.port,
             "listening": _probe_server(args.host, args.port),
             "systemd": _systemd_state(),
+            "managed": daemon.running_daemon(daemon.SERVER_PIDFILE),
         },
         "background_ingest": daemon.running_daemon(),
     }
@@ -217,6 +218,10 @@ def _print_human(rep: dict) -> None:
     srv = rep["server"]
     state = f"{_GRN}listening{_R}" if srv["listening"] else f"{_DIM}not responding{_R}"
     print(f"\n{_B}Server{_R}  {_CYN}http://{srv['host']}:{srv['port']}{_R}  {state}")
+    managed = srv.get("managed")
+    if managed:
+        print(f"  {'instance':<14}{_GRN}PID {managed.get('pid')}{_R}  "
+              f"{_DIM}since {managed.get('started_at', '?')}{_R}")
     if srv["systemd"]:
         sc = _GRN if srv["systemd"] == "active" else _YLW
         print(f"  {'systemd':<14}openreturn.service: {sc}{srv['systemd']}{_R}")
@@ -227,6 +232,8 @@ def _print_human(rep: dict) -> None:
         print(f"  {_GRN}running{_R}  PID {bg.get('pid')}  "
               f"{_DIM}since {bg.get('started_at', '?')}{_R}")
         print(f"  {'source':<14}{_CYN}{bg.get('source', '?')}{_R}")
+        if bg.get("scheduled_for"):
+            print(f"  {'scheduled':<14}{_YLW}waiting until {bg['scheduled_for']}{_R}")
         print(f"  {'log':<14}{bg.get('log', daemon.DEFAULT_LOG)}")
         print(f"  {_DIM}stop with: openreturn ingest --stop{_R}")
     else:

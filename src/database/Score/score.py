@@ -131,6 +131,60 @@ class ScoreDatabase(IRS990Database):
       return None
     return self.get_score(row[0])
 
+  # ── ingest data management (purge) ──────────────────────────────────────
+  # These delete stored filing data and live here (rather than on a filing
+  # mixin) because removing a filing must also remove its scores:
+  # organization_score.filing_id references filing.uuid with NO ON DELETE
+  # CASCADE, so the scores are deleted first; reported_data DOES cascade off
+  # filing.filing_id, so it goes automatically when the filing rows are deleted.
+
+  _PURGE_WHERE = "zip_filename IS NOT NULL AND zip_filename LIKE ? ESCAPE '\\'"
+
+  @staticmethod
+  def _purge_like(pattern: str) -> str:
+    from database.base import escape_like
+    return f"%{escape_like(pattern)}%"
+
+  def find_zip_filenames(self, pattern: str) -> list[tuple[str, int]]:
+    """(zip_filename, filing_count) for archives whose ``zip_filename`` contains
+    ``pattern`` (case-insensitive). Used to preview a purge before deleting."""
+    rows = self.cursor.execute(
+      f"SELECT zip_filename, COUNT(*) FROM filing WHERE {self._PURGE_WHERE} "
+      "GROUP BY zip_filename ORDER BY zip_filename",
+      (self._purge_like(pattern),),
+    ).fetchall()
+    return [(r[0], r[1]) for r in rows]
+
+  def _purge_counts(self, where: str, params: tuple) -> dict:
+    f = self.cursor.execute(
+      f"SELECT COUNT(*) FROM filing WHERE {where}", params).fetchone()[0]
+    v = self.cursor.execute(
+      f"SELECT COUNT(*) FROM reported_data WHERE filing_id IN "
+      f"(SELECT filing_id FROM filing WHERE {where})", params).fetchone()[0]
+    s = self.cursor.execute(
+      f"SELECT COUNT(*) FROM organization_score WHERE filing_id IN "
+      f"(SELECT uuid FROM filing WHERE {where})", params).fetchone()[0]
+    return {"filings": f, "values": v, "scores": s}
+
+  def _purge(self, where: str, params: tuple) -> dict:
+    counts = self._purge_counts(where, params)
+    self.cursor.execute(
+      f"DELETE FROM organization_score WHERE filing_id IN "
+      f"(SELECT uuid FROM filing WHERE {where})", params)
+    self.cursor.execute(f"DELETE FROM filing WHERE {where}", params)  # reported_data cascades
+    self.connection.commit()
+    return counts
+
+  def delete_filings_by_zip(self, pattern: str) -> dict:
+    """Delete every filing whose ``zip_filename`` matches ``pattern`` (substring),
+    plus its reported_data (cascade) and scores. Returns counts removed."""
+    return self._purge(self._PURGE_WHERE, (self._purge_like(pattern),))
+
+  def delete_all_filings(self) -> dict:
+    """Delete all filings, reported_data, and scores (schema, seed/reference
+    data, API keys, and organizations are kept). Returns counts removed."""
+    return self._purge("1=1", ())
+
   def get_score(self, score_id: int) -> dict | None:
     row = self.cursor.execute(
       """

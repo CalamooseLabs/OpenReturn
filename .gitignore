@@ -8,6 +8,8 @@ resources
 dist
 build
 result
+ingest.log
+ingest.pid
 GIT_COMMIT_MSG
 CLAUDE.md
 .coverage

@@ -209,14 +209,52 @@ systemctl start openreturn
 
 Deploying a new version via `nixos-rebuild switch` automatically restarts the service.
 
+## Running ingest on the server
+
+A bulk ingest takes the database's exclusive lock for its whole run, so the API server should be stopped first (see [Running Ingest Safely](ingest.md#running-ingest-safely)). Because an ingest can run for hours, you want it detached from your SSH session. There are two ways:
+
+**Built-in background mode** — works the same on the server as in development:
+
+```bash
+cd /var/lib/openreturn                 # the dataDir; ingest.pid/ingest.log land here
+sudo systemctl stop openreturn
+sudo -u openreturn openreturn ingest --background \
+  https://www.irs.gov/charities-non-profits/form-990-series-downloads
+sudo -u openreturn openreturn status   # watch progress
+# tail -f /var/lib/openreturn/ingest.log
+sudo -u openreturn openreturn ingest --stop   # cooperative stop when needed
+sudo systemctl start openreturn
+```
+
+Run it as the service user so the log/PID files and any database writes have the right ownership. If the database is encrypted, that shell needs the key too — export `DB_SECRET_KEY_FILE=<path>` (the same file `database.secretKeyFile` points at) before invoking.
+
+**Transient systemd unit** — supervised by systemd, with output in the journal:
+
+```bash
+sudo systemctl stop openreturn
+sudo systemd-run --unit=openreturn-ingest \
+  --uid=openreturn --gid=openreturn \
+  --working-directory=/var/lib/openreturn \
+  --setenv=DB_SECRET_KEY_FILE=/run/secrets/openreturn-db-key \
+  /run/current-system/sw/bin/openreturn ingest \
+  https://www.irs.gov/charities-non-profits/form-990-series-downloads
+
+journalctl -u openreturn-ingest -f      # follow output
+systemctl stop openreturn-ingest        # SIGTERM → cooperative stop (finishes current archive, then finalizes)
+sudo systemctl start openreturn
+```
+
+Drop the `--setenv=DB_SECRET_KEY_FILE=…` line if the database is unencrypted. `systemctl stop` sends `SIGTERM`, which triggers the same cooperative stop as `openreturn ingest --stop`.
+
 ## Managing Keys on a NixOS Host
 
-The `openreturn keys` and `openreturn models` subcommands expect to run from the directory where `OpenReturn.db` lives (`dataDir`, default `/var/lib/openreturn`):
+The `openreturn keys`, `openreturn models`, `openreturn status`, and `openreturn reset` subcommands expect to run from the directory where `OpenReturn.db` lives (`dataDir`, default `/var/lib/openreturn`):
 
 ```bash
 cd /var/lib/openreturn
 openreturn keys create "Dashboard"
 openreturn models register /path/to/model_v1.toml
+openreturn status                       # DB size, row counts, server + ingest state
 ```
 
 See [API Keys](api-keys.md) and [Scoring Models](scoring/models.md) for full CLI reference.

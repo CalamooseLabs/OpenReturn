@@ -334,5 +334,73 @@ class TestCliDispatchMigrate(unittest.TestCase):
         self.assertEqual(args.db, '/tmp/test.db')
 
 
+# ---------------------------------------------------------------------------
+# cmd_reset
+# ---------------------------------------------------------------------------
+
+class TestCmdReset(unittest.TestCase):
+
+    def setUp(self):
+        self.td = tempfile.mkdtemp()
+        self.path = os.path.join(self.td, 'OpenReturn.db')
+        # main + WAL + SHM sidecars
+        for suffix in ('', '-wal', '-shm'):
+            Path(self.path + suffix).write_bytes(b'x' * 16)
+
+    def _args(self, yes=False):
+        return _make_args(db=self.path, yes=yes)
+
+    def _run(self, args, stdin=None):
+        buf = io.StringIO()
+        ctx = patch('builtins.input', return_value=stdin) if stdin is not None else contextlib.nullcontext()
+        with patch('daemon.running_daemon', return_value=None), \
+             contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf), ctx:
+            rc = db_mod.cmd_reset(args)
+        return rc, buf.getvalue()
+
+    def test_yes_deletes_all_files(self):
+        rc, _ = self._run(self._args(yes=True))
+        self.assertEqual(rc, 0)
+        for suffix in ('', '-wal', '-shm'):
+            self.assertFalse(Path(self.path + suffix).exists())
+
+    def test_confirm_by_typing_name_deletes(self):
+        rc, _ = self._run(self._args(), stdin='OpenReturn.db')
+        self.assertEqual(rc, 0)
+        self.assertFalse(Path(self.path).exists())
+
+    def test_wrong_input_aborts(self):
+        rc, out = self._run(self._args(), stdin='nope')
+        self.assertEqual(rc, 1)
+        self.assertIn("Aborted", out)
+        self.assertTrue(Path(self.path).exists())
+
+    def test_nothing_to_delete(self):
+        for suffix in ('', '-wal', '-shm'):
+            Path(self.path + suffix).unlink()
+        rc, out = self._run(self._args(yes=True))
+        self.assertEqual(rc, 0)
+        self.assertIn("Nothing to delete", out)
+
+    def test_refuses_while_background_ingest_running(self):
+        buf = io.StringIO()
+        with patch('daemon.running_daemon', return_value={"pid": 4321}), \
+             contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = db_mod.cmd_reset(self._args())
+        self.assertEqual(rc, 1)
+        self.assertIn("background ingest", buf.getvalue().lower())
+        self.assertTrue(Path(self.path).exists())
+
+    def test_yes_does_not_override_running_ingest(self):
+        # The running-ingest guard is a safety barrier, not a confirmation
+        # prompt — --yes must NOT bypass it.
+        buf = io.StringIO()
+        with patch('daemon.running_daemon', return_value={"pid": 4321}), \
+             contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = db_mod.cmd_reset(self._args(yes=True))
+        self.assertEqual(rc, 1)
+        self.assertTrue(Path(self.path).exists())
+
+
 if __name__ == '__main__':  # pragma: no cover
     unittest.main()

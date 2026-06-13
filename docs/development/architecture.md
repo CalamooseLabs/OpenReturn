@@ -14,8 +14,10 @@ src/
   scoring/       → ScoringEngine
   unzipper/      → Unzipper (ZIP file iterator)
   sources.py     → URL detection, ZIP-link discovery, downloads (for URL ingest)
-  db.py          → Database init/migrate CLI commands
-  ingest.py      → Bulk ZIP ingestion CLI (local directory or URL)
+  db.py          → Database init/migrate/reset CLI commands
+  ingest.py      → Bulk ZIP ingestion CLI + ingested-archive management (forget/purge) + background run
+  daemon.py      → Double-fork background runner, PID file, cooperative-stop flag (used by ingest --background/--stop)
+  status.py      → `openreturn status` snapshot (DB size, counts, encryption, migrations, server + ingest probe)
   models.py      → Scoring model registration CLI
   keys.py        → API key management CLI
   main.py        → Server entry point
@@ -203,9 +205,13 @@ All commands are dispatched through `src/cli.py` (the unified `openreturn` binar
 |------------|----------------|---------|
 | `openreturn init` | `src/db.py` → `cmd_init` | Initialize database schema and seed data |
 | `openreturn migrate` | `src/db.py` → `cmd_migrate` | Apply pending schema migrations |
+| `openreturn reset` | `src/db.py` → `cmd_reset` | Delete the DB files (main + WAL + SHM) after confirmation |
 | `openreturn serve` | `src/main.py` → `cmd_serve` | Start the API server |
-| `openreturn ingest` | `src/ingest.py` → `cmd_ingest` | Bulk-ingest ZIP archives |
+| `openreturn ingest` | `src/ingest.py` → `cmd_ingest` | Bulk-ingest ZIP archives; also `--background`/`--stop` and `--ingested`/`--forget`/`--purge` management |
+| `openreturn status` | `src/status.py` → `cmd_status` | DB size, row counts, encryption, migrations, server + background-ingest probe |
 | `openreturn keys` | `src/keys.py` | Manage API keys |
 | `openreturn models` | `src/models.py` | Register and list scoring models |
 
-`cmd_init` opens the database (triggering the `sql/populate/` files on first run via `populate_guard="form"`), prints form/field counts, and closes. `cmd_migrate` discovers `.sql` files in `src/database/IRS990/sql/migrations/`, compares against the `migration` tracking table, and applies anything pending in filename order.
+`cmd_init` opens the database (triggering the `sql/populate/` files on first run via `populate_guard="form"`), prints form/field counts, and closes. `cmd_migrate` discovers `.sql` files in `src/database/IRS990/sql/migrations/`, compares against the `migration` tracking table, and applies anything pending in filename order. `cmd_reset` deletes the DB files after a typed confirmation, refusing while a background ingest holds the database open.
+
+`cmd_ingest` also fronts ingested-archive management: `--ingested` lists the `ingested_zip` table; `--forget PATTERN`/`--forget-all` remove tracking records only (re-ingestable); `--purge PATTERN`/`--purge-all` delete stored filing data (filings → `reported_data` cascade, plus scores deleted first since `organization_score` has no cascade). `--background` double-forks via `src/daemon.py` (PID file + log file), and `--stop` sets a cooperative stop flag (SIGTERM) so the ingest loop breaks at an archive boundary and still runs the normal index-rebuild/checkpoint finalize. `status.py` opens the DB with a raw read connection (never running setup/populate), so it reports a clean snapshot even when an ingest holds the exclusive lock (shown as *locked*).

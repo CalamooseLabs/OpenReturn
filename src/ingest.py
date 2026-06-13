@@ -4,6 +4,7 @@
 import argparse
 import os
 import shutil
+import signal
 import sys
 import tempfile
 import time
@@ -11,8 +12,10 @@ import uuid
 import zipfile
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from datetime import datetime
 from pathlib import Path
 
+import daemon
 import sources
 from console import _B, _R, _DIM, _CYN, _GRN, _RED, _YLW, _CLR
 from database.Score import ScoreDatabase
@@ -403,10 +406,239 @@ def _process_zip(db, router, pool, ctx, zip_idx, zip_path, xml_names) -> dict:
     return _process_zip_par(db, pool, ctx, zip_idx, zip_path, xml_names)
 
 
+def _stop_now(ctx: _Ctx) -> bool:
+    """Cooperative stop check, consulted at each archive boundary. When a
+    background ingest is signalled (SIGTERM → ``daemon.request_stop``) the loop
+    breaks and falls through to ``_finish_run`` (index rebuild + checkpoint), so
+    the database is left consistent rather than killed mid-write."""
+    if daemon.stop_requested():
+        print(f"\n{_YLW}Stop requested — halting after {ctx.done} filing(s); finalizing.{_R}")
+        return True
+    return False
+
+
 def cmd_ingest(args) -> int:
+    # Management actions operate on an existing DB and never ingest a source.
+    if getattr(args, 'stop', False):
+        return _cmd_stop_background(args)
+    if getattr(args, 'ingested', False):
+        return _cmd_list_ingested(args)
+    if (getattr(args, 'forget', None) or getattr(args, 'forget_all', False)
+            or getattr(args, 'purge', None) or getattr(args, 'purge_all', False)):
+        return _cmd_manage_ingested(args)
+
+    if not args.directory:
+        print("ingest: a source directory or URL is required "
+              "(or use --ingested / --forget / --purge / --stop)", file=sys.stderr)
+        return 2
+
+    if getattr(args, 'background', False):
+        return _cmd_ingest_background(args)
+
     if sources.is_url(args.directory):
         return _cmd_ingest_url(args, args.directory)
     return _cmd_ingest_dir(args, args.directory)
+
+
+# ── Background run / stop ────────────────────────────────────────────────────
+
+def _cmd_ingest_background(args) -> int:
+    pidfile = daemon.DEFAULT_PIDFILE
+    running = daemon.running_daemon(pidfile)
+    if running:
+        print(f"{_RED}A background ingest is already running (PID {running.get('pid')}).{_R}\n"
+              f"  Stop it first: {_CYN}openreturn ingest --stop{_R}", file=sys.stderr)
+        return 1
+
+    source = args.directory
+    if not sources.is_url(source) and not Path(source).is_dir():
+        print(f"Not a directory: {source}", file=sys.stderr)
+        return 1
+
+    log_path = getattr(args, 'log', None) or daemon.DEFAULT_LOG
+    # Validate the log is writable BEFORE forking — a daemon that can't open its
+    # log dies immediately, and the parent would otherwise report a phantom
+    # success with a stale PID.
+    try:
+        with open(log_path, 'a'):
+            pass
+    except OSError as exc:
+        print(f"Cannot write log file {log_path}: {exc}", file=sys.stderr)
+        return 1
+
+    # Atomic guard against two --background starts racing past the check above.
+    lock = daemon.acquire_spawn_lock(pidfile)
+    if lock is None:
+        print(f"{_RED}Another background ingest is already starting.{_R}", file=sys.stderr)
+        return 1
+
+    meta = {
+        "source": source,
+        "log": str(Path(log_path).resolve()),
+        "workers": args.workers,
+        "started_at": datetime.now().isoformat(timespec='seconds'),
+    }
+
+    def run() -> int:
+        print(f"\n{'=' * 52}\n{meta['started_at']}  ingest {source}\n{'=' * 52}", flush=True)
+        if sources.is_url(source):
+            return _cmd_ingest_url(args, source)
+        return _cmd_ingest_dir(args, source)
+
+    try:
+        pid = daemon.spawn_background(run, log_path, pidfile, meta)
+    finally:
+        daemon.release_spawn_lock(lock)
+
+    if pid <= 0:
+        print(f"{_RED}Background ingest failed to start — see {log_path}.{_R}", file=sys.stderr)
+        return 1
+
+    print(f"\n{_B}{_GRN}Background ingest started{_R}")
+    print(f"  {'PID':<8}{_CYN}{pid}{_R}")
+    print(f"  {'Source':<8}{source}")
+    print(f"  {'Log':<8}{log_path}")
+    print(f"  {_DIM}tail -f {log_path}         # watch output{_R}")
+    print(f"  {_DIM}openreturn status         # check progress{_R}")
+    print(f"  {_DIM}openreturn ingest --stop  # stop it{_R}\n")
+    return 0
+
+
+def _cmd_stop_background(args) -> int:
+    pidfile = daemon.DEFAULT_PIDFILE
+    info = daemon.running_daemon(pidfile)
+    if not info:
+        print("No background ingest is running.")
+        return 0
+    pid = info['pid']
+    print(f"{_YLW}Stopping background ingest (PID {pid}){_R} — it will finish the current "
+          f"archive and rebuild indexes before exiting.")
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        daemon.remove_pidfile(pidfile)
+        print("Process already gone.")
+        return 0
+    # Poll briefly for a fast exit (e.g. stopped between small archives).
+    for _ in range(20):
+        time.sleep(0.1)
+        if not daemon.pid_alive(pid):
+            print(f"{_GRN}Stopped.{_R}")
+            return 0
+    print(f"{_DIM}Still finishing up — watch: tail -f {info.get('log', daemon.DEFAULT_LOG)}{_R}")
+    return 0
+
+
+# ── Ingested-archive management (list / forget / purge) ──────────────────────
+
+def _require_db() -> ScoreDatabase | None:
+    """Open the existing DB for a management command. Returns None (after an
+    error) if it doesn't exist (don't create an empty DB as a side effect) or if
+    a background ingest is running — opening a second connection would block on
+    its exclusive lock, and a purge/forget mid-ingest risks an inconsistent DB."""
+    if not Path('OpenReturn.db').exists():
+        print("OpenReturn.db not found — run this from the directory containing the database.",
+              file=sys.stderr)
+        return None
+    running = daemon.running_daemon()
+    if running:
+        print(f"A background ingest is running (PID {running.get('pid')}). "
+              f"Stop it first: openreturn ingest --stop", file=sys.stderr)
+        return None
+    return ScoreDatabase()
+
+
+def _cmd_list_ingested(args) -> int:
+    db = _require_db()
+    if db is None:
+        return 1
+    zips = db.list_ingested_zips()
+    db.close()
+    if not zips:
+        print("No ingested archives recorded.")
+        return 0
+    fn_w = min(max((len(z['filename'] or '') for z in zips), default=8), 40)
+    fn_w = max(fn_w, 8)
+    print(f"\n{_B}Ingested archives{_R}  {_DIM}({len(zips)}){_R}")
+    print(f"  {'filename':<{fn_w}}  {'filings':>8}  {'ingested_at':<19}  source")
+    for z in zips:
+        fn = _trunc(z['filename'] or '', fn_w)
+        print(f"  {fn:<{fn_w}}  {z['filings_stored']:>8}  "
+              f"{(z['ingested_at'] or ''):<19}  {_DIM}{z['source']}{_R}")
+    print()
+    return 0
+
+
+def _cmd_manage_ingested(args) -> int:
+    db = _require_db()
+    if db is None:
+        return 1
+    try:
+        if getattr(args, 'purge_all', False):
+            return _do_purge(db, args, pattern=None)
+        if getattr(args, 'purge', None):
+            return _do_purge(db, args, pattern=args.purge)
+        if getattr(args, 'forget_all', False):
+            n = db.forget_all_ingested_zips()
+            print(f"{_GRN}Forgot {n} ingested-archive record(s).{_R} "
+                  f"{_DIM}Filing data is unchanged; they re-ingest on the next URL run.{_R}")
+            return 0
+        matches = db.find_ingested_zips(args.forget)
+        if not matches:
+            print(f"No ingested archives match {_CYN}{args.forget}{_R}.")
+            return 0
+        print(f"\n{_B}Forgetting {len(matches)} record(s){_R}  {_DIM}(filing data unchanged){_R}")
+        for m in matches:
+            print(f"  {m['filename']}  {_DIM}{m['source']}{_R}")
+        n = db.forget_ingested_zips([m['source'] for m in matches])
+        print(f"{_GRN}Forgot {n} record(s).{_R}")
+        return 0
+    finally:
+        db.close()
+
+
+def _do_purge(db, args, pattern: str | None) -> int:
+    if pattern is None:
+        total = db.cursor.execute("SELECT COUNT(*) FROM filing").fetchone()[0]
+        if total == 0:
+            print("No filings to purge.")
+            return 0
+        print(f"\n{_B}{_RED}Purge ALL ingested data{_R}  {_DIM}({total:,} filings){_R}")
+        print(f"  {_DIM}Deletes every filing, reported value, and score. Schema, reference "
+              f"data, API keys, models, and organizations are kept.{_R}")
+    else:
+        archives = db.find_zip_filenames(pattern)
+        tracking = db.find_ingested_zips(pattern)
+        if not archives and not tracking:
+            print(f"Nothing matches {_CYN}{pattern}{_R}.")
+            return 0
+        print(f"\n{_B}{_RED}Purge data for archives matching{_R} {_CYN}{pattern}{_R}")
+        for name, count in archives:
+            print(f"  {name}  {_DIM}{count:,} filings{_R}")
+        if tracking:
+            print(f"  {_DIM}+ {len(tracking)} ingested-archive record(s) forgotten{_R}")
+        if not archives:
+            print(f"  {_DIM}(no stored filings carry that zip filename — only the tracking "
+                  f"record(s) will be removed){_R}")
+
+    if not getattr(args, 'yes', False):
+        resp = input(f"\nType {_CYN}yes{_R} to permanently delete: ")
+        if resp.strip().lower() != 'yes':
+            print(f"{_YLW}Aborted — nothing deleted.{_R}")
+            return 1
+
+    if pattern is None:
+        result = db.delete_all_filings()
+        db.forget_all_ingested_zips()
+    else:
+        result = db.delete_filings_by_zip(pattern)
+        # Forget exactly the records previewed above (reuse `tracking`) rather
+        # than re-querying — keeps what's acted on identical to what was shown.
+        db.forget_ingested_zips([m['source'] for m in tracking])
+
+    print(f"{_GRN}Deleted {result['filings']:,} filing(s), {result['values']:,} "
+          f"reported value(s), {result['scores']:,} score(s).{_R}")
+    return 0
 
 
 def _cmd_ingest_dir(args, dir_str: str) -> int:
@@ -453,6 +685,8 @@ def _cmd_ingest_dir(args, dir_str: str) -> int:
 
     if args.workers == 1:
         for zip_idx, (zip_path, xml_names) in enumerate(manifest, 1):
+            if _stop_now(ctx):
+                break
             _process_zip(db, router, None, ctx, zip_idx, zip_path, xml_names)
     else:
         ctx.next_filing_id = _seed_filing_id(db)
@@ -463,6 +697,8 @@ def _cmd_ingest_dir(args, dir_str: str) -> int:
             initargs=(router.xpath_index, router.supported_forms),
         ) as pool:
             for zip_idx, (zip_path, xml_names) in enumerate(manifest, 1):
+                if _stop_now(ctx):
+                    break
                 _process_zip(db, router, pool, ctx, zip_idx, zip_path, xml_names)
 
     t_process = time.monotonic()
@@ -526,6 +762,8 @@ def _cmd_ingest_url(args, source: str) -> int:
     t_start = time.monotonic()
     if args.workers == 1:
         for idx, url in enumerate(todo, 1):
+            if _stop_now(ctx):
+                break
             _ingest_one_remote(db, router, None, ctx, idx, url, cache_dir, keep)
     else:
         ctx.next_filing_id = _seed_filing_id(db)
@@ -536,6 +774,8 @@ def _cmd_ingest_url(args, source: str) -> int:
             initargs=(router.xpath_index, router.supported_forms),
         ) as pool:
             for idx, url in enumerate(todo, 1):
+                if _stop_now(ctx):
+                    break
                 _ingest_one_remote(db, router, pool, ctx, idx, url, cache_dir, keep)
 
     t_process = time.monotonic()
@@ -591,9 +831,10 @@ def _add_ingest_arguments(ap) -> None:
     declares the same flags inline (to avoid importing this module at parse
     time), so keep the two in sync."""
     ap.add_argument(
-        'directory',
+        'directory', nargs='?', default=None,
         help='Path to a directory of .zip files, or an http(s):// URL to a ZIP '
-             'or to the IRS Form 990 series downloads page',
+             'or to the IRS Form 990 series downloads page. Optional when using '
+             'a management flag (--ingested / --forget / --purge / --stop).',
     )
     ap.add_argument(
         '--workers', type=int, default=os.cpu_count() or 4,
@@ -618,6 +859,46 @@ def _add_ingest_arguments(ap) -> None:
     ap.add_argument(
         '--list', dest='list_sources', action='store_true',
         help='(URL sources) list discovered ZIP URLs and whether each is already ingested, then exit',
+    )
+    # Background run / stop
+    ap.add_argument(
+        '--background', '-b', action='store_true',
+        help='Run the ingest detached in the background (logs to a file; survives logout)',
+    )
+    ap.add_argument(
+        '--log', default=None,
+        help='Log file for --background (default: ingest.log in the working directory)',
+    )
+    ap.add_argument(
+        '--stop', action='store_true',
+        help='Stop a running background ingest (finishes the current archive first), then exit',
+    )
+    # Ingested-archive management
+    ap.add_argument(
+        '--ingested', action='store_true',
+        help='List archives recorded as already ingested, then exit',
+    )
+    ap.add_argument(
+        '--forget', metavar='PATTERN', default=None,
+        help='Forget ingested-archive records whose source/filename matches PATTERN '
+             '(re-ingestable; stored filing data is kept), then exit',
+    )
+    ap.add_argument(
+        '--forget-all', dest='forget_all', action='store_true',
+        help='Forget every ingested-archive record (stored filing data is kept), then exit',
+    )
+    ap.add_argument(
+        '--purge', metavar='PATTERN', default=None,
+        help='Delete stored filings whose zip filename matches PATTERN, plus their '
+             'reported values and scores (and forget matching records), then exit',
+    )
+    ap.add_argument(
+        '--purge-all', dest='purge_all', action='store_true',
+        help='Delete ALL stored filings, reported values, and scores, then exit',
+    )
+    ap.add_argument(
+        '--yes', '-y', action='store_true',
+        help='Skip the confirmation prompt for --purge / --purge-all',
     )
 
 

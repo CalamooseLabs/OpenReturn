@@ -92,6 +92,36 @@ The ingest process:
 
 Progress is shown per-ZIP with a bar and counts of stored/skipped/errored files.
 
+## Checking Status
+
+`openreturn status` prints a one-shot health snapshot — database file size (main + WAL + SHM), row counts, encryption state, migration status, a liveness probe of the API server, and any running background ingest:
+
+```bash
+python3 src/cli.py status
+python3 src/cli.py status --host 0.0.0.0 --port 9000   # probe a non-default bind
+python3 src/cli.py status --json                       # machine-readable output
+python3 src/cli.py status --db /var/lib/openreturn/OpenReturn.db
+```
+
+It opens the database read-only — it never creates or migrates it — and degrades gracefully: a database currently held by a running ingest (which takes an exclusive lock) is reported as *locked* rather than erroring.
+
+## Resetting the Database
+
+`openreturn reset` deletes the database files (`OpenReturn.db` plus its `-wal`/`-shm` sidecars) so a later `init`/`serve` starts from a clean slate. It prints what will be deleted and requires you to type the database filename to confirm:
+
+```bash
+python3 src/cli.py reset
+# This will permanently delete:
+#   OpenReturn.db  (2,195,456 bytes)
+#   ...
+# Type OpenReturn.db to confirm:
+
+python3 src/cli.py reset --yes        # skip the prompt (scripts/CI)
+python3 src/cli.py reset --db /var/lib/openreturn/OpenReturn.db
+```
+
+It refuses to run while a background ingest is active (that process holds the database open mid bulk-load) — stop it first with `openreturn ingest --stop`. This guard is **not** bypassable by `--yes`, which only skips the typed prompt. To delete only ingested **data** while keeping the schema, API keys, and models, use [`openreturn ingest --purge-all`](ingest.md#managing-ingested-archives) instead.
+
 ## Database Encryption (optional)
 
 If an encryption key is provided, the database is encrypted with AES-256 via SQLCipher. The key can be supplied two ways:

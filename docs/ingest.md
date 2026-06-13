@@ -8,7 +8,7 @@ There are two ways to get data into OpenReturn: the **ingest CLI** for bulk load
 
 `openreturn-ingest` (or `python3 src/ingest.py` in dev) is designed for the annual IRS TEOS data releases, which typically arrive as dozens of ZIP archives each containing thousands of XML filings. The source argument is either a **local directory** of `.zip` files or an **`http(s)://` URL** (see [Ingesting from a URL](#ingesting-from-a-url) below).
 
-Flags: `--workers N` (parallel parser processes, default = CPU count) and `--profile` (print a wall-clock timer plus a per-phase breakdown — read / insert / resolve / commit / checkpoint / worker-wait — and per-ZIP `read ms/file`, for diagnosing throughput). URL sources add `--force`, `--keep-downloads`, `--cache-dir DIR`, and `--list` (all described below).
+Flags: `--workers N` (parallel parser processes, default = CPU count) and `--profile` (print a wall-clock timer plus a per-phase breakdown — read / insert / resolve / commit / checkpoint / worker-wait — and per-ZIP `read ms/file`, for diagnosing throughput). URL sources add `--force`, `--keep-downloads`, `--cache-dir DIR`, and `--list` (all described below). `--background` runs the ingest detached (see [Running in the background](#running-ingest-in-the-background)); `--ingested`, `--forget`, and `--purge` manage already-ingested archives (see [Managing ingested archives](#managing-ingested-archives)).
 
 ### Ingesting from a URL
 
@@ -35,6 +35,56 @@ openreturn ingest --list https://www.irs.gov/charities-non-profits/form-990-seri
 **Disk is bounded.** Archives are processed one at a time: download → ingest → **delete**, so peak disk usage is roughly one archive plus the database (not the whole corpus). By default downloads go to a temporary directory that is removed afterward. Use `--cache-dir DIR` to download into a directory you control, and `--keep-downloads` to retain the `.zip` files after ingest (e.g. to keep a local mirror).
 
 The exclusive-lock and index-rebuild behavior below applies to URL ingests exactly as it does to directory ingests — the lock is held for the whole run, and the indexes are rebuilt once at the end.
+
+### Running ingest in the background
+
+A full-corpus ingest can run for tens of minutes to hours. `--background` (`-b`) detaches it from your shell so it keeps running after you log out of SSH:
+
+```bash
+openreturn ingest --background https://www.irs.gov/charities-non-profits/form-990-series-downloads
+# Background ingest started
+#   PID     12345
+#   Source  https://www.irs.gov/...
+#   Log     ingest.log
+```
+
+The command double-forks into a daemon, writes its output to a log file (`ingest.log` in the working directory by default — override with `--log PATH`), records a small `ingest.pid` file, prints the PID, and returns immediately. Watch progress with `tail -f ingest.log` or `openreturn status` (which reports the running ingest). Only one background ingest may run per data directory at a time; starting a second is refused while one is active.
+
+**Stopping is cooperative.** `openreturn ingest --stop` sends the daemon a signal; it finishes the archive it is currently on, then runs the normal finalize step (rebuild indexes + checkpoint the WAL) before exiting. This leaves the database consistent and queryable — it does **not** kill the process mid-write with indexes dropped. Because it waits for the current archive and the index rebuild, `--stop` may take a while on a large run; the command returns once the signal is delivered (watch the log for the actual exit). Archives already completed on a URL ingest are recorded, so resuming later re-does only what was unfinished.
+
+```bash
+openreturn ingest --stop          # ask the running background ingest to stop
+openreturn status                 # confirm it has exited
+```
+
+Because the daemon writes `ingest.pid`/`ingest.log` in the current directory, run `--background`/`--stop` from the data directory (where `OpenReturn.db` lives). On a NixOS deployment that is `dataDir` (`/var/lib/openreturn`); see [Running ingest on a NixOS host](nixos.md#running-ingest-on-the-server) for a systemd-supervised alternative.
+
+### Managing ingested archives
+
+On a **URL** ingest each finished archive is recorded in the `ingested_zip` table (keyed on its download URL) so re-runs skip it. Two operations manage that history and the stored data:
+
+- **Forget** removes the *tracking record* only, so the archive is re-downloaded and re-ingested on the next URL run. The stored filing data is left untouched.
+- **Purge** *deletes the stored filing data* — the filings whose ZIP filename matches, plus their reported values (FK cascade) and any computed scores — and forgets the matching tracking records. This works for directory ingests too, because it matches on `filing.zip_filename`.
+
+```bash
+# Show what has been recorded as ingested
+openreturn ingest --ingested
+
+# Forget records so they re-ingest next run (PATTERN is a case-insensitive
+# substring of the source URL or filename; data is kept)
+openreturn ingest --forget 2023_TEOS_XML_01A
+openreturn ingest --forget-all
+
+# Delete stored data for archives whose zip filename matches PATTERN
+# (filings + reported values + scores), with a confirmation prompt
+openreturn ingest --purge 2023_TEOS_XML_01A
+openreturn ingest --purge-all          # delete ALL filings, values, and scores
+
+# Skip the prompt (for scripts)
+openreturn ingest --purge-all --yes
+```
+
+`PATTERN` is matched literally — a `%` or `_` in the pattern is **not** a wildcard, so `2023_1` matches `2023_1.zip` but not `2023X1.zip`. Purge keeps the schema, reference/seed data, API keys, registered models, and organization rows; it only removes filing data. To wipe everything including the schema, use [`openreturn reset`](install.md#resetting-the-database) instead.
 
 ### What it does, step by step
 

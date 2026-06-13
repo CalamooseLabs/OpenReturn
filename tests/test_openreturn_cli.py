@@ -188,6 +188,97 @@ class TestCliDispatch(unittest.TestCase):
             self._run(['ingest', '--workers', '4', '/data/zips'])
         self.assertEqual(captured['workers'], 4)
 
+    def test_ingest_optional_directory(self):
+        captured = {}
+
+        def fake_ingest(args):
+            captured['directory'] = args.directory
+            captured['ingested'] = args.ingested
+            return 0
+
+        with patch('ingest.cmd_ingest', fake_ingest), patch('cli._load_env'):
+            self._run(['ingest', '--ingested'])
+        self.assertIsNone(captured['directory'])
+        self.assertTrue(captured['ingested'])
+
+    def test_ingest_background_and_log_flags(self):
+        captured = {}
+
+        def fake_ingest(args):
+            captured['background'] = args.background
+            captured['log'] = args.log
+            return 0
+
+        with patch('ingest.cmd_ingest', fake_ingest), patch('cli._load_env'):
+            self._run(['ingest', '/data/zips', '--background', '--log', '/tmp/i.log'])
+        self.assertTrue(captured['background'])
+        self.assertEqual(captured['log'], '/tmp/i.log')
+
+    def test_ingest_stop_flag(self):
+        captured = {}
+
+        def fake_ingest(args):
+            captured['stop'] = args.stop
+            return 0
+
+        with patch('ingest.cmd_ingest', fake_ingest), patch('cli._load_env'):
+            self._run(['ingest', '--stop'])
+        self.assertTrue(captured['stop'])
+
+    def test_ingest_forget_and_purge_flags(self):
+        captured = {}
+
+        def fake_ingest(args):
+            captured['forget'] = args.forget
+            captured['forget_all'] = args.forget_all
+            captured['purge'] = args.purge
+            captured['purge_all'] = args.purge_all
+            captured['yes'] = args.yes
+            return 0
+
+        with patch('ingest.cmd_ingest', fake_ingest), patch('cli._load_env'):
+            self._run(['ingest', '--forget', '2023'])
+        self.assertEqual(captured['forget'], '2023')
+
+        with patch('ingest.cmd_ingest', fake_ingest), patch('cli._load_env'):
+            self._run(['ingest', '--purge-all', '--yes'])
+        self.assertTrue(captured['purge_all'])
+        self.assertTrue(captured['yes'])
+
+    # ── status ──────────────────────────────────────────────────────────────
+
+    def test_status_dispatches(self):
+        captured = {}
+
+        def fake_status(args):
+            captured['host'] = args.host
+            captured['port'] = args.port
+            captured['as_json'] = args.as_json
+            return 0
+
+        with patch('status.cmd_status', fake_status), patch('cli._load_env'):
+            result = self._run(['status', '--host', '0.0.0.0', '--port', '9000', '--json'])
+        self.assertEqual(result, 0)
+        self.assertEqual(captured['host'], '0.0.0.0')
+        self.assertEqual(captured['port'], 9000)
+        self.assertTrue(captured['as_json'])
+
+    # ── reset ───────────────────────────────────────────────────────────────
+
+    def test_reset_dispatches(self):
+        captured = {}
+
+        def fake_reset(args):
+            captured['yes'] = args.yes
+            captured['db'] = args.db
+            return 0
+
+        with patch('db.cmd_reset', fake_reset), patch('cli._load_env'):
+            result = self._run(['reset', '--yes', '--db', '/tmp/x.db'])
+        self.assertEqual(result, 0)
+        self.assertTrue(captured['yes'])
+        self.assertEqual(captured['db'], '/tmp/x.db')
+
     # ── keys ──────────────────────────────────────────────────────────────
 
     def test_keys_list_dispatches(self):

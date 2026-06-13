@@ -44,10 +44,13 @@ def main() -> int:
                          help='Parallel XML parser processes for --zip-dir ingestion (default: CPU count)')
 
     # ── ingest ───────────────────────────────────────────────────────────────
-    ingest_p = sub.add_parser('ingest', help='Bulk-ingest 990 ZIP files from a directory or URL')
-    ingest_p.add_argument('directory',
+    # NOTE: keep these flags in sync with ingest.py:_add_ingest_arguments — they
+    # are declared inline here to avoid importing the ingest module at parse time.
+    ingest_p = sub.add_parser('ingest', help='Bulk-ingest 990 ZIP files, or manage ingested archives')
+    ingest_p.add_argument('directory', nargs='?', default=None,
                           help='Path to a directory of .zip files, or an http(s):// URL to a '
-                               'ZIP or to the IRS Form 990 series downloads page')
+                               'ZIP or to the IRS Form 990 series downloads page. Optional when '
+                               'using a management flag (--ingested / --forget / --purge / --stop).')
     ingest_p.add_argument('--workers', type=int, default=os.cpu_count() or 4,
                           help='Parallel XML parser processes (default: CPU count)')
     ingest_p.add_argument('--profile', action='store_true',
@@ -60,6 +63,37 @@ def main() -> int:
                           help='(URL sources) directory to download ZIPs into (default: a temp dir, removed after)')
     ingest_p.add_argument('--list', dest='list_sources', action='store_true',
                           help='(URL sources) list discovered ZIP URLs and whether each is already ingested, then exit')
+    ingest_p.add_argument('--background', '-b', action='store_true',
+                          help='Run the ingest detached in the background (logs to a file; survives logout)')
+    ingest_p.add_argument('--log', default=None,
+                          help='Log file for --background (default: ingest.log in the working directory)')
+    ingest_p.add_argument('--stop', action='store_true',
+                          help='Stop a running background ingest (finishes the current archive first), then exit')
+    ingest_p.add_argument('--ingested', action='store_true',
+                          help='List archives recorded as already ingested, then exit')
+    ingest_p.add_argument('--forget', metavar='PATTERN', default=None,
+                          help='Forget ingested-archive records matching PATTERN (re-ingestable; data kept), then exit')
+    ingest_p.add_argument('--forget-all', dest='forget_all', action='store_true',
+                          help='Forget every ingested-archive record (data kept), then exit')
+    ingest_p.add_argument('--purge', metavar='PATTERN', default=None,
+                          help='Delete stored filings whose zip filename matches PATTERN, plus their '
+                               'reported values and scores (and forget matching records), then exit')
+    ingest_p.add_argument('--purge-all', dest='purge_all', action='store_true',
+                          help='Delete ALL stored filings, reported values, and scores, then exit')
+    ingest_p.add_argument('--yes', '-y', action='store_true',
+                          help='Skip the confirmation prompt for --purge / --purge-all')
+
+    # ── status ─────────────────────────────────────────────────────────────────
+    status_p = sub.add_parser('status', help='Show database size, row counts, server and background-ingest status')
+    status_p.add_argument('--db', default=None, help='Path to OpenReturn.db (defaults to ./OpenReturn.db)')
+    status_p.add_argument('--host', default='localhost', help='Server host to probe (default: localhost)')
+    status_p.add_argument('--port', type=int, default=8080, help='Server port to probe (default: 8080)')
+    status_p.add_argument('--json', action='store_true', dest='as_json', help='Emit machine-readable JSON')
+
+    # ── reset ──────────────────────────────────────────────────────────────────
+    reset_p = sub.add_parser('reset', help='Delete the database files (main + WAL + SHM) after confirmation')
+    reset_p.add_argument('--db', default=None, help='Path to OpenReturn.db (defaults to ./OpenReturn.db)')
+    reset_p.add_argument('--yes', '-y', action='store_true', help='Skip the confirmation prompt')
 
     # ── keys ─────────────────────────────────────────────────────────────────
     keys_p = sub.add_parser('keys', help='Manage API keys')
@@ -109,6 +143,14 @@ def main() -> int:
     if args.command == 'ingest':
         from ingest import cmd_ingest
         return cmd_ingest(args)
+
+    if args.command == 'status':
+        from status import cmd_status
+        return cmd_status(args)
+
+    if args.command == 'reset':
+        from db import cmd_reset
+        return cmd_reset(args) or 0
 
     if args.command == 'keys':
         from keys import cmd_create, cmd_list as _keys_list, cmd_revoke

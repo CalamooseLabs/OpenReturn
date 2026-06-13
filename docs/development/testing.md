@@ -36,8 +36,12 @@ The project maintains **100% statement coverage**. PRs that reduce coverage shou
 | `tests/test_models.py` | `src/models.py` |
 | `tests/test_database.py` | `src/database/IRS990/irs990.py` + `src/database/IRS990/repositories/`, `src/database/Score/score.py` |
 | `tests/test_expanded_forms.py` | `src/database/IRS990/sql/populate/*.sql` (990-EZ/N/PF/T schema) |
-| `tests/test_db_commands.py` | `src/db.py` |
+| `tests/test_db_commands.py` | `src/db.py` (`init`, `migrate`, `reset`) |
 | `tests/test_cli.py` | `src/ingest.py` (directory **and** URL paths) |
+| `tests/test_ingest_manage.py` | `src/ingest.py` (forget/purge/list management flags) + `src/database/Score/score.py` purge + `src/database/IRS990/repositories/ingest.py` |
+| `tests/test_status.py` | `src/status.py` |
+| `tests/test_daemon.py` | `src/daemon.py` (double-fork, pidfile, cooperative stop) |
+| `tests/test_openreturn_cli.py` | `src/cli.py` (unified dispatch, incl. `status`/`reset`/ingest mgmt flags) |
 | `tests/test_sources.py` | `src/sources.py` |
 | `tests/test_upload_worker.py` | `src/router/Upload/upload.py` |
 | `tests/test_org_router.py` | `src/router/Org/org.py` |

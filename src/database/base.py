@@ -11,6 +11,17 @@ except ImportError:
     _HAS_CIPHER = False
 
 
+def escape_like(value: str) -> str:
+    """Escape LIKE wildcards so a user-supplied substring matches literally.
+
+    Use with ``column LIKE ? ESCAPE '\\'`` and wrap the result in ``%…%``.
+    Without this a pattern containing ``%`` or ``_`` would match more rows than
+    intended — which matters for the destructive purge path (e.g. ``2023_1``
+    must not also match ``2023X1``).
+    """
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def _resolve_db_key() -> str | None:
     """Resolve the SQLCipher key from the environment.
 

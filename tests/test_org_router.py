@@ -59,6 +59,9 @@ class TestOrgRouterRegistration(unittest.TestCase):
     def test_get_organizations_full_registered(self):
         self.assertIn("/organizations/full", self.router.routes["GET"])
 
+    def test_get_organizations_search_registered(self):
+        self.assertIn("/organizations/search", self.router.routes["GET"])
+
     def test_post_organizations_registered(self):
         self.assertIn("/organizations", self.router.routes["POST"])
 
@@ -74,6 +77,9 @@ class TestOrgRouterRegistration(unittest.TestCase):
             "/organizations",
             "/organizations/detail",
             "/organizations/full",
+            "/organizations/search",
+            "/organizations/states",
+            "/organizations/cities",
         }
         self.assertEqual(set(self.router.routes["GET"].keys()), expected)
 

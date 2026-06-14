@@ -32,10 +32,24 @@ flowchart TD
   url --> bulk
   bulk --> loop[per ZIP: parse → buffer → flush<br/>check cooperative stop]
   loop --> finish[rebuild indexes + checkpoint WAL]
-  finish --> restart{restarted server?}
+  finish --> score{--no-score?}
+  score -->|no| dorscore[score touched orgs<br/>computed models] --> restart
+  score -->|yes| restart
+  restart{restarted server?}
   restart -->|yes| startsrv[relaunch server detached] --> done
   restart -->|no| done
 ```
+
+Each filing's parser also captures the filer's name and **mailing address**
+(street / city / state / ZIP from the return-header `USAddress`), stored in the
+normalized `address` table and linked to the organization. City and state back
+the [organization search](api.md#get-organizationssearch) facets.
+
+After the indexes are rebuilt, ingest **(re)computes the scores** for every
+organization it touched, for all computed (non-manual) models — recomputing all
+of an org's years so [time-spanning factors](scoring/models.md#pre-computing--storing-scores)
+reflect the newly-added data. Pass `--no-score` to skip this (e.g. a pure
+throughput test); run `openreturn score --rebuild` later to compute them.
 
 ### Ingesting from a URL
 

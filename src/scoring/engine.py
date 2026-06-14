@@ -72,6 +72,10 @@ _HISTORICAL_TYPES = frozenset({
     'cagr', 'historical_std_dev', 'coefficient_of_variation',
 })
 
+# The fields any scoring formula can read — the only reported_data the batch
+# loader needs to fetch per org.
+_SCORING_PATHS = frozenset(_PATHS.values())
+
 
 def _fmt_num(v) -> str:
     """Render a number for the debug walkthrough's substituted formulas: integral
@@ -127,6 +131,91 @@ class ScoringEngine:
         self.db.scores.finalize_score(score_id, total)
 
         return self.db.scores.get_score(score_id)
+
+    # ── Batch / pre-computation ──────────────────────────────────────────────
+    # calculate() above is the single-filing API path (one filing, round-trips
+    # through get_score). The methods below pre-compute and store scores in bulk
+    # for every computed (non-manual) model across many filings, grouped by org
+    # so each org's history + values load once and a fresh history reshapes every
+    # year's score. Manual models are skipped (they are graded, not computed).
+
+    def _prepare_models(self, model_versions=None) -> list[dict]:
+        """Resolve the computed models to score into ready-to-evaluate form:
+        {version, model_id, factors (topo-sorted), needs_history}. Optionally
+        restricted to ``model_versions``. Empty (factorless) models are skipped."""
+        computed = self.db.scores.list_computed_models()
+        if model_versions is not None:
+            want = set(model_versions)
+            computed = [m for m in computed if m['version'] in want]
+        prepared = []
+        for m in computed:
+            factors = self.db.scores.get_factors(m['version'])
+            if not factors:
+                continue
+            sorted_factors = self._topo_sort(factors)
+            prepared.append({
+                "version":       m['version'],
+                "model_id":      m['model_id'],
+                "factors":       sorted_factors,
+                "needs_history": any(f['formula_type'] in _HISTORICAL_TYPES for f in sorted_factors),
+            })
+        return prepared
+
+    def score_org(self, ein: str, prepared_models: list[dict],
+                  scoring_paths=_SCORING_PATHS) -> int:
+        """(Re)compute and store every prepared model's score for every filing of
+        one org, in a single bulk replace (no commit — the caller batches). The
+        org's values + history load once and are reused across its years/models.
+        Returns the number of scores written."""
+        if not prepared_models:
+            return 0
+        filings, vals_by_uuid, historical = \
+            self.db.reported_data.get_org_scoring_data(ein, scoring_paths)
+        if not filings:
+            return 0
+        results = []
+        for m in prepared_models:
+            hist = historical if m['needs_history'] else {}
+            for fil in filings:
+                vals = vals_by_uuid.get(fil['filing_id'], {})
+                computed: dict[str, float | None] = {}
+                factor_results = []
+                total = 0.0
+                for f in m['factors']:
+                    raw = self._compute_factor(f, vals, computed, hist)
+                    computed[f['name']] = raw
+                    weighted = self._normalize(f, raw) * f['weight']
+                    total += weighted
+                    factor_results.append((f['factor_id'], raw, weighted))
+                results.append((fil['filing_id'], m['model_id'], total, factor_results))
+        self.db.scores.replace_org_scores(ein, [m['model_id'] for m in prepared_models], results)
+        return len(results)
+
+    def rebuild(self, model_versions=None, eins=None, *,
+                batch_size: int = 500, progress=None) -> dict:
+        """Pre-compute + store scores for computed models across many orgs.
+
+        ``model_versions`` limits to specific versions (default: all computed);
+        ``eins`` limits to specific orgs (default: every org — a full rebuild).
+        Commits every ``batch_size`` orgs. ``progress`` (if given) is called as
+        ``progress(orgs_done, orgs_total, scores_written)`` each batch. Returns
+        ``{"orgs", "scores", "models"}``."""
+        prepared = self._prepare_models(model_versions)
+        if not prepared:
+            return {"orgs": 0, "scores": 0, "models": 0}
+        eins = self.db.scores.all_eins() if eins is None else list(eins)
+        total = len(eins)
+        scores = 0
+        for i, ein in enumerate(eins, 1):
+            scores += self.score_org(ein, prepared)
+            if i % batch_size == 0:
+                self.db.commit()
+                if progress:
+                    progress(i, total, scores)
+        self.db.commit()
+        if progress:
+            progress(total, total, scores)
+        return {"orgs": total, "scores": scores, "models": len(prepared)}
 
     def _topo_sort(self, factors: list[dict]) -> list[dict]:
         name_to_factor = {f['name']: f for f in factors}

@@ -99,11 +99,53 @@ List organizations with optional name search and pagination.
       "name": "ACME NONPROFIT INC",
       "is_favorite": false,
       "created_at": "2025-01-15 10:23:45",
-      "updated_at": "2025-01-15 10:23:45"
+      "updated_at": "2025-01-15 10:23:45",
+      "address": {"street": "1 MAIN ST", "city": "AUSTIN", "state": "TX", "zip": "78701"}
     }
   ]
 }
 ```
+
+Every organization record carries an `address` object (the filer's return-header
+mailing address, normalized into a separate table) or `null` if none was captured.
+
+---
+
+### `GET /organizations/search`
+
+Search organizations. Name matching is strict (case-insensitive substring) or
+**fuzzy** (typo-tolerant, trigram-ranked) via `fuzzy=1`; EIN is a forward-looking
+prefix; state and city are **exact** filter selections (dropdown-style). All
+supplied filters combine with AND; at least one of `q`/`ein`/`state`/`city` is required.
+
+**Query parameters**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `q` | string | — | Name query — substring (strict) or typo-tolerant (when `fuzzy=1`) |
+| `fuzzy` | boolean | `false` | Truthy → typo-tolerant trigram name match, ranked by relevance |
+| `ein` | string | — | EIN forward-looking prefix (`1234` → `123456789…`) |
+| `state` | string | — | Exact 2-letter USPS state code |
+| `city` | string | — | Exact city, case-insensitive |
+| `favorite` | boolean | `false` | Truthy → only favorited organizations |
+| `limit` | integer | `50` | Results per page (max 500) |
+| `offset` | integer | `0` | Number of results to skip |
+
+**Response** — same shape as `GET /organizations`, plus a `"mode"` of `"strict"` or `"fuzzy"`.
+
+---
+
+### `GET /organizations/states`
+
+The states present in stored filer addresses (for the state-search dropdown):
+`{"states": [{"code": "TX", "name": "Texas"}, …]}`.
+
+---
+
+### `GET /organizations/cities`
+
+The cities present in stored filer addresses, optionally within one state
+(param `state`) — for the city-search dropdown: `{"cities": ["Austin", "Dallas", …]}`.
 
 ---
 
@@ -125,7 +167,8 @@ Fetch a single organization by EIN.
   "name": "ACME NONPROFIT INC",
   "is_favorite": false,
   "created_at": "2025-01-15 10:23:45",
-  "updated_at": "2025-01-15 10:23:45"
+  "updated_at": "2025-01-15 10:23:45",
+  "address": {"street": "1 MAIN ST", "city": "AUSTIN", "state": "TX", "zip": "78701"}
 }
 ```
 

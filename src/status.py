@@ -109,10 +109,10 @@ def _counts(db_path: str) -> dict:
 
 
 def _migrations(db_path: str) -> dict:
-    from database.IRS990.repositories.migrations import MigrationRepository
+    from database.Migration import MigrationDatabase
     from database.base import _open_connection
 
-    available = [name for name, _ in MigrationRepository.list_available_migrations()]
+    available = [name for name, _ in MigrationDatabase.list_available_migrations()]
     conn = _open_connection(db_path)
     try:
         try:

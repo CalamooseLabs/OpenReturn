@@ -86,6 +86,9 @@ def main() -> int:
                           help='Delete ALL stored filings, reported values, and scores, then exit')
     ingest_p.add_argument('--yes', '-y', action='store_true',
                           help='Skip the confirmation prompt for --purge / --purge-all')
+    ingest_p.add_argument('--no-score', dest='no_score', action='store_true',
+                          help='Skip the post-ingest scoring step (otherwise computed-model '
+                               'scores for touched organizations are (re)computed at the end)')
 
     # ── openapi ──────────────────────────────────────────────────────────────
     openapi_p = sub.add_parser('openapi', help='Print the OpenAPI 3.1 spec (also served at /openapi.json)')
@@ -136,6 +139,17 @@ def main() -> int:
     m_list.add_argument('--db', default=None,
                         help='Path to OpenReturn.db (defaults to ./OpenReturn.db)')
 
+    # ── score ──────────────────────────────────────────────────────────────────
+    score_p = sub.add_parser('score',
+                             help='Pre-compute and store scores for computed (non-manual) models')
+    score_p.add_argument('--db', default=None, help='Path to OpenReturn.db (defaults to ./OpenReturn.db)')
+    score_p.add_argument('--rebuild', action='store_true',
+                         help='(Re)score every organization (required for a full recompute)')
+    score_p.add_argument('--org', action='append', metavar='EIN',
+                         help='Limit to specific organization EIN(s); repeatable')
+    score_p.add_argument('--version', type=int, action='append', metavar='V',
+                         help='Limit to specific model version(s); repeatable (default: all computed)')
+
     args = parser.parse_args()
 
     if args.command == 'init':
@@ -176,6 +190,10 @@ def main() -> int:
         if args.models_cmd == 'register':
             return cmd_register(args) or 0
         return _models_list(args) or 0
+
+    if args.command == 'score':
+        from scores import cmd_score
+        return cmd_score(args)
 
 
 if __name__ == '__main__':  # pragma: no cover

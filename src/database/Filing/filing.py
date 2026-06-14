@@ -1,17 +1,19 @@
 import uuid
 
+from database.base import Database
 
-class FilingRepository:
+
+class FilingDatabase(Database):
   """Filing lookups, creation, and the combined filing+reported-data fetch.
 
-  ``get_filing_data_by_ein_year`` links to the ReportedData repository via
-  ``self._db.reported_data`` (they share the facade's connection).
+  A ``Database`` subclass sharing the coordinator's connection (reached as
+  ``db.filings``). ``get_filing_data_by_ein_year`` links to the reported-data
+  concern via ``self._db.reported_data``.
   """
 
   def __init__(self, db) -> None:
     self._db = db
-    self.cursor = db.cursor
-    self.connection = db.connection
+    super().__init__("Filing", "Filing", connection=db.connection, cursor=db.cursor)
 
   def list_filings(self, ein: str) -> list[dict]:
     rows = self.cursor.execute(

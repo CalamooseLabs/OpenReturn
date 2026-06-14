@@ -1,16 +1,20 @@
-class IngestRepository:
-  """Records which source ZIP archives have already been ingested.
+from database.base import Database
 
-  The URL-based ingest path consults ``get_ingested_sources`` to skip archives
-  it has already loaded, and calls ``record_ingested_zip`` once each archive
-  finishes. The ``ingested_zip`` table is keyed on ``source`` — the canonical
-  identifier of the archive (its download URL for remote ingests).
+
+class IngestDatabase(Database):
+  """Records which source ZIP archives have already been ingested (reached as
+  ``db.ingest``).
+
+  A ``Database`` subclass sharing the coordinator's connection. The URL-based
+  ingest path consults ``get_ingested_sources`` to skip archives it has already
+  loaded, and calls ``record_ingested_zip`` once each archive finishes. The
+  ``ingested_zip`` table is keyed on ``source`` — the canonical identifier of
+  the archive (its download URL for remote ingests).
   """
 
   def __init__(self, db) -> None:
     self._db = db
-    self.cursor = db.cursor
-    self.connection = db.connection
+    super().__init__("Ingest", "Ingest", connection=db.connection, cursor=db.cursor)
 
   def get_ingested_sources(self) -> set[str]:
     return {row[0] for row in self.cursor.execute("SELECT source FROM ingested_zip").fetchall()}

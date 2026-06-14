@@ -20,8 +20,11 @@ pkgs.python3Packages.buildPythonApplication {
 
   postInstall = ''
     find $out -name "*.sql" -o -name "*.html" | head -1 > /dev/null || {
-      cp -r ${./src}/database/IRS990/sql $out/lib/python*/site-packages/database/IRS990/ 2>/dev/null || true
-      cp -r ${./src}/database/Score/sql $out/lib/python*/site-packages/database/Score/ 2>/dev/null || true
+      # Fallback if package-data didn't bundle the SQL/HTML assets: copy each
+      # concern's sql tree (one folder per Database subclass) plus the views.
+      for d in Schema Organization Filing ReportedData ApiKey Ingest Migration Score; do
+        cp -r ${./src}/database/$d/sql $out/lib/python*/site-packages/database/$d/ 2>/dev/null || true
+      done
       cp -r ${./src}/router/Upload/views $out/lib/python*/site-packages/router/Upload/ 2>/dev/null || true
     }
   '';

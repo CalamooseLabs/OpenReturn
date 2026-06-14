@@ -79,17 +79,27 @@ def _resolve_ids(db, filing_key_to_id: dict) -> dict:
     return remap
 
 
-def _flush_zip(db, pending_orgs, pending_filings, pending_data, id_remap,
+def _flush_zip(db, pending_orgs, pending_addresses, pending_filings, pending_data, id_remap,
                prof: dict | None = None) -> None:
     """Flush one batch. ``id_remap`` is a per-ZIP {pre_id: actual_id} dict that
     persists across flushes: we resolve only THIS batch's just-inserted filing
     keys (not the whole accumulated set) and merge any collisions into id_remap,
     then apply the full id_remap to pending_data. Persisting the remap is needed
     when a within-ZIP duplicate's reported_data lands in a later flush than the
-    (colliding) filing row that produced the remap."""
+    (colliding) filing row that produced the remap.
+
+    Addresses are inserted before organizations so the org→address FK holds (the
+    address uuid is the org's EIN); both are INSERT OR IGNORE, so a re-ingest of
+    an existing org/address is a no-op rather than a duplicate or orphan."""
+    if pending_addresses:
+        db.cursor.executemany(
+            "INSERT OR IGNORE INTO address (uuid, street, city, state_code, zipcode) "
+            "VALUES (?,?,?,?,?)",
+            pending_addresses
+        )
     if pending_orgs:
         db.cursor.executemany(
-            "INSERT OR IGNORE INTO organization (ein, name) VALUES (?,?)",
+            "INSERT OR IGNORE INTO organization (ein, name, business_address_id) VALUES (?,?,?)",
             pending_orgs
         )
     if pending_filings:
@@ -186,6 +196,8 @@ def _process_zip_seq(router, ctx: _Ctx, zip_idx: int, zip_path: Path,
                     result = {'file': name, 'status': 'error', 'reason': str(exc)}
 
                 status = result.get('status', 'error')
+                if status == 'stored' and result.get('ein'):
+                    ctx.seen_eins.add(result['ein'])  # for the post-ingest scoring step
                 per[status]        = per.get(status, 0) + 1
                 ctx.totals[status] = ctx.totals.get(status, 0) + 1
                 ctx.done += 1
@@ -228,6 +240,7 @@ def _process_zip_par(db, pool, ctx: _Ctx, zip_idx: int, zip_path: Path,
         return per
 
     pending_orgs:     list[tuple] = []
+    pending_addresses: list[tuple] = []
     pending_filings:  list[tuple] = []
     filing_key_to_id: dict[tuple, int] = {}
     id_remap:         dict[int, int] = {}
@@ -282,7 +295,13 @@ def _process_zip_par(db, pool, ctx: _Ctx, zip_idx: int, zip_path: Path,
                                 key       = (ein, year, form_code)
 
                                 if ein not in ctx.seen_eins:
-                                    pending_orgs.append((ein, parsed['name']))
+                                    addr = parsed.get('address')
+                                    pending_orgs.append((ein, parsed['name'], ein if addr else None))
+                                    if addr:
+                                        pending_addresses.append((
+                                            ein, addr.get('street'), addr.get('city'),
+                                            (addr.get('state') or '').strip().upper() or None,
+                                            addr.get('zip')))
                                     ctx.seen_eins.add(ein)
 
                                 if key not in filing_key_to_id:
@@ -314,15 +333,17 @@ def _process_zip_par(db, pool, ctx: _Ctx, zip_idx: int, zip_path: Path,
                     )
 
                     if len(pending_data) >= _DATA_ROWS_PER_FLUSH:
-                        _flush_zip(db, pending_orgs, pending_filings, pending_data, id_remap, ctx.prof)
+                        _flush_zip(db, pending_orgs, pending_addresses, pending_filings,
+                                   pending_data, id_remap, ctx.prof)
                         pending_orgs.clear()
+                        pending_addresses.clear()
                         pending_filings.clear()
                         pending_data.clear()
     except zipfile.BadZipFile:
         print(f"\r  {_RED}corrupt ZIP — skipping remaining files{_R}{_CLR}")
         ctx.totals['error'] += 1
 
-    _flush_zip(db, pending_orgs, pending_filings, pending_data, id_remap, ctx.prof)
+    _flush_zip(db, pending_orgs, pending_addresses, pending_filings, pending_data, id_remap, ctx.prof)
     _tc = time.monotonic()
     db.cursor.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     ctx.prof['checkpoint'] += time.monotonic() - _tc
@@ -362,21 +383,54 @@ def _finish_run(args, ctx: _Ctx, db, t_start: float, t_process: float) -> int:
 
     print(f"{_DIM}Rebuilding indexes…{_R}", flush=True)
     db.meta.restore_ingest_indexes()
+    # The bulk path writes orgs via raw INSERT OR IGNORE (it bypasses the per-org
+    # FTS sync in upsert_organization), so rebuild the fuzzy-search trigram index
+    # once here from the full organization table.
+    db.orgs.rebuild_search_index()
     print(f"{_DIM}Checkpointing WAL…{_R}", flush=True)
     db.end_bulk_load()
+    t_finalize = time.monotonic()
+
+    # Post-ingest scoring: (re)compute computed-model scores for the orgs touched
+    # by this run. Recomputing all of each org's years keeps time-spanning
+    # factors (running_average, cagr, …) consistent with the newly-added data.
+    # Default-on; --no-score skips it. Wrapped so a scoring failure never
+    # corrupts an otherwise-good ingest.
+    scored = None
+    if not getattr(args, 'no_score', False) and ctx.seen_eins:
+        print(f"{_DIM}Scoring {len(ctx.seen_eins):,} touched organization(s)…{_R}", flush=True)
+        try:
+            from scoring import ScoringEngine
+
+            def _score_progress(done: int, total: int, n: int) -> None:
+                print(f"\r  {_DIM}scored {done:,}/{total:,} orgs · {n:,} scores{_R}{_CLR}",
+                      end='', flush=True)
+
+            scored = ScoringEngine(db).rebuild(eins=ctx.seen_eins, progress=_score_progress)
+            print()
+        except Exception as exc:  # noqa: BLE001 — never fail the ingest over scoring
+            print(f"\n  {_YLW}scoring skipped after error: {exc}{_R}")
+            scored = None
+    score_s = time.monotonic() - t_finalize
 
     db.close()
 
     t_end       = time.monotonic()
     process_s   = t_process - t_start
-    finalize_s  = t_end - t_process
+    finalize_s  = t_finalize - t_process
     total_s     = t_end - t_start
     rate        = ctx.done / process_s if process_s else 0
+    score_line  = (
+        f"  {_DIM}score    {_R}{_fmt_duration(score_s)}  "
+        f"{_DIM}({scored['scores']:,} scores · {scored['models']} model(s)){_R}\n"
+        if scored else ""
+    )
     print(
         f"{_B}Timing{_R}  {_CYN}{args.workers} worker{'s' if args.workers != 1 else ''}{_R}\n"
         f"  {_DIM}process  {_R}{_fmt_duration(process_s)}  "
         f"{_DIM}({rate:,.0f} filings/s){_R}\n"
         f"  {_DIM}finalize {_R}{_fmt_duration(finalize_s)}  {_DIM}(index rebuild + checkpoint){_R}\n"
+        f"{score_line}"
         f"  {_B}total    {_R}{_fmt_duration(total_s)}\n"
     )
 
@@ -1071,6 +1125,11 @@ def _add_ingest_arguments(ap) -> None:
     ap.add_argument(
         '--yes', '-y', action='store_true',
         help='Skip the confirmation prompt for --purge / --purge-all',
+    )
+    ap.add_argument(
+        '--no-score', dest='no_score', action='store_true',
+        help='Skip the post-ingest scoring step (otherwise computed-model scores '
+             'for the organizations touched by this run are (re)computed at the end)',
     )
 
 

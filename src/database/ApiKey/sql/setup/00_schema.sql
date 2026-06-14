@@ -1,3 +1,6 @@
+-- API keys for authenticating requests. A standalone concern: no FKs to the
+-- rest of the schema. rate_limit -1 means unlimited.
+
 CREATE TABLE IF NOT EXISTS api_key (
     key_id       INTEGER PRIMARY KEY AUTOINCREMENT,
     name         TEXT    NOT NULL,

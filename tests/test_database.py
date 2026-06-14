@@ -134,7 +134,7 @@ class TestDatabaseBase(unittest.TestCase):
         self.db.end_bulk_load()
 
 
-class TestIRS990Database(unittest.TestCase):
+class TestOpenReturnDB(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
@@ -298,7 +298,7 @@ class TestIRS990Database(unittest.TestCase):
 
 # --- list_organizations ---
 
-class TestIRS990DatabaseListMethods(unittest.TestCase):
+class TestOpenReturnDBListMethods(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
@@ -555,10 +555,10 @@ class TestIRS990DatabaseListMethods(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# IngestRepository — ingested_zip tracking
+# IngestDatabase — ingested_zip tracking
 # ---------------------------------------------------------------------------
 
-class TestIngestRepository(unittest.TestCase):
+class TestIngestDatabase(unittest.TestCase):
 
     def setUp(self):
         self.db = OpenReturnDB(path=":memory:")

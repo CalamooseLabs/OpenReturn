@@ -1,24 +1,27 @@
 from pathlib import Path
 
+from database.base import Database
 
-class MigrationRepository:
-  """Discovery and application of versioned SQL migrations.
 
-  Migration files live in ``IRS990/sql/migrations/*.sql`` and are applied
-  once each; the ``migration`` table (created in setup) records applied names.
-  ``list_available_migrations`` stays a staticmethod so callers (e.g. status)
-  can list migrations without opening the database.
+class MigrationDatabase(Database):
+  """Discovery and application of versioned SQL migrations (reached as
+  ``db.migrations``).
+
+  A ``Database`` subclass sharing the coordinator's connection. Migration files
+  live in ``Migration/sql/migrations/*.sql`` and are applied once each; the
+  ``migration`` table records applied names. ``list_available_migrations`` stays
+  a staticmethod so callers (e.g. status) can list migrations without opening
+  the database.
   """
 
   def __init__(self, db) -> None:
     self._db = db
-    self.cursor = db.cursor
-    self.connection = db.connection
+    super().__init__("Migration", "Migration", connection=db.connection, cursor=db.cursor)
 
   @staticmethod
   def list_available_migrations() -> list[tuple[str, Path]]:
     """Returns [(name, path), ...] for all migration SQL files, sorted by name."""
-    d = Path(__file__).parent.parent / "sql" / "migrations"
+    d = Path(__file__).parent / "sql" / "migrations"
     if not d.exists():
       return []
     return sorted(

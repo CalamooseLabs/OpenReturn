@@ -1,5 +1,3 @@
-PRAGMA foreign_keys = ON;
-
 -- Model categories. Seeded here (in setup, INSERT OR IGNORE) rather than in
 -- populate so the rows exist on every startup — populate only runs on a fresh
 -- DB (guarded on score_model), which would skip seeding this on upgrades.

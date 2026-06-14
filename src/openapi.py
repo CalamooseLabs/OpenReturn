@@ -98,6 +98,16 @@ def _schemas() -> dict:
                 "is_favorite": {"type": "boolean"},
                 "created_at": {"type": "string"},
                 "updated_at": {"type": "string"},
+                "address": {
+                    "type": ["object", "null"],
+                    "description": "Filer address (from the return-header USAddress), or null",
+                    "properties": {
+                        "street": {"type": ["string", "null"]},
+                        "city": {"type": ["string", "null"]},
+                        "state": {"type": ["string", "null"], "description": "2-letter USPS code"},
+                        "zip": {"type": ["string", "null"]},
+                    },
+                },
             },
         },
         "OrganizationList": {
@@ -304,6 +314,57 @@ def _paths() -> dict:
                                               "description": "detail / data / lookup URLs"}}},
                             ]}}}},
                     ],
+                }),
+            },
+        },
+        "/organizations/search": {
+            "get": {
+                "tags": ["Organizations"],
+                "summary": "Search organizations (strict or fuzzy)",
+                "description": ("Name match (strict substring, or typo-tolerant fuzzy "
+                                "when fuzzy=1), EIN forward-prefix, exact state, and city "
+                                "substring — combined with AND. At least one of q/ein/"
+                                "state/city is required."),
+                "parameters": [
+                    _q("q", desc="Name query (substring; fuzzy when fuzzy=1)"),
+                    _q("ein", desc="EIN forward-looking prefix (e.g. 1234 → 123456789)"),
+                    _q("state", desc="Exact 2-letter state code (dropdown selection)"),
+                    _q("city", desc="Exact city, case-insensitive (dropdown selection)"),
+                    _q("fuzzy", "boolean", default=False,
+                       desc="Truthy → typo-tolerant trigram name matching, ranked"),
+                    _q("favorite", "boolean", default=False, desc="Truthy → only favorited"),
+                    _q("limit", "integer", default=50, desc="Results per page (max 500)"),
+                    _q("offset", "integer", default=0, desc="Results to skip"),
+                ],
+                "responses": _responses({
+                    "allOf": [
+                        _ref("OrganizationList"),
+                        {"type": "object", "properties": {
+                            "mode": {"type": "string", "enum": ["strict", "fuzzy"]}}},
+                    ],
+                }),
+            },
+        },
+        "/organizations/states": {
+            "get": {
+                "tags": ["Organizations"],
+                "summary": "States present in filer addresses (search dropdown)",
+                "responses": _responses({
+                    "type": "object",
+                    "properties": {"states": {"type": "array", "items": {
+                        "type": "object", "properties": {
+                            "code": {"type": "string"}, "name": {"type": ["string", "null"]}}}}},
+                }),
+            },
+        },
+        "/organizations/cities": {
+            "get": {
+                "tags": ["Organizations"],
+                "summary": "Cities present in filer addresses (search dropdown)",
+                "parameters": [_q("state", desc="Limit to cities within this 2-letter state code")],
+                "responses": _responses({
+                    "type": "object",
+                    "properties": {"cities": {"type": "array", "items": {"type": "string"}}},
                 }),
             },
         },

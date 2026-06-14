@@ -28,7 +28,7 @@
   publish-wiki = pkgs.writeShellScriptBin "publish-wiki" ''
     set -euo pipefail
     root="$(git rev-parse --show-toplevel)"
-    src="$root/wiki"
+    src="$root/docs"
     # Wiki repo URL: defaults to <origin>.wiki.git; override with arg 1.
     remote="''${1:-$(git -C "$root" remote get-url origin | sed -E 's#\.git$#.wiki.git#')}"
 

@@ -1,19 +1,33 @@
 import hashlib
 import secrets
 
+from database.base import Database
 
-class ApiKeyRepository:
-  """Create, validate, list and revoke API keys.
 
-  Validation results are cached in ``self._key_cache`` (owned by this repo) and
-  cleared on revoke. A standalone concern — no FKs to the rest of the schema.
+class ApiKeyDatabase(Database):
+  """Create, validate, list and revoke API keys (reached as ``db.keys``).
+
+  A ``Database`` subclass sharing the coordinator's connection. A standalone
+  concern — no FKs to the rest of the schema. Validation results are cached in
+  ``self._key_cache`` and cleared on revoke.
   """
 
   def __init__(self, db) -> None:
     self._db = db
-    self.cursor = db.cursor
-    self.connection = db.connection
+    super().__init__("ApiKey", "ApiKey", connection=db.connection, cursor=db.cursor)
     self._key_cache: dict[str, int | None] = {}
+    self._migrate_columns()
+
+  def _migrate_columns(self) -> None:
+    """Add ``rate_limit`` to databases created before it existed (fresh DBs get
+    it from sql/setup). Ignored only when the column is already present."""
+    try:
+      self.cursor.execute(
+        "ALTER TABLE api_key ADD COLUMN rate_limit INTEGER NOT NULL DEFAULT -1")
+      self.connection.commit()  # pragma: no cover — only on pre-migration DBs
+    except Exception as exc:
+      if 'duplicate column' not in str(exc).lower():
+        raise
 
   def create_api_key(self, name: str, rate_limit: int = -1) -> tuple[int, str]:
     raw = secrets.token_urlsafe(32)

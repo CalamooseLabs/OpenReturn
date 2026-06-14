@@ -1,60 +1,7 @@
--- Reference data + base form structure (states, forms, parts,
--- sections, lines, fields for the core 990/990-EZ/990-PF/990-T forms).
+-- Base form structure (forms, parts, sections, lines, fields for the core
+-- 990/990-EZ/990-PF/990-T forms) plus the data_type lookup.
 -- Loaded first: all later populate files depend on the parts/forms here.
-
-INSERT OR IGNORE INTO
-  state
-VALUES
-  ('AL', 'Alabama'),
-  ('AK', 'Alaska'),
-  ('AZ', 'Arizona'),
-  ('AR', 'Arkansas'),
-  ('CA', 'California'),
-  ('CO', 'Colorado'),
-  ('CT', 'Connecticut'),
-  ('DE', 'Delaware'),
-  ('FL', 'Florida'),
-  ('GA', 'Georgia'),
-  ('HI', 'Hawaii'),
-  ('ID', 'Idaho'),
-  ('IL', 'Illinois'),
-  ('IN', 'Indiana'),
-  ('IA', 'Iowa'),
-  ('KS', 'Kansas'),
-  ('KY', 'Kentucky'),
-  ('LA', 'Louisiana'),
-  ('ME', 'Maine'),
-  ('MD', 'Maryland'),
-  ('MA', 'Massachusetts'),
-  ('MI', 'Michigan'),
-  ('MN', 'Minnesota'),
-  ('MS', 'Mississippi'),
-  ('MO', 'Missouri'),
-  ('MT', 'Montana'),
-  ('NE', 'Nebraska'),
-  ('NV', 'Nevada'),
-  ('NH', 'New Hampshire'),
-  ('NJ', 'New Jersey'),
-  ('NM', 'New Mexico'),
-  ('NY', 'New York'),
-  ('NC', 'North Carolina'),
-  ('ND', 'North Dakota'),
-  ('OH', 'Ohio'),
-  ('OK', 'Oklahoma'),
-  ('OR', 'Oregon'),
-  ('PA', 'Pennsylvania'),
-  ('RI', 'Rhode Island'),
-  ('SC', 'South Carolina'),
-  ('SD', 'South Dakota'),
-  ('TN', 'Tennessee'),
-  ('TX', 'Texas'),
-  ('UT', 'Utah'),
-  ('VT', 'Vermont'),
-  ('VA', 'Virginia'),
-  ('WA', 'Washington'),
-  ('WV', 'West Virginia'),
-  ('WI', 'Wisconsin'),
-  ('WY', 'Wyoming');
+-- (State reference data lives with the Organization concern, 00_state.sql.)
 
 INSERT OR IGNORE INTO
   form (code, name, description, supported)

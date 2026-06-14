@@ -27,6 +27,38 @@ class OrgRouter(Router):
       return self.db.orgs.list_organizations(search=search, limit=limit, offset=offset,
                                         favorites_only=favorites_only)
 
+    @self.get('/search')
+    def search_organizations(query_params: dict, body: Any, headers: HTTPMessage):
+      """Strict or fuzzy organization search. Params: q (name), ein (prefix),
+      state (exact 2-letter), city (substring), fuzzy=1 (typo-tolerant name),
+      favorite=1, limit, offset. At least one of q/ein/state/city is required."""
+      q     = self._qp(query_params, 'q') or self._qp(query_params, 'query')
+      ein   = self._qp(query_params, 'ein')
+      state = self._qp(query_params, 'state')
+      city  = self._qp(query_params, 'city')
+      if not any([q, ein, state, city]):
+        return {"error": "provide at least one of: q, ein, state, city"}
+      limit,  e1 = self._qp_int_or_error(query_params, 'limit',  default=50)
+      offset, e2 = self._qp_int_or_error(query_params, 'offset', default=0)
+      if e1 or e2:
+        return {"error": "limit and offset must be integers"}
+      fuzzy          = (self._qp(query_params, 'fuzzy')    or '').strip().lower() in ('1', 'true', 'yes')
+      favorites_only = (self._qp(query_params, 'favorite') or '').strip().lower() in ('1', 'true', 'yes')
+      return self.db.orgs.search_organizations(
+        q, fuzzy=fuzzy, ein=ein, state=state, city=city,
+        favorites_only=favorites_only, limit=limit, offset=offset)
+
+    @self.get('/states')
+    def list_states(query_params: dict, body: Any, headers: HTTPMessage):
+      """States present in stored filer addresses (for the state-search dropdown)."""
+      return {"states": self.db.orgs.list_states()}
+
+    @self.get('/cities')
+    def list_cities(query_params: dict, body: Any, headers: HTTPMessage):
+      """Cities present in stored filer addresses, optionally within one state
+      (param: state) — for the city-search dropdown."""
+      return {"cities": self.db.orgs.list_cities(self._qp(query_params, 'state'))}
+
     @self.get('/detail')
     def get_organization(query_params: dict, body: Any, headers: HTTPMessage):
       ein = self._qp(query_params, 'ein')

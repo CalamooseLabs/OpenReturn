@@ -23,6 +23,26 @@ flowchart TD
   wm --> total
 ```
 
+## Pre-computing & storing scores
+
+`POST /scores/calculate` computes one filing's score on demand. Scores are also
+**pre-computed in bulk** so the API can read them without recalculating:
+
+- **`openreturn score`** (CLI) recomputes and stores scores for every *computed*
+  (non-manual) model across organizations' filings. `--rebuild` does the full
+  corpus; `--org EIN` (repeatable) limits to specific orgs; `--version V` limits
+  to specific model versions.
+- **After every ingest** the same recompute runs automatically for the
+  organizations the ingest touched (skip with `openreturn ingest --no-score`).
+
+Scoring is done **per organization, across all of its years at once**, because
+the [historical formulas](#historical-formulas-1-field-key-input-operate-over-all-available-filing-years-for-the-org)
+(`running_average`, `cagr`, …) span an org's entire filing history. So when a new
+filing arrives, *every* prior year's score for that org is recomputed — a 3-year
+running average becomes a 4-year one across the board. A recompute replaces the
+org's existing scores for the targeted models (manual scores are left untouched).
+Manual models are skipped (they are graded, not computed).
+
 ## CLI
 
 Run from the directory where `OpenReturn.db` lives:
@@ -31,6 +51,10 @@ Run from the directory where `OpenReturn.db` lives:
 openreturn models register model_v1.toml          # validate and write to DB
 openreturn models register model_v1.toml --dry-run  # validate only, no DB write
 openreturn models list                             # list all registered versions
+
+openreturn score --rebuild                         # (re)compute all computed-model scores
+openreturn score --org 123456789                   # just one organization
+openreturn score --version 2                        # just model version 2
 ```
 
 ## TOML Format

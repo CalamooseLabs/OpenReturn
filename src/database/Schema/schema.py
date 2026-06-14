@@ -1,12 +1,21 @@
-class MetadataRepository:
-  """Schema-derived metadata: the field-meta cache, XPath index, supported
-  forms, and the ingest-time index drop/restore helpers used during bulk load.
+from database.base import Database
+
+
+class SchemaDatabase(Database):
+  """The form-schema metadata layer: the form → part → section → line → field
+  hierarchy plus the data_type lookup.
+
+  A ``Database`` subclass sharing the coordinator's connection (so its tables
+  live in the one file with everything else). Owns the field-meta cache, the
+  XPath index, supported-forms lookup, the schema traceback used by the
+  score-debug walkthrough, and the ingest-time index drop/restore helpers.
+  Sibling concerns reach it as ``db.meta``.
   """
 
   def __init__(self, db) -> None:
     self._db = db
-    self.cursor = db.cursor
-    self.connection = db.connection
+    super().__init__("Schema", "Schema", populate_guard="form",
+                     connection=db.connection, cursor=db.cursor)
 
   def _build_field_meta_cache(self) -> dict[int, dict]:
     rows = self.cursor.execute("""

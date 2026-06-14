@@ -34,12 +34,13 @@ The project maintains **100% statement coverage**. PRs that reduce coverage shou
 |-----------|---------------|
 | `tests/test_scoring_engine.py` | `src/scoring/engine.py` |
 | `tests/test_models.py` | `src/models.py` |
-| `tests/test_database.py` | `src/database/IRS990/irs990.py` + `src/database/IRS990/repositories/` |
+| `tests/test_database.py` | `src/database/openreturn.py` + the per-concern subclasses (`Schema/`, `Organization/`, `Filing/`, `ReportedData/`, `ApiKey/`, `Ingest/`, `Migration/`) |
 | `tests/test_score_database.py` | `src/database/Score/score.py` |
-| `tests/test_expanded_forms.py` | `src/database/IRS990/sql/populate/*.sql` (990-EZ/N/PF/T schema) |
+| `tests/test_scoring_search.py` | post-ingest scoring hook + `src/scores.py` CLI + batch `ScoringEngine.rebuild` + `db.orgs` search/address |
+| `tests/test_expanded_forms.py` | `src/database/Schema/sql/populate/*.sql` (990-EZ/N/PF/T schema) |
 | `tests/test_db_commands.py` | `src/db.py` (`init`, `migrate`, `reset`) |
 | `tests/test_cli.py` | `src/ingest.py` (directory **and** URL paths) |
-| `tests/test_ingest_manage.py` | `src/ingest.py` (forget/purge/list management flags) + `src/database/Score/score.py` purge + `src/database/IRS990/repositories/ingest.py` |
+| `tests/test_ingest_manage.py` | `src/ingest.py` (forget/purge/list management flags) + `src/database/Score/score.py` purge + `src/database/Ingest/ingest.py` |
 | `tests/test_status.py` | `src/status.py` |
 | `tests/test_daemon.py` | `src/daemon.py` (double-fork, pidfile, cooperative stop) |
 | `tests/test_openreturn_cli.py` | `src/cli.py` (unified dispatch, incl. `status`/`reset`/ingest mgmt flags) |
@@ -67,7 +68,7 @@ The URL ingest path (`_cmd_ingest_url` / `_ingest_one_remote`) is tested in `tes
 
 ## Test Patterns
 
-**In-memory database**: Most database tests use `IRS990Database(path=":memory:")` to avoid touching the filesystem.
+**In-memory database**: Most database tests use `OpenReturnDB(path=":memory:")` to avoid touching the filesystem.
 
 **Mock DB for engine tests**: `ScoringEngine` is initialized with `db=MagicMock()` so individual formula and normalization methods can be tested without any database layer.
 

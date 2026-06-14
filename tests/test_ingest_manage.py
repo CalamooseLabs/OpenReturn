@@ -1,4 +1,4 @@
-"""Tests for ingested-archive management: IngestRepository forget/find helpers,
+"""Tests for ingested-archive management: IngestDatabase forget/find helpers,
 OpenReturnDB purge (filings + reported_data + scores), and the ingest CLI
 management flags (--ingested / --forget / --purge / --stop)."""
 
@@ -46,7 +46,7 @@ def _count(db, table):
 
 
 # ---------------------------------------------------------------------------
-# IngestRepository: find / forget
+# IngestDatabase: find / forget
 # ---------------------------------------------------------------------------
 
 class TestForget(unittest.TestCase):

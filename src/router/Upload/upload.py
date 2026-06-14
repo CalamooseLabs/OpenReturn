@@ -27,6 +27,18 @@ _EIN_PATH  = "ReturnHeader/Filer/EIN"
 _NAME_PATH = "ReturnHeader/Filer/BusinessName/BusinessNameLine1Txt"
 _YEAR_PATH = "ReturnHeader/TaxYr"
 _FORM_PATH = "ReturnHeader/ReturnTypeCd"
+_STREET_PATH = "ReturnHeader/Filer/USAddress/AddressLine1Txt"
+_CITY_PATH   = "ReturnHeader/Filer/USAddress/CityNm"
+_STATE_PATH  = "ReturnHeader/Filer/USAddress/StateAbbreviationCd"
+_ZIP_PATH    = "ReturnHeader/Filer/USAddress/ZIPCd"
+
+
+def _address_from(get) -> dict | None:
+  """Build the filer-address dict from a path/element getter (``dict.get`` for
+  the worker, ``parser.getElem`` for the HTTP path). None when no field is set."""
+  addr = {"street": get(_STREET_PATH), "city": get(_CITY_PATH),
+          "state": get(_STATE_PATH), "zip": get(_ZIP_PATH)}
+  return addr if any(addr.values()) else None
 
 
 def _worker_init(xpath_index: dict, supported_forms: set) -> None:
@@ -103,6 +115,7 @@ def _parse_xml_task(task: tuple) -> dict:
       "status":       "parsed",
       "ein":          ein,
       "name":         name,
+      "address":      _address_from(paths.get),
       "year":         int(year),
       "form_code":    form_code,
       "values":       values,
@@ -142,24 +155,34 @@ class UploadRouter(Router):
     """Process a single XML filing (parse + DB write). Used by the HTTP upload endpoint."""
     parser = IRS990Parser(xml_content)
 
-    ein       = parser.getElem(_EIN_PATH)
-    name      = parser.getElem(_NAME_PATH)
-    year      = parser.getElem(_YEAR_PATH)
-    form_code = parser.getElem(_FORM_PATH)
-
-    issue = _header_issue(ein, name, year, form_code, self.supported_forms, filename)
-    if issue is not None:
-      return issue
-
-    self.db.orgs.upsert_organization(ein, name)
-    filing_id = self.db.filings.create_filing(ein, int(year), form_code,
-                                      xml_filename=filename, zip_filename=zip_filename)
-
+    # Collect every mapped value in one pass, then read the header + address from
+    # the collected set. getElem is stateful (it cycles through repeated elements
+    # per path), so querying any present path a second time would IndexError —
+    # the header/address fields live in the xpath index, so re-querying them is
+    # exactly that double-call. ``at`` reads from ``values`` for indexed paths and
+    # only calls getElem (once) for paths the index does not cover.
     values: dict[int, str] = {}
     for xpath, field_id in self.xpath_index.items():
       value = parser.getElem(xpath)
       if value is not None:
         values[field_id] = value
+
+    def at(path: str):
+      field_id = self.xpath_index.get(path)
+      return values.get(field_id) if field_id is not None else parser.getElem(path)
+
+    ein       = at(_EIN_PATH)
+    name      = at(_NAME_PATH)
+    year      = at(_YEAR_PATH)
+    form_code = at(_FORM_PATH)
+
+    issue = _header_issue(ein, name, year, form_code, self.supported_forms, filename)
+    if issue is not None:
+      return issue
+
+    self.db.orgs.upsert_organization(ein, name, _address_from(at))
+    filing_id = self.db.filings.create_filing(ein, int(year), form_code,
+                                      xml_filename=filename, zip_filename=zip_filename)
 
     self.db.reported_data.store_reported_data(filing_id, values)
 
@@ -175,7 +198,7 @@ class UploadRouter(Router):
 
   def _store_parsed(self, parsed: dict, results: list) -> str:
     """Write a parsed filing dict to the DB and append to results. Returns status."""
-    self.db.orgs.upsert_organization(parsed["ein"], parsed["name"])
+    self.db.orgs.upsert_organization(parsed["ein"], parsed["name"], parsed.get("address"))
     filing_id = self.db.filings.create_filing(
       parsed["ein"], parsed["year"], parsed["form_code"],
       xml_filename=parsed["file"], zip_filename=parsed["zip_filename"],

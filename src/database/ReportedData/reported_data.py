@@ -1,14 +1,18 @@
-class ReportedDataRepository:
-  """Read/write of per-filing reported field values.
+from database.base import Database
 
+
+class ReportedDataDatabase(Database):
+  """Read/write of per-filing reported field values (reached as
+  ``db.reported_data``).
+
+  A ``Database`` subclass sharing the coordinator's connection.
   ``get_reported_data`` joins each stored value against the facade's
-  ``_field_meta`` cache (built once by ``OpenReturnDB`` via the metadata repo).
+  ``_field_meta`` cache (built once by ``OpenReturnDB`` via the schema concern).
   """
 
   def __init__(self, db) -> None:
     self._db = db
-    self.cursor = db.cursor
-    self.connection = db.connection
+    super().__init__("ReportedData", "ReportedData", connection=db.connection, cursor=db.cursor)
 
   def get_reported_data(self, filing_uuid: str) -> list[dict]:
     """filing_uuid is the public filing uuid; the join resolves it to the
@@ -50,6 +54,51 @@ class ReportedDataRepository:
         except (ValueError, TypeError):
           pass
     return result
+
+  def get_org_scoring_data(self, ein: str, paths) -> tuple[list[dict], dict, dict]:
+    """One-org bulk load for batch scoring. Returns
+    ``(filings, vals_by_uuid, historical)`` from two queries:
+
+    - ``filings``: every filing for the org as ``{filing_id(uuid), year, form_code}``
+      (year-ascending) — so even filings with no scoring-relevant values still
+      get scored (their factors resolve to None → 0).
+    - ``vals_by_uuid``: ``{filing_uuid: {xml_path: float}}`` limited to ``paths``
+      (the handful of fields scoring formulas read).
+    - ``historical``: ``{xml_path: [float oldest→newest]}`` across the org — the
+      series the historical formulas operate on (so adding a year reshapes it).
+    """
+    frows = self.cursor.execute(
+      "SELECT uuid, year, form_code FROM filing WHERE organization_id = ? ORDER BY year ASC",
+      (ein,)
+    ).fetchall()
+    filings = [{"filing_id": r[0], "year": r[1], "form_code": r[2]} for r in frows]
+
+    paths = list(paths)
+    vals_by_uuid: dict[str, dict[str, float]] = {}
+    historical: dict[str, list[float]] = {}
+    if filings and paths:
+      qmarks = ",".join("?" * len(paths))
+      vrows = self.cursor.execute(
+        f"""
+        SELECT f.uuid, fi.xml_path, rd.raw_value
+        FROM filing f
+        JOIN reported_data rd ON rd.filing_id = f.filing_id
+        JOIN field fi ON fi.field_id = rd.field_id
+        WHERE f.organization_id = ? AND fi.xml_path IN ({qmarks})
+        ORDER BY f.year ASC
+        """,
+        (ein, *paths)
+      ).fetchall()
+      for uuid_, path, raw in vrows:
+        if raw is None:
+          continue
+        try:
+          val = float(raw)
+        except (ValueError, TypeError):
+          continue
+        vals_by_uuid.setdefault(uuid_, {})[path] = val
+        historical.setdefault(path, []).append(val)
+    return filings, vals_by_uuid, historical
 
   def store_reported_data(self, filing_uuid: str, values: dict[int, str]) -> None:
     """filing_uuid is the public filing uuid; it is resolved to the integer

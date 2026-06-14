@@ -280,6 +280,247 @@
         }
       }
     },
+    "/organizations/search": {
+      "get": {
+        "tags": [
+          "Organizations"
+        ],
+        "summary": "Search organizations (strict or fuzzy)",
+        "description": "Name match (strict substring, or typo-tolerant fuzzy when fuzzy=1), EIN forward-prefix, exact state, and city substring \u2014 combined with AND. At least one of q/ein/state/city is required.",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Name query (substring; fuzzy when fuzzy=1)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "ein",
+            "in": "query",
+            "required": false,
+            "description": "EIN forward-looking prefix (e.g. 1234 \u2192 123456789)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "description": "Exact 2-letter state code (dropdown selection)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "city",
+            "in": "query",
+            "required": false,
+            "description": "Exact city, case-insensitive (dropdown selection)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "fuzzy",
+            "in": "query",
+            "required": false,
+            "description": "Truthy \u2192 typo-tolerant trigram name matching, ranked",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "favorite",
+            "in": "query",
+            "required": false,
+            "description": "Truthy \u2192 only favorited",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Results per page (max 500)",
+            "schema": {
+              "type": "integer",
+              "default": 50
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "description": "Results to skip",
+            "schema": {
+              "type": "integer",
+              "default": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/OrganizationList"
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "mode": {
+                              "type": "string",
+                              "enum": [
+                                "strict",
+                                "fuzzy"
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/organizations/states": {
+      "get": {
+        "tags": [
+          "Organizations"
+        ],
+        "summary": "States present in filer addresses (search dropdown)",
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "states": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "code": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/organizations/cities": {
+      "get": {
+        "tags": [
+          "Organizations"
+        ],
+        "summary": "Cities present in filer addresses (search dropdown)",
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "description": "Limit to cities within this 2-letter state code",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "cities": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
     "/organizations/favorite": {
       "post": {
         "tags": [
@@ -1631,6 +1872,40 @@
           },
           "updated_at": {
             "type": "string"
+          },
+          "address": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Filer address (from the return-header USAddress), or null",
+            "properties": {
+              "street": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "city": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "state": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "2-letter USPS code"
+              },
+              "zip": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
           }
         }
       },

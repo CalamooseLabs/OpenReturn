@@ -188,7 +188,9 @@ class TestUploadRouterProcessXml(unittest.TestCase):
 
     def test_valid_xml_calls_upsert_organization(self):
         self.router._process_xml(VALID_990_XML, "test.xml")
-        self.db.orgs.upsert_organization.assert_called_once_with("123456789", "Test Org")
+        self.db.orgs.upsert_organization.assert_called_once()
+        self.assertEqual(self.db.orgs.upsert_organization.call_args.args[:2],
+                         ("123456789", "Test Org"))
 
     def test_valid_xml_calls_create_filing(self):
         self.router._process_xml(VALID_990_XML, "test.xml")

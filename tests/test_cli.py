@@ -551,20 +551,35 @@ class TestFlushZip(unittest.TestCase):
         self.db.close()
 
     def test_empty_lists_just_commits(self):
-        ingest_mod._flush_zip(self.db, [], [], [], {})
+        ingest_mod._flush_zip(self.db, [], [], [], [], {})
 
     def test_inserts_organization(self):
-        ingest_mod._flush_zip(self.db, [("111111111", "Alpha")], [], [], {})
+        ingest_mod._flush_zip(self.db, [("111111111", "Alpha", None)], [], [], [], {})
         row = self.db.cursor.execute(
             "SELECT name FROM organization WHERE ein = ?", ("111111111",)
         ).fetchone()
         self.assertIsNotNone(row)
         self.assertEqual(row[0], "Alpha")
 
+    def test_inserts_address_linked_to_org(self):
+        # Address inserted (uuid = ein) and linked via business_address_id.
+        ingest_mod._flush_zip(
+            self.db,
+            [("111111111", "Alpha", "111111111")],
+            [("111111111", "1 Main St", "Austin", "TX", "78701")],
+            [], [], {},
+        )
+        row = self.db.cursor.execute(
+            "SELECT a.city, a.state_code FROM organization o "
+            "JOIN address a ON a.uuid = o.business_address_id WHERE o.ein = ?",
+            ("111111111",),
+        ).fetchone()
+        self.assertEqual(row, ("Austin", "TX"))
+
     def test_inserts_filing(self):
-        pending_orgs = [("111111111", "Alpha")]
+        pending_orgs = [("111111111", "Alpha", None)]
         pending_filings = [(1, str(uuid.uuid4()), 2023, "111111111", "990", "f.xml", "z.zip")]
-        ingest_mod._flush_zip(self.db, pending_orgs, pending_filings, [], {})
+        ingest_mod._flush_zip(self.db, pending_orgs, [], pending_filings, [], {})
         row = self.db.cursor.execute(
             "SELECT uuid FROM filing WHERE organization_id = ?", ("111111111",)
         ).fetchone()
@@ -572,10 +587,10 @@ class TestFlushZip(unittest.TestCase):
 
     def test_inserts_reported_data(self):
         pre_id = 1
-        pending_orgs = [("111111111", "Alpha")]
+        pending_orgs = [("111111111", "Alpha", None)]
         pending_filings = [(pre_id, str(uuid.uuid4()), 2023, "111111111", "990", "f.xml", "z.zip")]
         pending_data = [(pre_id, self.field_id, "testval")]
-        ingest_mod._flush_zip(self.db, pending_orgs, pending_filings, pending_data, {})
+        ingest_mod._flush_zip(self.db, pending_orgs, [], pending_filings, pending_data, {})
         count = self.db.cursor.execute(
             "SELECT COUNT(*) FROM reported_data WHERE filing_id = ?", (pre_id,)
         ).fetchone()[0]
@@ -589,10 +604,10 @@ class TestFlushZip(unittest.TestCase):
             ("111111111", 2023, "990"),
         ).fetchone()[0]
         pre_id = 999999
-        pending_orgs = [("111111111", "Alpha")]
+        pending_orgs = [("111111111", "Alpha", None)]
         pending_filings = [(pre_id, str(uuid.uuid4()), 2023, "111111111", "990", "f.xml", "z.zip")]
         pending_data = [(pre_id, self.field_id, "value")]
-        ingest_mod._flush_zip(self.db, pending_orgs, pending_filings, pending_data, {})
+        ingest_mod._flush_zip(self.db, pending_orgs, [], pending_filings, pending_data, {})
         count = self.db.cursor.execute(
             "SELECT COUNT(*) FROM reported_data WHERE filing_id = ?", (actual_id,)
         ).fetchone()[0]
@@ -611,13 +626,13 @@ class TestFlushZip(unittest.TestCase):
         id_remap: dict = {}
         # Flush 1: filing collides → remap recorded in id_remap.
         ingest_mod._flush_zip(
-            self.db, [("111111111", "Alpha")],
+            self.db, [("111111111", "Alpha", None)], [],
             [(pre_id, str(uuid.uuid4()), 2023, "111111111", "990", "f.xml", "z.zip")],
             [(pre_id, self.field_id, "v1")], id_remap,
         )
         # Flush 2: no new filing, but more data for the same pre_id.
         field2 = list(self.db.meta.get_xpath_index().values())[1]
-        ingest_mod._flush_zip(self.db, [], [], [(pre_id, field2, "v2")], id_remap)
+        ingest_mod._flush_zip(self.db, [], [], [], [(pre_id, field2, "v2")], id_remap)
         count = self.db.cursor.execute(
             "SELECT COUNT(*) FROM reported_data WHERE filing_id = ?", (actual_id,)
         ).fetchone()[0]

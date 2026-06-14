@@ -67,19 +67,54 @@ def _open_connection(db_path: str) -> sqlite3.Connection:
 
 
 class Database:
-  def __init__(self, name, sql_dir, populate_guard: str | None = None, path: str | None = None) -> None:
+  """A SQLite-backed concern with its own ``sql/setup`` + ``sql/populate`` tree.
+
+  Two construction modes:
+
+  * **Owner** (``connection`` omitted): opens its own connection to ``path`` /
+    ``{name}.db`` and applies the connection-level PRAGMAs once. Used by the
+    ``OpenReturnDB`` coordinator.
+  * **Shared** (``connection`` supplied): adopts the coordinator's connection
+    instead of opening one, so each concern can be its own ``Database`` subclass
+    while all of them live in a single file — which is what keeps the
+    cross-concern foreign keys + cascades (e.g. ``organization_score`` →
+    ``filing``) enforceable, since SQLite only checks FKs within one file.
+
+  ``sql_dir`` selects the owning subpackage under ``src/database/`` (e.g.
+  ``"Organization"``); pass ``None`` to skip loading any sql tree (the
+  coordinator owns no tables of its own).
+  """
+
+  def __init__(self, name, sql_dir: str | None = None, populate_guard: str | None = None,
+               path: str | None = None, connection=None, cursor=None) -> None:
     self.name = name
-    self.connection = _open_connection(path if path is not None else f"{name}.db")
-    self.cursor = self.connection.cursor()
+    if connection is not None:
+      self.connection = connection
+    else:
+      self.connection = _open_connection(path if path is not None else f"{name}.db")
+      self._configure_connection()
+    # Shared-connection concerns reuse the coordinator's single cursor (passed
+    # in) rather than opening their own — a second cursor mid-statement makes a
+    # commit() on another raise "SQL statements in progress" during bulk ingest.
+    self.cursor = cursor if cursor is not None else self.connection.cursor()
+
+    if sql_dir is not None:
+      self._run_dir("sql/setup", sql_dir)
+      if populate_guard is None or not self._table_has_rows(populate_guard):
+        self._run_dir("sql/populate", sql_dir)
+
+  def _configure_connection(self) -> None:
+    """Connection-level PRAGMAs, applied once by the owner of the connection.
+    ``foreign_keys`` is connection-scoped (resets per connection) so it lives
+    here rather than in the schema SQL. ``page_size`` is left at the 4096
+    default — a ``page_size=8192`` set after ``journal_mode=WAL`` is a silent
+    no-op anyway, so the on-disk format is unchanged."""
     self.connection.execute("PRAGMA journal_mode=WAL")
     self.connection.execute("PRAGMA synchronous=NORMAL")
     self.connection.execute("PRAGMA cache_size=-524288")   # 512 MB
     self.connection.execute("PRAGMA temp_store=MEMORY")
     self.connection.execute("PRAGMA mmap_size=10737418240")  # 10 GB
-
-    self._run_dir("sql/setup", sql_dir)
-    if populate_guard is None or not self._table_has_rows(populate_guard):
-      self._run_dir("sql/populate", sql_dir)
+    self.connection.execute("PRAGMA foreign_keys=ON")
 
   def _table_has_rows(self, table: str) -> bool:
     return self.cursor.execute(
@@ -114,7 +149,7 @@ class Database:
     Files are named with numeric prefixes (00_, 10_, …) so load order is
     deterministic and dependency-safe (parts before sections before lines).
     Resolves to src/database/<sql_dir>/<subdir>/ — sql_dir selects the
-    owning subpackage (e.g. "IRS990", "Score").
+    owning subpackage (e.g. "Schema", "Organization", "Score").
     """
     directory = Path(__file__).parent / sql_dir / subdir
     for script in sorted(directory.glob("*.sql")):

@@ -4,9 +4,9 @@
 
 ```
 src/
-  database/      → Database (base, connection) / OpenReturnDB (facade)
-                   IRS990/repositories/ + Score/ → repository classes (composed by the facade)
-                   IRS990/sql/{setup,populate,migrations}/  +  Score/sql/{setup,populate}/
+  database/      → Database (base, connection) / OpenReturnDB (coordinator)
+                   one folder per concern, each a Database subclass + its own sql/ tree:
+                   Schema/ Organization/ Filing/ ReportedData/ ApiKey/ Ingest/ Migration/ Score/
   parser/        → Parser (base) / IRS990Parser
   router/        → Router (base) / UploadRouter / OrgRouter / FilingRouter / ScoreRouter
   openapi.py     → OpenAPI 3.1 spec builder (dumped to the committed openapi.json by `openreturn openapi`)
@@ -23,7 +23,7 @@ src/
   main.py        → Server entry point
 ```
 
-Each layer has a base class in its package `__init__.py` and a concrete implementation in a subpackage. The database layer is a **facade + repositories**: `database/__init__.py` exports `Database` (the connection/schema base) and `OpenReturnDB` (the facade); each concern is a repository class under `database/IRS990/repositories/` (and `database/Score/` for scoring) that the facade composes.
+Each layer has a base class in its package `__init__.py` and a concrete implementation in a subpackage. The database layer mirrors the router split: `database/__init__.py` exports `Database` (the connection/schema base) and `OpenReturnDB` (the coordinator). Each concern is its **own `Database` subclass** in its own folder (`database/Schema/`, `database/Organization/`, `database/Filing/`, `database/ReportedData/`, `database/ApiKey/`, `database/Ingest/`, `database/Migration/`, `database/Score/`), each owning its `sql/setup` (+ `sql/populate`) tree. They all **share the coordinator's single connection and cursor**, so they live in one file and the cross-concern foreign keys + cascades stay enforceable.
 
 ```mermaid
 graph TD
@@ -139,26 +139,30 @@ SQLite connection manager. Opens (or creates) a `.db` file and runs setup/popula
 - `begin_bulk_load()` / `end_bulk_load()` — toggle WAL mode, a 512 MB page cache, and a 10 GB mmap for high-throughput ingest. Call these around large batch operations.
 - `populate_guard` — optional table name; when set, the `sql/populate/` files only run if that table is empty (used for performance-sensitive subclasses).
 
-### `OpenReturnDB` (`src/database/openreturn.py`) — the facade
+### `OpenReturnDB` (`src/database/openreturn.py`) — the coordinator
 
-Extends `Database`. Owns the single connection and loads the schema/seed for **both** sql trees: `IRS990/sql/{setup,populate}` then `Score/sql/{setup,populate}`. `IRS990` `populate/` is split by form — `00_reference` (states, forms, parts, and the core structure), then `10_form_990`, `20_form_990ez`, `30_form_990pf`, `40_form_990t`, `50_return_header` — loaded in sorted order; the `INSERT OR IGNORE` statements cover all five supported forms (990/EZ/N/PF/T) and re-run cheaply on every startup. FK enforcement is on, so file order matters (`50_return_header` depends on part 14 from `10_form_990`). `_migrate_model_columns()` and the `api_key.rate_limit` ALTER additively migrate pre-existing databases.
+Extends `Database` in *owner* mode (`sql_dir=None`): it opens the single connection and applies the connection-level PRAGMAs (`_configure_connection`, including `foreign_keys=ON`) but loads no sql tree of its own. It then instantiates each concern's `Database` subclass in **foreign-key-dependency order**, handing each the shared connection **and** the shared cursor (`connection=self.connection, cursor=self.cursor`). Each subclass loads its own `sql/setup` (+ `sql/populate`); because they share one file, the cross-concern FKs and cascades all hold.
 
-Behaviour is **composed, not inherited**: the facade instantiates one repository per concern and exposes them as namespaces — the database analog of the router split. Each repository captures the facade's shared `cursor`/`connection` in `__init__(self, db)` and reaches siblings via `self._db` when a query spans concerns (e.g. `db.filings.get_filing_data_by_ein_year` joins through `db.reported_data`). Connection lifecycle — `commit`/`close`/`begin_bulk_load`/`end_bulk_load` — stays on the base `Database`. The shared `_field_meta` cache is built once on the facade; the API-key validation cache lives on `db.keys`.
+The shared cursor matters: a second cursor mid-statement on the same connection makes a `commit()` on another raise *"SQL statements in progress"* during bulk ingest — so every concern uses the one cursor (the base `Database` accepts `cursor=`).
 
-| Namespace (repository) | Representative methods |
+Schema setup uses `CREATE TABLE IF NOT EXISTS`, so it re-runs harmlessly on every startup. Each subclass's `populate/` is guarded by a `populate_guard` table (Schema=`form`, Organization=`state`, Score=`score_model`) so seed inserts run only on a fresh DB. The `Schema` seed is split by form — `00_reference` (forms, parts, data_type, core structure), then `10_form_990`…`50_return_header` — loaded in sorted order; FK enforcement is on, so file order matters (`50_return_header` depends on part 14 from `10_form_990`). Legacy databases are upgraded in the owning subclass's `__init__`: `ApiKeyDatabase._migrate_columns` (the `rate_limit` ALTER) and `ScoreDatabase._migrate_columns` (the model-type / manual-scoring ALTERs + financial backfill).
+
+Connection lifecycle — `commit`/`close`/`begin_bulk_load`/`end_bulk_load` — stays on the base `Database`. The shared `_field_meta` cache is built once on the coordinator (from `db.meta`); the API-key validation cache lives on `db.keys`. A subclass reaches a sibling via `self._db` when a query spans concerns (e.g. `db.filings.get_filing_data_by_ein_year` joins through `db.reported_data`).
+
+| Namespace (folder / class) | Representative methods |
 |------------------------|------------------------|
-| `db.meta` (`MetadataRepository`) | `get_xpath_index()`, `get_supported_forms()`, `get_field_source()`, `drop_/restore_ingest_indexes()` |
-| `db.orgs` (`OrganizationRepository`) | `list_organizations()`, `get_organization()`, `upsert_organization()`, `set_favorite()` |
-| `db.filings` (`FilingRepository`) | `list_filings()`, `get_filing()`, `create_filing()`, `get_filing_data_by_ein_year()` |
-| `db.reported_data` (`ReportedDataRepository`) | `get_reported_data()`, `get_historical_values()`, `store_reported_data()` |
-| `db.keys` (`ApiKeyRepository`) | `create_api_key()`, `validate_api_key()`, `list_api_keys()`, `revoke_api_key()` |
-| `db.migrations` (`MigrationRepository`) | `list_available_migrations()` (static), `get_applied_migrations()`, `apply_migration()` |
-| `db.ingest` (`IngestRepository`) | `get_ingested_sources()`, `record_ingested_zip()`, `find_/forget_ingested_zips()` |
-| `db.scores` (`ScoreRepository`) | `get_factors()`, `get_model()`, `create_score()`, `finalize_score()`, `grade_factor()`, `get_score()`, `compare_scores()`, `delete_filings_by_zip()` |
+| `db.meta` (`Schema/` `SchemaDatabase`) | `get_xpath_index()`, `get_supported_forms()`, `get_field_source()`, `drop_/restore_ingest_indexes()`, `_build_field_meta_cache()` |
+| `db.orgs` (`Organization/` `OrganizationDatabase`) | `list_organizations()`, `search_organizations()` (strict/fuzzy), `list_states()`/`list_cities()`, `get_organization()`, `upsert_organization()` (+ normalized address), `set_favorite()`, `rebuild_search_index()` |
+| `db.filings` (`Filing/` `FilingDatabase`) | `list_filings()`, `get_filing()`, `create_filing()`, `get_filing_data_by_ein_year()` |
+| `db.reported_data` (`ReportedData/` `ReportedDataDatabase`) | `get_reported_data()`, `get_historical_values()`, `get_org_scoring_data()` (batch scoring loader), `store_reported_data()` |
+| `db.keys` (`ApiKey/` `ApiKeyDatabase`) | `create_api_key()`, `validate_api_key()`, `list_api_keys()`, `revoke_api_key()` |
+| `db.migrations` (`Migration/` `MigrationDatabase`) | `list_available_migrations()` (static), `get_applied_migrations()`, `apply_migration()` |
+| `db.ingest` (`Ingest/` `IngestDatabase`) | `get_ingested_sources()`, `record_ingested_zip()`, `find_/forget_ingested_zips()` |
+| `db.scores` (`Score/` `ScoreDatabase`) | `get_factors()`, `get_model()`, `list_computed_models()`, `create_score()`, `finalize_score()`, `grade_factor()`, `replace_org_scores()` (batch), `all_eins()`, `get_score()`, `compare_scores()`, `delete_filings_by_zip()` |
 
-**Standalone concerns** (`db.keys`, `db.migrations`) have no FKs to the rest. The 990 data graph (`db.orgs`/`db.filings`/`db.reported_data` + the form reference tables) and `db.scores` are FK-linked and JOIN across each other, so they all share the one connection (separate databases would break joins/FKs/transactions).
+**Standalone concerns** (`db.keys`, `db.ingest`, `db.migrations`) have no FKs to the rest, but still share the one connection. The 990 data graph (`db.meta`'s form schema + `db.orgs`/`db.filings`/`db.reported_data`) and `db.scores` are FK-linked and JOIN across each other — which is why a single file/connection is required (separate databases would break joins/FKs/transactions).
 
-**Scoring** (`db.scores`, `src/database/Score/score.py`) is a **sibling** repository, not a subclass: a model declares a `model_type` (seeded category) and a `scoring_mode` — **computed** (formula factors) or **manual** (graded by a person via `POST /scores/grade`, with a `manual_scale` + `comment`). `ScoringEngine.calculate` rejects manual models; `grade()` normalizes per `manual_scale` and recomputes the total. The purge helpers (`delete_filings_by_zip`/`delete_all_filings`) live on `db.scores` because deleting a filing must first delete its scores (`organization_score.filing_id → filing.uuid` has no cascade; `reported_data` does cascade).
+**Scoring** (`db.scores`, `src/database/Score/score.py`): a model declares a `model_type` (seeded category) and a `scoring_mode` — **computed** (formula factors) or **manual** (graded by a person via `POST /scores/grade`, with a `manual_scale` + `comment`). `ScoringEngine.calculate` rejects manual models; `grade()` normalizes per `manual_scale` and recomputes the total. The purge helpers (`delete_filings_by_zip`/`delete_all_filings`) live on `db.scores` because deleting a filing must first delete its scores (`organization_score.filing_id → filing.uuid` has no cascade; `reported_data` does cascade).
 
 **Filing keys**: `filing` has an integer `filing_id` PRIMARY KEY (rowid) and a separate `uuid UNIQUE`. **`uuid` is the public/API identifier** (filing responses, lookups, and `organization_score.filing_id` all use it). The large `reported_data` table references the integer `filing_id` — an 8-byte int rather than a 36-char uuid on ~190M rows roughly halves the DB and speeds inserts/index rebuild. `store_reported_data`/`get_reported_data` take the public uuid and resolve it internally; the bulk ingest path assigns integer ids directly.
 
@@ -319,6 +323,6 @@ All commands are dispatched through `src/cli.py` (the unified `openreturn` binar
 | `openreturn keys` | `src/keys.py` | Manage API keys |
 | `openreturn models` | `src/models.py` | Register and list scoring models |
 
-`cmd_init` opens the database (triggering the `sql/populate/` files on first run via `populate_guard="form"`), prints form/field counts, and closes. `cmd_migrate` discovers `.sql` files in `src/database/IRS990/sql/migrations/`, compares against the `migration` tracking table, and applies anything pending in filename order. `cmd_reset` deletes the DB files after a typed confirmation, refusing while a background ingest holds the database open.
+`cmd_init` opens the database (triggering the `sql/populate/` files on first run via `populate_guard="form"`), prints form/field counts, and closes. `cmd_migrate` discovers `.sql` files in `src/database/Migration/sql/migrations/`, compares against the `migration` tracking table, and applies anything pending in filename order. `cmd_reset` deletes the DB files after a typed confirmation, refusing while a background ingest holds the database open.
 
 `cmd_ingest` also fronts ingested-archive management: `--ingested` lists the `ingested_zip` table; `--forget PATTERN`/`--forget-all` remove tracking records only (re-ingestable); `--purge PATTERN`/`--purge-all` delete stored filing data (filings → `reported_data` cascade, plus scores deleted first since `organization_score` has no cascade). `--background` double-forks via `src/daemon.py` (PID file + log file), and `--stop` sets a cooperative stop flag (SIGTERM) so the ingest loop breaks at an archive boundary and still runs the normal index-rebuild/checkpoint finalize. `--schedule WHEN` waits until a parsed time before ingesting (relative `+30m` / clock `HH:MM` / absolute `YYYY-MM-DD HH:MM`), interruptible by `--stop`. `--restart-server` stops the single-instance server (recorded in `server.pid` by `cmd_serve`) before the run and relaunches it detached afterward; it is skipped when the server is systemd-managed. `cmd_serve` itself refuses to start a second instance while `server.pid` is live and handles SIGTERM as a clean shutdown (removing the PID file), so an external stop or `systemctl stop` is graceful. `status.py` opens the DB with a raw read connection (never running setup/populate), so it reports a clean snapshot even when an ingest holds the exclusive lock (shown as *locked*).

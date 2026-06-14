@@ -184,7 +184,9 @@ class TestStoreParsed(unittest.TestCase):
 
     def test_calls_upsert_organization(self):
         self.router._store_parsed(self._parsed(), self.results)
-        self.mock_db.orgs.upsert_organization.assert_called_once_with("123456789", "Test Org")
+        self.mock_db.orgs.upsert_organization.assert_called_once()
+        self.assertEqual(self.mock_db.orgs.upsert_organization.call_args.args[:2],
+                         ("123456789", "Test Org"))
 
     def test_calls_create_filing(self):
         self.router._store_parsed(self._parsed(), self.results)

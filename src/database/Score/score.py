@@ -1,16 +1,47 @@
-class ScoreRepository:
-  """Scoring models, factors, and per-filing scores (computed and manual).
+from database.base import Database
 
-  A sibling repository on ``OpenReturnDB`` — not a subclass of the 990 data
-  layer. It shares the facade's connection and joins to the ``filing`` table
-  directly; the purge helpers also touch ``reported_data``/``organization_score``
-  (deleting scores before filings, since organization_score has no FK cascade).
+
+class ScoreDatabase(Database):
+  """Scoring models, factors, and per-filing scores (computed and manual),
+  reached as ``db.scores``.
+
+  A ``Database`` subclass sharing the coordinator's connection; it owns the
+  scoring schema (``Score/sql``) and joins to the ``filing`` table directly. The
+  purge helpers also touch ``reported_data``/``organization_score`` (deleting
+  scores before filings, since organization_score has no FK cascade).
   """
 
   def __init__(self, db) -> None:
     self._db = db
-    self.cursor = db.cursor
-    self.connection = db.connection
+    super().__init__("Score", "Score", populate_guard="score_model",
+                     connection=db.connection, cursor=db.cursor)
+    self._migrate_columns()
+
+  def _migrate_columns(self) -> None:
+    """Add the model-type / manual-scoring columns to databases created before
+    they existed (fresh DBs get them from sql/setup). Each ALTER is independent
+    and ignored only when the column already exists."""
+    for ddl in (
+      "ALTER TABLE score_model ADD COLUMN model_type TEXT REFERENCES model_type (code)",
+      "ALTER TABLE score_model ADD COLUMN scoring_mode TEXT NOT NULL DEFAULT 'computed'",
+      "ALTER TABLE score_factor ADD COLUMN manual_scale TEXT",
+      "ALTER TABLE organization_score_factor ADD COLUMN comment TEXT",
+    ):
+      try:
+        self.cursor.execute(ddl)
+      except Exception as exc:
+        # Expected when the column already exists; re-raise anything else so a
+        # genuine migration failure isn't silently swallowed (string match keeps
+        # this binding-agnostic across sqlite3 / sqlcipher3).
+        if 'duplicate column' not in str(exc).lower():
+          raise
+    # Backfill pre-existing models as financial/computed (the only kind before).
+    try:
+      self.cursor.execute(
+        "UPDATE score_model SET model_type = 'financial' WHERE model_type IS NULL")
+    except Exception:  # pragma: no cover — column guaranteed present above
+      pass
+    self.connection.commit()
 
   def get_model_id(self, version: int = 1) -> int:
     row = self.cursor.execute(
@@ -86,6 +117,47 @@ class ScoreRepository:
     ).fetchall()
     return [{"version": r[0], "description": r[1], "model_type": r[2],
              "scoring_mode": r[3] or "computed", "created_at": r[4]} for r in rows]
+
+  def list_computed_models(self) -> list[dict]:
+    """Versions + model_ids of every non-manual model — the set batch scoring
+    pre-computes. (A model with no factors is still listed; the engine skips it.)"""
+    rows = self.cursor.execute(
+      "SELECT version, model_id FROM score_model "
+      "WHERE COALESCE(scoring_mode, 'computed') != 'manual' ORDER BY version"
+    ).fetchall()
+    return [{"version": r[0], "model_id": r[1]} for r in rows]
+
+  def replace_org_scores(self, ein: str, model_ids: list[int], results: list) -> None:
+    """Batch (re)write of one org's computed scores. Deletes the org's existing
+    scores for ``model_ids`` (factors cascade) then inserts the supplied results
+    — used by the batch/recompute path so a fresh history reshapes every year's
+    score. ``results`` is a list of
+    ``(filing_uuid, model_id, total_score, [(factor_id, raw, weighted), …])``.
+    Does NOT commit — the batch driver commits per chunk of orgs. Scores for
+    models outside ``model_ids`` (e.g. manual) are left untouched."""
+    if model_ids:
+      qmarks = ",".join("?" * len(model_ids))
+      self.cursor.execute(
+        f"DELETE FROM organization_score WHERE model_id IN ({qmarks}) "
+        f"AND filing_id IN (SELECT uuid FROM filing WHERE organization_id = ?)",
+        (*model_ids, ein))
+    for filing_uuid, model_id, total, factors in results:
+      self.cursor.execute(
+        "INSERT INTO organization_score (filing_id, model_id, total_score) VALUES (?, ?, ?)",
+        (filing_uuid, model_id, total))
+      score_id = self.cursor.lastrowid
+      if factors:
+        self.cursor.executemany(
+          "INSERT INTO organization_score_factor "
+          "(score_id, factor_id, raw_value, weighted_value) VALUES (?, ?, ?, ?)",
+          [(score_id, fid, raw, weighted) for fid, raw, weighted in factors])
+
+  def all_eins(self) -> list[str]:
+    """Every organization EIN (for a full score rebuild). Materialized as a list
+    rather than a live cursor: the batch driver commits per chunk of orgs, and a
+    commit while an outer cursor is mid-iteration raises 'SQL statements in
+    progress'. ~850k 10-char EINs is a few tens of MB — acceptable."""
+    return [r[0] for r in self.cursor.execute("SELECT ein FROM organization ORDER BY ein").fetchall()]
 
   def grade_factor(self, score_id: int, factor_id: int, raw_value: float | None,
                    weighted_value: float | None, comment: str | None = None) -> None:
@@ -213,8 +285,8 @@ class ScoreRepository:
     return self.get_score(row[0])
 
   # ── ingest data management (purge) ──────────────────────────────────────
-  # These delete stored filing data and live here (rather than on a filing
-  # mixin) because removing a filing must also remove its scores:
+  # These delete stored filing data and live here (rather than on the filing
+  # concern) because removing a filing must also remove its scores:
   # organization_score.filing_id references filing.uuid with NO ON DELETE
   # CASCADE, so the scores are deleted first; reported_data DOES cascade off
   # filing.filing_id, so it goes automatically when the filing rows are deleted.

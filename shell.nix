@@ -25,6 +25,30 @@
   runserver = pkgs.writeShellScriptBin "runserver" ''
     python3 src/cli.py serve "''${@}"
   '';
+  build-wiki = pkgs.writeShellScriptBin "build-wiki" ''
+    root="$(git rev-parse --show-toplevel)"
+    python3 "$root/tools/build_wiki.py" "''${@}"
+  '';
+  publish-wiki = pkgs.writeShellScriptBin "publish-wiki" ''
+    set -euo pipefail
+    remote="''${1:?usage: publish-wiki <wiki-repo-url>  (e.g. git@github.com:OWNER/REPO.wiki.git)}"
+    root="$(git rev-parse --show-toplevel)"
+    build="$(mktemp -d)"
+    clone="$(mktemp -d)"
+    python3 "$root/tools/build_wiki.py" --out "$build"
+    git clone "$remote" "$clone"
+    rm -f "$clone"/*.md
+    cp "$build"/*.md "$clone"/
+    cd "$clone"
+    git add -A
+    if git diff --cached --quiet; then
+      echo "Wiki already up to date."
+      exit 0
+    fi
+    git commit -m "Sync wiki from docs/"
+    git push
+    echo "Published wiki to $remote"
+  '';
   gcommit = pkgs.writeShellScriptBin "gcommit" ''
     msg_file="GIT_COMMIT_MSG"
 
@@ -83,5 +107,7 @@ in
       gcommit
       runtests
       runserver
+      build-wiki
+      publish-wiki
     ];
   }

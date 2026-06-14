@@ -1,11 +1,11 @@
 """OpenAPI 3.1 description of the OpenReturn REST API.
 
-``build_spec()`` returns the spec as a plain dict so it can be served live
-(``GET /openapi.json`` via ``DocsRouter``), dumped from the CLI
-(``openreturn openapi``), or fed to a code generator. The spec is hand-authored
-here rather than introspected from handlers (the routers carry no schema
-metadata); ``tests/test_openapi.py`` asserts it covers exactly the routes the
-app registers, so it cannot silently drift.
+``build_spec()`` returns the spec as a plain dict. ``openreturn openapi -o
+openapi.json`` writes it to the committed ``openapi.json`` at the repo root,
+which consumers point at directly. The spec is hand-authored here rather than
+introspected from handlers (the routers carry no schema metadata);
+``tests/test_openapi.py`` asserts it covers exactly the routes the app registers
+**and** that the committed ``openapi.json`` is up to date, so it cannot drift.
 
 Error model note: most application-level errors are returned as **HTTP 200**
 with an ``{"error": "..."}`` body (the handlers return a dict), so each data
@@ -22,10 +22,9 @@ _DESCRIPTION = (
     "REST API for IRS Form 990 filings, organizations, and financial-health / "
     "qualitative scores.\n\n"
     "**Authentication** is optional per deployment: when the server runs with "
-    "`--auth`, every data route requires an API key sent as `Authorization: "
+    "`--auth`, every route requires an API key sent as `Authorization: "
     "Bearer <key>` or `X-API-Key: <key>` (a 401 is returned otherwise, and a 429 "
-    "if a per-key rate limit is exceeded). The discovery routes (`/openapi.json`, "
-    "`/docs`) are always public.\n\n"
+    "if a per-key rate limit is exceeded).\n\n"
     "**Errors**: validation and not-found conditions are returned as HTTP 200 with "
     "an `{\"error\": \"...\"}` body. 401/404/413/429/500 are produced by the server."
 )
@@ -561,23 +560,6 @@ def _paths() -> dict:
                 "responses": _responses(_ref("UploadResult"), body_limit=True),
             },
         },
-        # ── Meta / discovery ──────────────────────────────────────────────────
-        "/openapi.json": {
-            "get": {
-                "tags": ["Meta"], "summary": "This OpenAPI document",
-                "security": [],
-                "responses": {"200": {"description": "The OpenAPI 3.1 spec.",
-                                       "content": {"application/json": {"schema": {"type": "object"}}}}},
-            },
-        },
-        "/docs": {
-            "get": {
-                "tags": ["Meta"], "summary": "Interactive API docs (Redoc)",
-                "security": [],
-                "responses": {"200": {"description": "An HTML documentation page.",
-                                       "content": {"text/html": {"schema": {"type": "string"}}}}},
-            },
-        },
     }
 
 
@@ -615,7 +597,7 @@ def build_spec(base_url: str | None = None) -> dict:
         "servers": [{"url": base_url or "/"}],
         "tags": [
             {"name": "Organizations"}, {"name": "Filings"}, {"name": "Scores"},
-            {"name": "Upload"}, {"name": "Meta"},
+            {"name": "Upload"},
         ],
         "paths": paths,
         "components": {

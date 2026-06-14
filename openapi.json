@@ -1,0 +1,2112 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "OpenReturn API",
+    "version": "dev",
+    "description": "REST API for IRS Form 990 filings, organizations, and financial-health / qualitative scores.\n\n**Authentication** is optional per deployment: when the server runs with `--auth`, every route requires an API key sent as `Authorization: Bearer <key>` or `X-API-Key: <key>` (a 401 is returned otherwise, and a 429 if a per-key rate limit is exceeded).\n\n**Errors**: validation and not-found conditions are returned as HTTP 200 with an `{\"error\": \"...\"}` body. 401/404/413/429/500 are produced by the server."
+  },
+  "servers": [
+    {
+      "url": "/"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Organizations"
+    },
+    {
+      "name": "Filings"
+    },
+    {
+      "name": "Scores"
+    },
+    {
+      "name": "Upload"
+    }
+  ],
+  "paths": {
+    "/organizations": {
+      "get": {
+        "tags": [
+          "Organizations"
+        ],
+        "summary": "List organizations",
+        "parameters": [
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "description": "Case-insensitive substring match on name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Results per page (max 500)",
+            "schema": {
+              "type": "integer",
+              "default": 50
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "description": "Results to skip",
+            "schema": {
+              "type": "integer",
+              "default": 0
+            }
+          },
+          {
+            "name": "favorite",
+            "in": "query",
+            "required": false,
+            "description": "Truthy \u2192 only favorited organizations",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/OrganizationList"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Organizations"
+        ],
+        "summary": "Upsert an organization (insert if EIN is new)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "ein",
+                  "name"
+                ],
+                "properties": {
+                  "ein": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Organization"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/organizations/detail": {
+      "get": {
+        "tags": [
+          "Organizations"
+        ],
+        "summary": "Fetch one organization by EIN",
+        "parameters": [
+          {
+            "name": "ein",
+            "in": "query",
+            "required": true,
+            "description": "9-digit EIN",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Organization"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/organizations/full": {
+      "get": {
+        "tags": [
+          "Organizations"
+        ],
+        "summary": "Organization with its filings and convenience links",
+        "parameters": [
+          {
+            "name": "ein",
+            "in": "query",
+            "required": true,
+            "description": "",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/Organization"
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "filings": {
+                              "type": "array",
+                              "items": {
+                                "allOf": [
+                                  {
+                                    "$ref": "#/components/schemas/Filing"
+                                  },
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "links": {
+                                        "type": "object",
+                                        "description": "detail / data / lookup URLs"
+                                      }
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/organizations/favorite": {
+      "post": {
+        "tags": [
+          "Organizations"
+        ],
+        "summary": "Mark an organization (un)favorited",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "ein",
+                  "is_favorite"
+                ],
+                "properties": {
+                  "ein": {
+                    "type": "string"
+                  },
+                  "is_favorite": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Organization"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/filings": {
+      "get": {
+        "tags": [
+          "Filings"
+        ],
+        "summary": "List an organization's filings",
+        "parameters": [
+          {
+            "name": "ein",
+            "in": "query",
+            "required": true,
+            "description": "",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "filings": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/Filing"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Filings"
+        ],
+        "summary": "Create a filing (or find the existing one)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "ein",
+                  "year",
+                  "form_code"
+                ],
+                "properties": {
+                  "ein": {
+                    "type": "string"
+                  },
+                  "year": {
+                    "type": "integer"
+                  },
+                  "form_code": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "filing_id": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/filings/detail": {
+      "get": {
+        "tags": [
+          "Filings"
+        ],
+        "summary": "Fetch filing metadata by UUID",
+        "parameters": [
+          {
+            "name": "filing_id",
+            "in": "query",
+            "required": true,
+            "description": "Filing UUID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Filing"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/filings/data": {
+      "get": {
+        "tags": [
+          "Filings"
+        ],
+        "summary": "All reported field values for a filing",
+        "parameters": [
+          {
+            "name": "filing_id",
+            "in": "query",
+            "required": true,
+            "description": "Filing UUID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "description": "json (default) \u2192 FilingData; md/html \u2192 text table; xml \u2192 document",
+            "schema": {
+              "type": "string",
+              "default": "json",
+              "enum": [
+                "json",
+                "md",
+                "html",
+                "xml"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "JSON FilingData (or an error), or a rendered table.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/FilingData"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/xml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Filings"
+        ],
+        "summary": "Store reported field values for a filing",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "filing_id",
+                  "values"
+                ],
+                "properties": {
+                  "filing_id": {
+                    "type": "string"
+                  },
+                  "values": {
+                    "type": "object",
+                    "description": "Map of field_id \u2192 raw value",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "filing_id": {
+                          "type": "string"
+                        },
+                        "fields_stored": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/filings/lookup": {
+      "get": {
+        "tags": [
+          "Filings"
+        ],
+        "summary": "Filing data by EIN + tax year (lookup + data in one call)",
+        "parameters": [
+          {
+            "name": "ein",
+            "in": "query",
+            "required": true,
+            "description": "",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "year",
+            "in": "query",
+            "required": true,
+            "description": "",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "description": "",
+            "schema": {
+              "type": "string",
+              "default": "json",
+              "enum": [
+                "json",
+                "md",
+                "html",
+                "xml"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "FilingData (or error), or a rendered table.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/FilingData"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              },
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/xml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/scores": {
+      "get": {
+        "tags": [
+          "Scores"
+        ],
+        "summary": "List all scores for an organization",
+        "parameters": [
+          {
+            "name": "ein",
+            "in": "query",
+            "required": true,
+            "description": "",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "ein": {
+                          "type": "string"
+                        },
+                        "scores": {
+                          "type": "array",
+                          "items": {
+                            "type": "object"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Scores"
+        ],
+        "summary": "Create a bare score record",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "filing_id"
+                ],
+                "properties": {
+                  "filing_id": {
+                    "type": "string"
+                  },
+                  "model_version": {
+                    "type": "integer",
+                    "default": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "score_id": {
+                          "type": "integer"
+                        },
+                        "filing_id": {
+                          "type": "string"
+                        },
+                        "model_version": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/scores/filing": {
+      "get": {
+        "tags": [
+          "Scores"
+        ],
+        "summary": "Latest score for a filing UUID",
+        "parameters": [
+          {
+            "name": "filing_id",
+            "in": "query",
+            "required": true,
+            "description": "",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Score"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/scores/detail": {
+      "get": {
+        "tags": [
+          "Scores"
+        ],
+        "summary": "A score with its per-factor breakdown",
+        "parameters": [
+          {
+            "name": "score_id",
+            "in": "query",
+            "required": true,
+            "description": "",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Score"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/scores/lookup": {
+      "get": {
+        "tags": [
+          "Scores"
+        ],
+        "summary": "Latest score for an EIN + tax year",
+        "parameters": [
+          {
+            "name": "ein",
+            "in": "query",
+            "required": true,
+            "description": "",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "year",
+            "in": "query",
+            "required": true,
+            "description": "",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Score"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/scores/compare": {
+      "get": {
+        "tags": [
+          "Scores"
+        ],
+        "summary": "Scores across all model versions for an EIN + year",
+        "parameters": [
+          {
+            "name": "ein",
+            "in": "query",
+            "required": true,
+            "description": "",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "year",
+            "in": "query",
+            "required": true,
+            "description": "",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "ein": {
+                          "type": "string"
+                        },
+                        "year": {
+                          "type": "integer"
+                        },
+                        "scores": {
+                          "type": "array",
+                          "items": {
+                            "type": "object"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/scores/factors": {
+      "get": {
+        "tags": [
+          "Scores"
+        ],
+        "summary": "Factor definitions for a model version",
+        "parameters": [
+          {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "description": "",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ModelFactors"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Scores"
+        ],
+        "summary": "Bulk-store computed factor values on a score",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "score_id",
+                  "values"
+                ],
+                "properties": {
+                  "score_id": {
+                    "type": "integer"
+                  },
+                  "values": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "factor_id": {
+                          "type": "integer"
+                        },
+                        "raw_value": {
+                          "type": "number"
+                        },
+                        "weighted_value": {
+                          "type": "number"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "score_id": {
+                          "type": "integer"
+                        },
+                        "factors_stored": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/scores/types": {
+      "get": {
+        "tags": [
+          "Scores"
+        ],
+        "summary": "Available model categories",
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "types": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/ModelType"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/scores/debug": {
+      "get": {
+        "tags": [
+          "Scores"
+        ],
+        "summary": "Trace a model evaluation (formula \u2192 numbers \u2192 source field)",
+        "parameters": [
+          {
+            "name": "ein",
+            "in": "query",
+            "required": false,
+            "description": "With year \u2014 the filing to trace",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "year",
+            "in": "query",
+            "required": false,
+            "description": "",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "filing_id",
+            "in": "query",
+            "required": false,
+            "description": "Filing UUID \u2014 alternative to ein+year",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "description": "",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ScoreDebug"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/scores/calculate": {
+      "post": {
+        "tags": [
+          "Scores"
+        ],
+        "summary": "Compute, persist, and return a score (computed models)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "ein",
+                  "year"
+                ],
+                "properties": {
+                  "ein": {
+                    "type": "string"
+                  },
+                  "year": {
+                    "type": "integer"
+                  },
+                  "model_version": {
+                    "type": "integer",
+                    "default": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Score"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/scores/finalize": {
+      "post": {
+        "tags": [
+          "Scores"
+        ],
+        "summary": "Set the total on a score record",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "score_id",
+                  "total_score"
+                ],
+                "properties": {
+                  "score_id": {
+                    "type": "integer"
+                  },
+                  "total_score": {
+                    "type": "number"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "score_id": {
+                          "type": "integer"
+                        },
+                        "total_score": {
+                          "type": "number"
+                        }
+                      }
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/scores/grade": {
+      "post": {
+        "tags": [
+          "Scores"
+        ],
+        "summary": "Grade one factor of a manual model (value + comment)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "score_id",
+                  "factor_id",
+                  "value"
+                ],
+                "properties": {
+                  "score_id": {
+                    "type": "integer"
+                  },
+                  "factor_id": {
+                    "type": "integer"
+                  },
+                  "value": {
+                    "type": "number",
+                    "description": "On the factor's scale (e.g. 0\u2013100 for percent)"
+                  },
+                  "comment": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Score"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/upload": {
+      "get": {
+        "tags": [
+          "Upload"
+        ],
+        "summary": "Browser upload form (HTML)",
+        "responses": {
+          "200": {
+            "description": "An HTML upload form.",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Upload"
+        ],
+        "summary": "Upload a ZIP of 990 XML filings (multipart/form-data)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/UploadResult"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      },
+      "apiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key"
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "Organization": {
+        "type": "object",
+        "properties": {
+          "ein": {
+            "type": "string",
+            "description": "9-digit EIN"
+          },
+          "name": {
+            "type": "string"
+          },
+          "is_favorite": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        }
+      },
+      "OrganizationList": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "integer"
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "organizations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Organization"
+            }
+          }
+        }
+      },
+      "Filing": {
+        "type": "object",
+        "properties": {
+          "filing_id": {
+            "type": "string",
+            "description": "Filing UUID"
+          },
+          "year": {
+            "type": "integer"
+          },
+          "ein": {
+            "type": "string"
+          },
+          "form_code": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "object_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "xml_source_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "xml_filename": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "zip_filename": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Field": {
+        "type": "object",
+        "description": "A reported field value with its 990 schema location.",
+        "properties": {
+          "field_id": {
+            "type": "integer"
+          },
+          "value": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "xml_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sub_letter": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "column_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "box_label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "line": {
+            "type": "object"
+          },
+          "section": {
+            "type": "object"
+          },
+          "part": {
+            "type": "object"
+          }
+        }
+      },
+      "FilingData": {
+        "type": "object",
+        "properties": {
+          "filing_id": {
+            "type": "string"
+          },
+          "ein": {
+            "type": "string"
+          },
+          "year": {
+            "type": "integer"
+          },
+          "form_code": {
+            "type": "string"
+          },
+          "xml_filename": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "zip_filename": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Field"
+            }
+          }
+        }
+      },
+      "ScoreFactorResult": {
+        "type": "object",
+        "properties": {
+          "factor_id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "weight": {
+            "type": "number"
+          },
+          "raw_value": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "weighted_value": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "comment": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Grader comment (manual models)"
+          },
+          "manual_scale": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "benchmark",
+              "normalized",
+              "percent",
+              null
+            ]
+          }
+        }
+      },
+      "Score": {
+        "type": "object",
+        "properties": {
+          "score_id": {
+            "type": "integer"
+          },
+          "ein": {
+            "type": "string"
+          },
+          "model_version": {
+            "type": "integer"
+          },
+          "filing_id": {
+            "type": "string"
+          },
+          "year": {
+            "type": "integer"
+          },
+          "total_score": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "scored_at": {
+            "type": "string"
+          },
+          "model_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scoring_mode": {
+            "type": "string",
+            "enum": [
+              "computed",
+              "manual"
+            ]
+          },
+          "factors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScoreFactorResult"
+            }
+          }
+        }
+      },
+      "FactorDefinition": {
+        "type": "object",
+        "properties": {
+          "factor_id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "weight": {
+            "type": "number"
+          },
+          "formula_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "inputs": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "JSON-encoded list of input keys"
+          },
+          "direction": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "higher",
+              "lower",
+              null
+            ]
+          },
+          "benchmark_lo": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "benchmark_hi": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "formula_description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "manual_scale": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "benchmark",
+              "normalized",
+              "percent",
+              null
+            ]
+          }
+        }
+      },
+      "ModelFactors": {
+        "type": "object",
+        "properties": {
+          "model_version": {
+            "type": "integer"
+          },
+          "model_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scoring_mode": {
+            "type": "string",
+            "enum": [
+              "computed",
+              "manual"
+            ]
+          },
+          "factors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FactorDefinition"
+            }
+          }
+        }
+      },
+      "ModelType": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "UploadResult": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "example": "complete"
+          },
+          "stored": {
+            "type": "integer"
+          },
+          "errors": {
+            "type": "integer"
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "ScoreDebug": {
+        "type": "object",
+        "description": "Read-only walkthrough of a model evaluation against a filing (formula, substituted numbers, variables + source, normalization).",
+        "properties": {
+          "ein": {
+            "type": "string"
+          },
+          "year": {
+            "type": "integer"
+          },
+          "filing_id": {
+            "type": "string"
+          },
+          "form_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model_version": {
+            "type": "integer"
+          },
+          "model_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scoring_mode": {
+            "type": "string",
+            "enum": [
+              "computed",
+              "manual"
+            ]
+          },
+          "total_score": {
+            "type": "number"
+          },
+          "factors": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "Missing or invalid API key (only when the server runs with --auth).",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "RateLimited": {
+        "description": "Per-key rate limit exceeded; a `Retry-After` header is sent.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Route not found.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "PayloadTooLarge": {
+        "description": "Request body exceeds 50 MB.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "ServerError": {
+        "description": "Internal server error."
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    },
+    {
+      "apiKeyAuth": []
+    }
+  ]
+}

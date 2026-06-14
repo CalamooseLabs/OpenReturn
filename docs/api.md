@@ -12,22 +12,15 @@ All responses are `application/json` unless a `format` parameter requests an alt
 
 ## OpenAPI Specification
 
-The full API is described by a machine-readable **OpenAPI 3.1** document, served by the running server and always public (not gated by `--auth`):
-
-| Route | Returns |
-|-------|---------|
-| `GET /openapi.json` | The OpenAPI 3.1 spec (point code generators / Postman / Swagger at this) |
-| `GET /docs` | Interactive API docs (Redoc, rendered from the spec) |
-
-You can also dump the spec without running the server:
+The full API is described by a machine-readable **OpenAPI 3.1** document committed at [`openapi.json`](../openapi.json) in the repository root — point code generators, Postman, or `editor.swagger.io` at the raw file. Regenerate it after changing routes:
 
 ```bash
 openreturn openapi                 # print to stdout
-openreturn openapi -o openapi.json # write to a file
+openreturn openapi -o openapi.json # write the committed file
 openreturn openapi --compact       # minified
 ```
 
-The sections below are the human-readable reference; the OpenAPI document is the source of truth for integrators and is kept in lock-step with the routes by a test.
+The sections below are the human-readable reference; the OpenAPI document is the source of truth for integrators. A test asserts it covers exactly the registered routes and that the committed `openapi.json` is up to date, so it can't drift.
 
 ---
 

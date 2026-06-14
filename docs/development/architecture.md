@@ -9,8 +9,8 @@ src/
                    IRS990/sql/{setup,populate,migrations}/
                    Score/sql/{setup,populate,migrations}/
   parser/        → Parser (base) / IRS990Parser
-  router/        → Router (base) / UploadRouter / OrgRouter / FilingRouter / ScoreRouter / DocsRouter
-  openapi.py     → OpenAPI 3.1 spec builder (served at /openapi.json, dumped by `openreturn openapi`)
+  router/        → Router (base) / UploadRouter / OrgRouter / FilingRouter / ScoreRouter
+  openapi.py     → OpenAPI 3.1 spec builder (dumped to the committed openapi.json by `openreturn openapi`)
   server/        → Server (wraps HTTPServer, wires routers to routes)
   scoring/       → ScoringEngine
   unzipper/      → Unzipper (ZIP file iterator)
@@ -34,7 +34,6 @@ graph TD
   routers --> filing[FilingRouter]
   routers --> score[ScoreRouter]
   routers --> upload[UploadRouter]
-  routers --> docs[DocsRouter<br/>/openapi.json, /docs]
   score --> engine[ScoringEngine]
   upload --> parser[IRS990Parser]
   org --> db[(ScoreDatabase<br/>SQLite)]
@@ -337,7 +336,7 @@ All commands are dispatched through `src/cli.py` (the unified `openreturn` binar
 | `openreturn serve` | `src/main.py` → `cmd_serve` | Start the API server (single-instance; records `server.pid`) |
 | `openreturn ingest` | `src/ingest.py` → `cmd_ingest` | Bulk-ingest ZIP archives; also `--background`/`--stop` and `--ingested`/`--forget`/`--purge` management |
 | `openreturn status` | `src/status.py` → `cmd_status` | DB size, row counts, encryption, migrations, server + background-ingest probe |
-| `openreturn openapi` | `src/openapi.py` → `cmd_openapi` | Print/dump the OpenAPI 3.1 spec |
+| `openreturn openapi` | `src/openapi.py` → `cmd_openapi` | Print/dump the OpenAPI 3.1 spec to `openapi.json` |
 | `openreturn keys` | `src/keys.py` | Manage API keys |
 | `openreturn models` | `src/models.py` | Register and list scoring models |
 

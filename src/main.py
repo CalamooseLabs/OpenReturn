@@ -16,7 +16,6 @@ from router.Upload import UploadRouter
 from router.Org import OrgRouter
 from router.Filing import FilingRouter
 from router.Score import ScoreRouter
-from router.Docs import DocsRouter
 from server import Server
 
 
@@ -140,8 +139,6 @@ def cmd_serve(args) -> int:
     app.include_router(OrgRouter(db=db, secure_by_default=True))
     app.include_router(FilingRouter(db=db, secure_by_default=True))
     app.include_router(ScoreRouter(db=db, secure_by_default=True))
-    # Public discovery routes (/openapi.json, /docs) — not gated by --auth.
-    app.include_router(DocsRouter(base_url=f"http://{args.host}:{args.port}"))
 
     # Treat SIGTERM like Ctrl-C so the server shuts down cleanly and removes its
     # PID file (signal handlers must be installed on the main thread).

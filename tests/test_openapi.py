@@ -1,7 +1,8 @@
-"""Tests for the OpenAPI spec (src/openapi.py) and the DocsRouter that serves it.
+"""Tests for the OpenAPI spec (src/openapi.py) and the committed openapi.json.
 
-The coverage test is the anti-drift guard: it asserts the spec documents exactly
-the routes the app registers — no more, no less."""
+Anti-drift guards: the coverage test asserts the spec documents exactly the
+routes the app registers, and TestCommittedSpec asserts the committed
+openapi.json matches build_spec()."""
 
 import contextlib
 import io
@@ -20,7 +21,9 @@ from router.Upload import UploadRouter
 from router.Org import OrgRouter
 from router.Filing import FilingRouter
 from router.Score import ScoreRouter
-from router.Docs import DocsRouter
+
+_ROOT = os.path.join(os.path.dirname(__file__), '..')
+_COMMITTED_SPEC = os.path.join(_ROOT, 'openapi.json')
 
 
 class TestSpecStructure(unittest.TestCase):
@@ -53,11 +56,6 @@ class TestSpecStructure(unittest.TestCase):
     def test_is_json_serializable(self):
         json.dumps(self.spec)  # must not raise
 
-    def test_meta_routes_are_public(self):
-        # discovery routes override the global security with []
-        self.assertEqual(self.spec["paths"]["/openapi.json"]["get"]["security"], [])
-        self.assertEqual(self.spec["paths"]["/docs"]["get"]["security"], [])
-
     def test_post_and_get_on_shared_factor_path(self):
         # /scores/factors is both a GET (list) and POST (store)
         self.assertIn("get", self.spec["paths"]["/scores/factors"])
@@ -76,7 +74,7 @@ class TestSpecCoverage(unittest.TestCase):
     def _registered_routes(self):
         db = MagicMock()
         routers = [UploadRouter(db=db), OrgRouter(db=db), FilingRouter(db=db),
-                   ScoreRouter(db=db), DocsRouter()]
+                   ScoreRouter(db=db)]
         routes = set()
         for r in routers:
             for method, paths in r.routes.items():
@@ -96,27 +94,26 @@ class TestSpecCoverage(unittest.TestCase):
                          f"\nextra in spec: {sorted(documented - registered)}")
 
 
-class TestDocsRouter(unittest.TestCase):
+class TestCommittedSpec(unittest.TestCase):
+    """The committed openapi.json (what consumers point at) must match the code."""
 
-    def setUp(self):
-        self.router = DocsRouter(base_url="http://localhost:8080")
+    @staticmethod
+    def _normalize(spec):
+        # info.version reflects the installed package version, which differs
+        # between `dev` (from source) and a built package — ignore it.
+        spec = json.loads(json.dumps(spec))
+        spec["info"]["version"] = "x"
+        return spec
 
-    def test_openapi_json_route(self):
-        body, ct = self.router.routes['GET']['/openapi.json'](
-            query_params={}, body=None, headers=None)
-        self.assertEqual(ct, 'application/json')
-        self.assertEqual(json.loads(body)["openapi"], "3.1.0")
+    def test_committed_file_exists(self):
+        self.assertTrue(os.path.exists(_COMMITTED_SPEC),
+                        "openapi.json missing — run `openreturn openapi -o openapi.json`")
 
-    def test_docs_html_route(self):
-        html, ct = self.router.routes['GET']['/docs'](
-            query_params={}, body=None, headers=None)
-        self.assertTrue(ct.startswith('text/html'))
-        self.assertIn('redoc', html.lower())
-        self.assertIn('/openapi.json', html)
-
-    def test_routes_are_public(self):
-        self.assertIs(self.router.routes['GET']['/openapi.json']._secured, False)
-        self.assertIs(self.router.routes['GET']['/docs']._secured, False)
+    def test_committed_file_in_sync(self):
+        committed = json.load(open(_COMMITTED_SPEC))
+        self.assertEqual(
+            self._normalize(committed), self._normalize(openapi.build_spec()),
+            "openapi.json is stale — regenerate with `openreturn openapi -o openapi.json`")
 
 
 class TestCmdOpenapi(unittest.TestCase):

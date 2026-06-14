@@ -1,1 +1,1 @@
-from .score import ScoreDatabase as ScoreDatabase
+from .score import ScoreRepository as ScoreRepository

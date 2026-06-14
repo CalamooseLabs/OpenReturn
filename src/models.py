@@ -8,7 +8,7 @@ except ImportError:  # pragma: no cover
     print("Error: Python 3.11+ is required for openreturn-models (tomllib not found).", file=sys.stderr)
     sys.exit(1)
 
-from database.Score import ScoreDatabase
+from database import OpenReturnDB
 from scoring.engine import _PATHS as _VALID_INPUTS, FORMULA_TYPES, FORMULA_INPUT_COUNTS, _FACTOR_PREFIX
 from scoring.graph import find_cycle
 
@@ -290,13 +290,13 @@ def cmd_register(args) -> None:
         print(f"Validation passed: model version {version} with {n_factors} factors")
         return
 
-    db = ScoreDatabase(path=args.db)
+    db = OpenReturnDB(path=args.db)
     description = data['model'].get('description')
     mode = data['model'].get('mode', 'computed')
     model_type = data['model'].get('type')
 
     if model_type is not None:
-        valid_types = {t['code'] for t in db.list_model_types()}
+        valid_types = {t['code'] for t in db.scores.list_model_types()}
         if model_type not in valid_types:
             print(f"ERROR: unknown model type '{model_type}'. Known types: "
                   f"{sorted(valid_types)}", file=sys.stderr)
@@ -370,8 +370,8 @@ def cmd_register(args) -> None:
 
 
 def cmd_list(args) -> None:
-    db = ScoreDatabase(path=args.db)
-    models = db.list_models()
+    db = OpenReturnDB(path=args.db)
+    models = db.scores.list_models()
     db.close()
     if not models:
         print("No models registered.")

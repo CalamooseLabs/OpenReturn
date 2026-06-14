@@ -296,21 +296,21 @@ class TestCliDispatch(unittest.TestCase):
 
     def test_keys_list_dispatches(self):
         mock_db = MagicMock()
-        mock_db.list_api_keys.return_value = []
+        mock_db.keys.list_api_keys.return_value = []
         with patch('keys._require_db', return_value=mock_db), patch('cli._load_env'):
             result = self._run(['keys', 'list'])
         self.assertEqual(result, 0)
 
     def test_keys_create_dispatches(self):
         mock_db = MagicMock()
-        mock_db.create_api_key.return_value = (1, 'tok')
+        mock_db.keys.create_api_key.return_value = (1, 'tok')
         with patch('keys._require_db', return_value=mock_db), patch('cli._load_env'):
             result = self._run(['keys', 'create', 'MyApp'])
         self.assertEqual(result, 0)
 
     def test_keys_revoke_dispatches(self):
         mock_db = MagicMock()
-        mock_db.revoke_api_key.return_value = True
+        mock_db.keys.revoke_api_key.return_value = True
         with patch('keys._require_db', return_value=mock_db), patch('cli._load_env'):
             result = self._run(['keys', 'revoke', '7'])
         self.assertEqual(result, 0)
@@ -325,7 +325,7 @@ class TestCliDispatch(unittest.TestCase):
     def test_models_list_dispatches(self):
         mock_db = MagicMock()
         mock_db.cursor.execute.return_value.fetchall.return_value = []
-        with patch('models.ScoreDatabase', return_value=mock_db), patch('cli._load_env'):
+        with patch('models.OpenReturnDB', return_value=mock_db), patch('cli._load_env'):
             result = self._run(['models', 'list'])
         self.assertEqual(result, 0)
 
@@ -341,7 +341,7 @@ class TestCliDispatch(unittest.TestCase):
             mock_db = MagicMock()
             mock_db.cursor.execute.return_value.fetchone.return_value = None
             mock_db.cursor.lastrowid = 1
-            with patch('models.ScoreDatabase', return_value=mock_db), patch('cli._load_env'):
+            with patch('models.OpenReturnDB', return_value=mock_db), patch('cli._load_env'):
                 result = self._run(['models', 'register', toml_path])
         self.assertEqual(result, 0)
 

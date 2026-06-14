@@ -1,9 +1,10 @@
-"""Repository mixins for IRS990Database.
+"""Repository classes for the 990 data layer.
 
-Each mixin groups one area of query/command responsibility and operates on
-the ``self.cursor`` / ``self.connection`` provided by the base ``Database``.
-``IRS990Database`` composes them via multiple inheritance, so the public
-interface (``db.list_organizations(...)`` etc.) stays flat and unchanged.
+Each repository groups one area of query/command responsibility and operates on
+the shared ``self.cursor`` / ``self.connection`` it captures from the facade in
+``__init__(self, db)``. ``OpenReturnDB`` composes them as namespaces
+(``db.orgs.list_organizations(...)`` etc.); repositories reach siblings via
+``self._db`` when a query spans concerns.
 """
 
 from .api_keys import ApiKeyRepository as ApiKeyRepository

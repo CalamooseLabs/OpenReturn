@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from database.IRS990 import IRS990Database
+from database import OpenReturnDB
 from parser.IRS990 import IRS990Parser
 from tests.fixtures import (
     VALID_990EZ_XML,
@@ -25,10 +25,10 @@ _FORM_PATH = "ReturnHeader/ReturnTypeCd"
 
 
 def _make_db():
-    return IRS990Database(path=":memory:")
+    return OpenReturnDB(path=":memory:")
 
 
-def _run_xml(xml_str: str, db: IRS990Database) -> dict:
+def _run_xml(xml_str: str, db: OpenReturnDB) -> dict:
     """Parse a single XML string through the full pipeline. Returns result dict."""
     parser = IRS990Parser(xml_str)
     ein       = parser.getElem(_EIN_PATH)
@@ -37,17 +37,17 @@ def _run_xml(xml_str: str, db: IRS990Database) -> dict:
     form_code = parser.getElem(_FORM_PATH)
     if not all([ein, name, year, form_code]):
         return {"status": "error", "reason": "missing header fields"}
-    if form_code not in db.get_supported_forms():
+    if form_code not in db.meta.get_supported_forms():
         return {"status": "skipped", "reason": f"unsupported: {form_code}"}
-    db.upsert_organization(ein, name)
-    filing_id = db.create_filing(ein, int(year), form_code)
-    xpath_index = db.get_xpath_index()
+    db.orgs.upsert_organization(ein, name)
+    filing_id = db.filings.create_filing(ein, int(year), form_code)
+    xpath_index = db.meta.get_xpath_index()
     values = {}
     for xpath, field_id in xpath_index.items():
         value = parser.getElem(xpath)
         if value is not None:
             values[field_id] = value
-    db.store_reported_data(filing_id, values)
+    db.reported_data.store_reported_data(filing_id, values)
     db.commit()
     return {"status": "stored", "filing_id": filing_id, "ein": ein,
             "year": year, "form_code": form_code, "fields_stored": len(values)}
@@ -68,27 +68,27 @@ class TestNewFormsRegistered(unittest.TestCase):
         cls.db.close()
 
     def test_990ez_is_supported(self):
-        forms = self.db.get_supported_forms()
+        forms = self.db.meta.get_supported_forms()
         self.assertIn("990EZ", forms)
 
     def test_990n_is_supported(self):
-        forms = self.db.get_supported_forms()
+        forms = self.db.meta.get_supported_forms()
         self.assertIn("990N", forms)
 
     def test_990pf_is_supported(self):
-        forms = self.db.get_supported_forms()
+        forms = self.db.meta.get_supported_forms()
         self.assertIn("990PF", forms)
 
     def test_990t_is_supported(self):
-        forms = self.db.get_supported_forms()
+        forms = self.db.meta.get_supported_forms()
         self.assertIn("990T", forms)
 
     def test_990_still_supported(self):
-        forms = self.db.get_supported_forms()
+        forms = self.db.meta.get_supported_forms()
         self.assertIn("990", forms)
 
     def test_all_five_forms_supported(self):
-        forms = self.db.get_supported_forms()
+        forms = self.db.meta.get_supported_forms()
         self.assertEqual(forms, {"990", "990EZ", "990N", "990PF", "990T"})
 
     def test_990ez_has_parts_defined(self):
@@ -275,22 +275,22 @@ class TestNewFormsPipeline(unittest.TestCase):
 
     def test_990ez_correct_form_code(self):
         result = self._run(VALID_990EZ_XML)
-        filing = self.db.get_filing(result["filing_id"])
+        filing = self.db.filings.get_filing(result["filing_id"])
         self.assertEqual(filing["form_code"], "990EZ")
 
     def test_990n_correct_form_code(self):
         result = self._run(VALID_990N_XML)
-        filing = self.db.get_filing(result["filing_id"])
+        filing = self.db.filings.get_filing(result["filing_id"])
         self.assertEqual(filing["form_code"], "990N")
 
     def test_990pf_correct_form_code(self):
         result = self._run(VALID_990PF_XML)
-        filing = self.db.get_filing(result["filing_id"])
+        filing = self.db.filings.get_filing(result["filing_id"])
         self.assertEqual(filing["form_code"], "990PF")
 
     def test_990t_correct_form_code(self):
         result = self._run(VALID_990T_XML)
-        filing = self.db.get_filing(result["filing_id"])
+        filing = self.db.filings.get_filing(result["filing_id"])
         self.assertEqual(filing["form_code"], "990T")
 
     def test_990ez_stores_reported_data(self):
@@ -307,7 +307,7 @@ class TestNewFormsPipeline(unittest.TestCase):
 
     def test_990ez_revenue_field_stored(self):
         result = self._run(VALID_990EZ_XML)
-        data = self.db.get_reported_data(result["filing_id"])
+        data = self.db.reported_data.get_reported_data(result["filing_id"])
         rev_row = next(
             (r for r in data if r["xml_path"] == "ReturnData/IRS990EZ/TotalRevenueAmt"),
             None
@@ -317,7 +317,7 @@ class TestNewFormsPipeline(unittest.TestCase):
 
     def test_990ez_expense_field_stored(self):
         result = self._run(VALID_990EZ_XML)
-        data = self.db.get_reported_data(result["filing_id"])
+        data = self.db.reported_data.get_reported_data(result["filing_id"])
         exp_row = next(
             (r for r in data if r["xml_path"] == "ReturnData/IRS990EZ/TotalExpensesAmt"),
             None
@@ -327,7 +327,7 @@ class TestNewFormsPipeline(unittest.TestCase):
 
     def test_990ez_net_assets_field_stored(self):
         result = self._run(VALID_990EZ_XML)
-        data = self.db.get_reported_data(result["filing_id"])
+        data = self.db.reported_data.get_reported_data(result["filing_id"])
         na_row = next(
             (r for r in data if r["xml_path"] == "ReturnData/IRS990EZ/NetAssetsOrFundBalancesEOYAmt"),
             None
@@ -337,7 +337,7 @@ class TestNewFormsPipeline(unittest.TestCase):
 
     def test_990pf_balance_sheet_stored(self):
         result = self._run(VALID_990PF_XML)
-        data = self.db.get_reported_data(result["filing_id"])
+        data = self.db.reported_data.get_reported_data(result["filing_id"])
         assets_row = next(
             (r for r in data if r["xml_path"] == "ReturnData/IRS990PF/TotalAssetsEOYAmt"),
             None
@@ -347,7 +347,7 @@ class TestNewFormsPipeline(unittest.TestCase):
 
     def test_990t_ubi_field_stored(self):
         result = self._run(VALID_990T_XML)
-        data = self.db.get_reported_data(result["filing_id"])
+        data = self.db.reported_data.get_reported_data(result["filing_id"])
         ubi_row = next(
             (r for r in data if r["xml_path"] == "ReturnData/IRS990T/TotalGrossUBIAmt"),
             None
@@ -357,23 +357,23 @@ class TestNewFormsPipeline(unittest.TestCase):
 
     def test_990ez_org_created(self):
         self._run(VALID_990EZ_XML)
-        org = self.db.get_organization("111111111")
+        org = self.db.orgs.get_organization("111111111")
         self.assertIsNotNone(org)
         self.assertEqual(org["name"], "Small Nonprofit EZ")
 
     def test_990n_org_created(self):
         self._run(VALID_990N_XML)
-        org = self.db.get_organization("222222222")
+        org = self.db.orgs.get_organization("222222222")
         self.assertIsNotNone(org)
 
     def test_990pf_org_created(self):
         self._run(VALID_990PF_XML)
-        org = self.db.get_organization("333333333")
+        org = self.db.orgs.get_organization("333333333")
         self.assertIsNotNone(org)
 
     def test_990t_org_created(self):
         self._run(VALID_990T_XML)
-        org = self.db.get_organization("444444444")
+        org = self.db.orgs.get_organization("444444444")
         self.assertIsNotNone(org)
 
     def test_all_four_new_forms_in_one_db(self):
@@ -385,13 +385,13 @@ class TestNewFormsPipeline(unittest.TestCase):
 
     def test_990ez_fields_include_correct_part_number(self):
         result = self._run(VALID_990EZ_XML)
-        data = self.db.get_reported_data(result["filing_id"])
+        data = self.db.reported_data.get_reported_data(result["filing_id"])
         part_i_rows = [r for r in data if r["part"]["number"] == "I"]
         self.assertGreater(len(part_i_rows), 0)
 
     def test_990pf_total_revenue_nested_path_stored(self):
         result = self._run(VALID_990PF_XML)
-        data = self.db.get_reported_data(result["filing_id"])
+        data = self.db.reported_data.get_reported_data(result["filing_id"])
         rev_row = next(
             (r for r in data
              if "TotalRevAndExpnssGrp" in (r["xml_path"] or "")
@@ -416,10 +416,10 @@ class TestPopulateSqlIdempotent(unittest.TestCase):
 
     def test_supported_forms_consistent_across_reinit(self):
         db1 = _make_db()
-        forms1 = db1.get_supported_forms()
+        forms1 = db1.meta.get_supported_forms()
         db1.close()
         db2 = _make_db()
-        forms2 = db2.get_supported_forms()
+        forms2 = db2.meta.get_supported_forms()
         db2.close()
         self.assertEqual(forms1, forms2)
 

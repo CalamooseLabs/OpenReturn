@@ -64,7 +64,7 @@ class TestConsoleConstants(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 import main as main_mod
-from database.Score import ScoreDatabase
+from database import OpenReturnDB
 
 
 class TestDumpDb(unittest.TestCase):
@@ -72,7 +72,7 @@ class TestDumpDb(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.db = ScoreDatabase(path=":memory:")
+        cls.db = OpenReturnDB(path=":memory:")
 
     @classmethod
     def tearDownClass(cls):
@@ -94,14 +94,14 @@ class TestDumpDb(unittest.TestCase):
             main_mod._dump_db(self.db)
 
     def test_with_organization_rows(self):
-        self.db.upsert_organization("123456789", "Test Org")
+        self.db.orgs.upsert_organization("123456789", "Test Org")
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             main_mod._dump_db(self.db)
 
     def test_with_filing_rows(self):
-        self.db.upsert_organization("123456789", "Test Org")
-        self.db.create_filing("123456789", 2023, "990")
+        self.db.orgs.upsert_organization("123456789", "Test Org")
+        self.db.filings.create_filing("123456789", 2023, "990")
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             main_mod._dump_db(self.db)
@@ -118,8 +118,8 @@ class TestDumpDb(unittest.TestCase):
         ein_base = "10000000"
         for i in range(6):
             ein = f"{int(ein_base) + i:09d}"
-            self.db.upsert_organization(ein, f"Org {i}")
-            self.db.create_filing(ein, 2020 + i, "990")
+            self.db.orgs.upsert_organization(ein, f"Org {i}")
+            self.db.filings.create_filing(ein, 2020 + i, "990")
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             main_mod._dump_db(self.db)
@@ -179,7 +179,7 @@ class TestMainFunction(unittest.TestCase):
                 Path("OpenReturn.db").write_bytes(b"")
                 result, _ = self._run_main(['main', '--testing'])
                 self.assertEqual(result, 0)
-                # File should have been recreated by ScoreDatabase init
+                # File should have been recreated by OpenReturnDB init
             finally:
                 os.chdir(old_cwd)
 
@@ -238,9 +238,9 @@ class TestRequireDb(unittest.TestCase):
     def test_returns_database_when_db_exists(self):
         with tempfile.TemporaryDirectory() as td:
             db_path = Path(td) / "OpenReturn.db"
-            # Use a real in-memory db to avoid touching disk inside ScoreDatabase
+            # Use a real in-memory db to avoid touching disk inside OpenReturnDB
             with patch('keys.Path') as mock_path_cls, \
-                 patch('keys.ScoreDatabase') as mock_db_cls:
+                 patch('keys.OpenReturnDB') as mock_db_cls:
                 mock_path_cls.return_value.exists.return_value = True
                 mock_db_instance = MagicMock()
                 mock_db_cls.return_value = mock_db_instance
@@ -258,18 +258,18 @@ class TestCmdCreate(unittest.TestCase):
 
     def test_prints_key_info_and_returns_zero(self):
         mock_db = MagicMock()
-        mock_db.create_api_key.return_value = (42, "rawtoken123")
+        mock_db.keys.create_api_key.return_value = (42, "rawtoken123")
         with patch('keys._require_db', return_value=mock_db):
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
                 result = keys_mod.cmd_create(self._make_args())
         self.assertEqual(result, 0)
-        mock_db.create_api_key.assert_called_once_with("Test Key", rate_limit=-1)
+        mock_db.keys.create_api_key.assert_called_once_with("Test Key", rate_limit=-1)
         mock_db.close.assert_called_once()
 
     def test_output_contains_created(self):
         mock_db = MagicMock()
-        mock_db.create_api_key.return_value = (1, "secret")
+        mock_db.keys.create_api_key.return_value = (1, "secret")
         with patch('keys._require_db', return_value=mock_db):
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
@@ -278,7 +278,7 @@ class TestCmdCreate(unittest.TestCase):
 
     def test_output_contains_key_id(self):
         mock_db = MagicMock()
-        mock_db.create_api_key.return_value = (99, "tok")
+        mock_db.keys.create_api_key.return_value = (99, "tok")
         with patch('keys._require_db', return_value=mock_db):
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
@@ -290,7 +290,7 @@ class TestCmdList(unittest.TestCase):
 
     def test_empty_list_prints_no_keys(self):
         mock_db = MagicMock()
-        mock_db.list_api_keys.return_value = []
+        mock_db.keys.list_api_keys.return_value = []
         with patch('keys._require_db', return_value=mock_db):
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
@@ -300,7 +300,7 @@ class TestCmdList(unittest.TestCase):
 
     def test_list_with_keys_returns_zero(self):
         mock_db = MagicMock()
-        mock_db.list_api_keys.return_value = [
+        mock_db.keys.list_api_keys.return_value = [
             {'key_id': 1, 'name': 'CI', 'created_at': '2024-01-01', 'last_used_at': None, 'active': True, 'rate_limit': -1},
         ]
         with patch('keys._require_db', return_value=mock_db):
@@ -311,7 +311,7 @@ class TestCmdList(unittest.TestCase):
 
     def test_list_with_keys_prints_name(self):
         mock_db = MagicMock()
-        mock_db.list_api_keys.return_value = [
+        mock_db.keys.list_api_keys.return_value = [
             {'key_id': 7, 'name': 'Dashboard', 'created_at': '2024-06-01', 'last_used_at': '2024-06-05', 'active': True, 'rate_limit': -1},
         ]
         with patch('keys._require_db', return_value=mock_db):
@@ -322,7 +322,7 @@ class TestCmdList(unittest.TestCase):
 
     def test_revoked_key_shown(self):
         mock_db = MagicMock()
-        mock_db.list_api_keys.return_value = [
+        mock_db.keys.list_api_keys.return_value = [
             {'key_id': 3, 'name': 'Old', 'created_at': '2023-01-01', 'last_used_at': None, 'active': False, 'rate_limit': -1},
         ]
         with patch('keys._require_db', return_value=mock_db):
@@ -341,17 +341,17 @@ class TestCmdRevoke(unittest.TestCase):
 
     def test_revoke_existing_key_returns_zero(self):
         mock_db = MagicMock()
-        mock_db.revoke_api_key.return_value = True
+        mock_db.keys.revoke_api_key.return_value = True
         with patch('keys._require_db', return_value=mock_db):
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
                 result = keys_mod.cmd_revoke(self._make_args(5))
         self.assertEqual(result, 0)
-        mock_db.revoke_api_key.assert_called_once_with(5)
+        mock_db.keys.revoke_api_key.assert_called_once_with(5)
 
     def test_revoke_existing_prints_revoked(self):
         mock_db = MagicMock()
-        mock_db.revoke_api_key.return_value = True
+        mock_db.keys.revoke_api_key.return_value = True
         with patch('keys._require_db', return_value=mock_db):
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
@@ -360,7 +360,7 @@ class TestCmdRevoke(unittest.TestCase):
 
     def test_revoke_missing_key_returns_one(self):
         mock_db = MagicMock()
-        mock_db.revoke_api_key.return_value = False
+        mock_db.keys.revoke_api_key.return_value = False
         with patch('keys._require_db', return_value=mock_db):
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
@@ -369,7 +369,7 @@ class TestCmdRevoke(unittest.TestCase):
 
     def test_revoke_missing_prints_not_found(self):
         mock_db = MagicMock()
-        mock_db.revoke_api_key.return_value = False
+        mock_db.keys.revoke_api_key.return_value = False
         with patch('keys._require_db', return_value=mock_db):
             stderr_buf = io.StringIO()
             with contextlib.redirect_stderr(stderr_buf):
@@ -381,7 +381,7 @@ class TestKeysMain(unittest.TestCase):
 
     def _run(self, argv):
         mock_db = MagicMock()
-        mock_db.list_api_keys.return_value = []
+        mock_db.keys.list_api_keys.return_value = []
         with patch('sys.argv', argv), \
              patch('keys._require_db', return_value=mock_db):
             buf = io.StringIO()
@@ -395,7 +395,7 @@ class TestKeysMain(unittest.TestCase):
 
     def test_create_subcommand(self):
         mock_db = MagicMock()
-        mock_db.create_api_key.return_value = (1, "tok")
+        mock_db.keys.create_api_key.return_value = (1, "tok")
         with patch('sys.argv', ['keys', 'create', 'MyApp']), \
              patch('keys._require_db', return_value=mock_db):
             buf = io.StringIO()
@@ -405,7 +405,7 @@ class TestKeysMain(unittest.TestCase):
 
     def test_revoke_subcommand(self):
         mock_db = MagicMock()
-        mock_db.revoke_api_key.return_value = True
+        mock_db.keys.revoke_api_key.return_value = True
         with patch('sys.argv', ['keys', 'revoke', '1']), \
              patch('keys._require_db', return_value=mock_db):
             buf = io.StringIO()
@@ -496,15 +496,15 @@ class TestResolveIds(unittest.TestCase):
     actual filing_id when an (EIN, year, form) row already exists."""
 
     def setUp(self):
-        from database.IRS990 import IRS990Database
-        self.db = IRS990Database(path=":memory:")
-        self.db.upsert_organization("123456789", "Test Org")
+        from database import OpenReturnDB
+        self.db = OpenReturnDB(path=":memory:")
+        self.db.orgs.upsert_organization("123456789", "Test Org")
 
     def tearDown(self):
         self.db.close()
 
     def _existing_id(self, ein, year, form):
-        self.db.create_filing(ein, year, form)
+        self.db.filings.create_filing(ein, year, form)
         return self.db.cursor.execute(
             "SELECT filing_id FROM filing WHERE organization_id=? AND year=? AND form_code=?",
             (ein, year, form),
@@ -542,9 +542,9 @@ class TestResolveIds(unittest.TestCase):
 class TestFlushZip(unittest.TestCase):
 
     def setUp(self):
-        from database.IRS990 import IRS990Database
-        self.db = IRS990Database(path=":memory:")
-        xpath_index = self.db.get_xpath_index()
+        from database import OpenReturnDB
+        self.db = OpenReturnDB(path=":memory:")
+        xpath_index = self.db.meta.get_xpath_index()
         self.field_id = list(xpath_index.values())[0]
 
     def tearDown(self):
@@ -582,8 +582,8 @@ class TestFlushZip(unittest.TestCase):
         self.assertEqual(count, 1)
 
     def test_id_remap_when_filing_exists(self):
-        self.db.upsert_organization("111111111", "Alpha")
-        self.db.create_filing("111111111", 2023, "990")
+        self.db.orgs.upsert_organization("111111111", "Alpha")
+        self.db.filings.create_filing("111111111", 2023, "990")
         actual_id = self.db.cursor.execute(
             "SELECT filing_id FROM filing WHERE organization_id=? AND year=? AND form_code=?",
             ("111111111", 2023, "990"),
@@ -601,8 +601,8 @@ class TestFlushZip(unittest.TestCase):
     def test_persistent_remap_applies_to_later_flush(self):
         """A remap from an earlier flush must still apply when a within-ZIP
         duplicate's reported_data arrives in a later flush (empty filings)."""
-        self.db.upsert_organization("111111111", "Alpha")
-        self.db.create_filing("111111111", 2023, "990")
+        self.db.orgs.upsert_organization("111111111", "Alpha")
+        self.db.filings.create_filing("111111111", 2023, "990")
         actual_id = self.db.cursor.execute(
             "SELECT filing_id FROM filing WHERE organization_id=? AND year=? AND form_code=?",
             ("111111111", 2023, "990"),
@@ -616,7 +616,7 @@ class TestFlushZip(unittest.TestCase):
             [(pre_id, self.field_id, "v1")], id_remap,
         )
         # Flush 2: no new filing, but more data for the same pre_id.
-        field2 = list(self.db.get_xpath_index().values())[1]
+        field2 = list(self.db.meta.get_xpath_index().values())[1]
         ingest_mod._flush_zip(self.db, [], [], [(pre_id, field2, "v2")], id_remap)
         count = self.db.cursor.execute(
             "SELECT COUNT(*) FROM reported_data WHERE filing_id = ?", (actual_id,)
@@ -689,7 +689,7 @@ class TestIngestMain(unittest.TestCase):
 
             mock_db = MagicMock()
             mock_router = MagicMock()
-            with patch('ingest.ScoreDatabase', return_value=mock_db), \
+            with patch('ingest.OpenReturnDB', return_value=mock_db), \
                  patch('ingest.UploadRouter', return_value=mock_router):
                 result, out, _ = self._run_main(['ingest', str(zip_dir)], cwd=td)
         # Bad ZIP is counted as error; function still returns 0
@@ -708,7 +708,7 @@ class TestIngestMain(unittest.TestCase):
             mock_router._process_xml.return_value = {
                 'status': 'stored', 'file': 'filing_001.xml', 'ein': '123456789'
             }
-            with patch('ingest.ScoreDatabase', return_value=mock_db), \
+            with patch('ingest.OpenReturnDB', return_value=mock_db), \
                  patch('ingest.UploadRouter', return_value=mock_router):
                 result, _, _ = self._run_main(['ingest', '--workers', '1', str(zip_dir)], cwd=td)
         self.assertEqual(result, 0)
@@ -729,7 +729,7 @@ class TestIngestMain(unittest.TestCase):
             mock_router._process_xml.return_value = {
                 'status': 'skipped', 'file': 'filing_001.xml', 'reason': 'dup'
             }
-            with patch('ingest.ScoreDatabase', return_value=mock_db), \
+            with patch('ingest.OpenReturnDB', return_value=mock_db), \
                  patch('ingest.UploadRouter', return_value=mock_router):
                 result, _, _ = self._run_main(['ingest', '--workers', '1', str(zip_dir)], cwd=td)
         self.assertEqual(result, 0)
@@ -747,7 +747,7 @@ class TestIngestMain(unittest.TestCase):
 
             mock_db = MagicMock()
             mock_router = MagicMock()
-            with patch('ingest.ScoreDatabase', return_value=mock_db), \
+            with patch('ingest.OpenReturnDB', return_value=mock_db), \
                  patch('ingest.UploadRouter', return_value=mock_router):
                 result, out, _ = self._run_main(['ingest', str(zip_dir)], cwd=td)
         self.assertEqual(result, 0)
@@ -764,7 +764,7 @@ class TestIngestMain(unittest.TestCase):
             mock_db = MagicMock()
             mock_router = MagicMock()
             mock_router._process_xml.side_effect = ValueError("parse failure")
-            with patch('ingest.ScoreDatabase', return_value=mock_db), \
+            with patch('ingest.OpenReturnDB', return_value=mock_db), \
                  patch('ingest.UploadRouter', return_value=mock_router):
                 result, out, _ = self._run_main(['ingest', '--workers', '1', str(zip_dir)], cwd=td)
         self.assertEqual(result, 0)
@@ -788,7 +788,7 @@ class TestIngestMain(unittest.TestCase):
             mock_router._process_xml.return_value = {
                 'status': 'stored', 'file': 'filing.xml', 'ein': '111'
             }
-            with patch('ingest.ScoreDatabase', return_value=mock_db), \
+            with patch('ingest.OpenReturnDB', return_value=mock_db), \
                  patch('ingest.UploadRouter', return_value=mock_router):
                 result, out, _ = self._run_main(['ingest', '--workers', '1', str(zip_dir)], cwd=td)
         self.assertEqual(result, 0)
@@ -812,7 +812,7 @@ class TestIngestMain(unittest.TestCase):
             mock_router._process_xml.return_value = {
                 'status': 'stored', 'file': '000000000000000000_public.xml', 'ein': '000000001'
             }
-            with patch('ingest.ScoreDatabase', return_value=mock_db), \
+            with patch('ingest.OpenReturnDB', return_value=mock_db), \
                  patch('ingest.UploadRouter', return_value=mock_router):
                 result, _, _ = self._run_main(['ingest', '--workers', '1', str(zip_dir)], cwd=td)
         self.assertEqual(result, 0)
@@ -845,7 +845,7 @@ class TestIngestMain(unittest.TestCase):
             mock_db = MagicMock()
             mock_router = MagicMock()
             with patch('ingest.zipfile.ZipFile', side_effect=fake_ZipFile), \
-                 patch('ingest.ScoreDatabase', return_value=mock_db), \
+                 patch('ingest.OpenReturnDB', return_value=mock_db), \
                  patch('ingest.UploadRouter', return_value=mock_router):
                 result, out, _ = self._run_main(['ingest', '--workers', '1', str(zip_dir)], cwd=td)
         self.assertEqual(result, 0)
@@ -863,7 +863,7 @@ class TestIngestMain(unittest.TestCase):
             mock_router._process_xml.return_value = {
                 'status': 'stored', 'file': 'filing_001.xml', 'ein': '111'
             }
-            with patch('ingest.ScoreDatabase', return_value=mock_db), \
+            with patch('ingest.OpenReturnDB', return_value=mock_db), \
                  patch('ingest.UploadRouter', return_value=mock_router):
                 self._run_main(['ingest', '--workers', '1', str(zip_dir)], cwd=td)
         mock_db.close.assert_called_once()
@@ -878,7 +878,7 @@ class TestIngestMain(unittest.TestCase):
 
             mock_db = MagicMock()
             mock_router = MagicMock()
-            with patch('ingest.ScoreDatabase', return_value=mock_db), \
+            with patch('ingest.OpenReturnDB', return_value=mock_db), \
                  patch('ingest.UploadRouter', return_value=mock_router):
                 result, out, _ = self._run_main(
                     ['ingest', '--workers', '1', str(zip_dir)], cwd=td
@@ -940,7 +940,7 @@ class TestIngestParallel(unittest.TestCase):
             result, out = self._run_main(
                 ['ingest', '--workers', '2', str(zip_dir)],
                 extra_patches=[
-                    patch('ingest.ScoreDatabase', return_value=mock_db),
+                    patch('ingest.OpenReturnDB', return_value=mock_db),
                     patch('ingest.UploadRouter', return_value=MagicMock()),
                     patch('ingest.ProcessPoolExecutor', return_value=mock_pool),
                     patch('ingest.as_completed', side_effect=self._fake_as_completed),
@@ -962,7 +962,7 @@ class TestIngestParallel(unittest.TestCase):
             result, out = self._run_main(
                 ['ingest', '--workers', '2', str(zip_dir)],
                 extra_patches=[
-                    patch('ingest.ScoreDatabase', return_value=mock_db),
+                    patch('ingest.OpenReturnDB', return_value=mock_db),
                     patch('ingest.UploadRouter', return_value=MagicMock()),
                     patch('ingest.ProcessPoolExecutor', return_value=mock_pool),
                     patch('ingest.as_completed', side_effect=self._fake_as_completed),
@@ -989,7 +989,7 @@ class TestIngestParallel(unittest.TestCase):
             result, _ = self._run_main(
                 ['ingest', '--workers', '2', str(zip_dir)],
                 extra_patches=[
-                    patch('ingest.ScoreDatabase', return_value=mock_db),
+                    patch('ingest.OpenReturnDB', return_value=mock_db),
                     patch('ingest.UploadRouter', return_value=MagicMock()),
                     patch('ingest.ProcessPoolExecutor', return_value=mock_pool),
                     patch('ingest.as_completed', side_effect=self._fake_as_completed),
@@ -1017,7 +1017,7 @@ class TestIngestParallel(unittest.TestCase):
             result, out = self._run_main(
                 ['ingest', '--workers', '2', str(zip_dir)],
                 extra_patches=[
-                    patch('ingest.ScoreDatabase', return_value=mock_db),
+                    patch('ingest.OpenReturnDB', return_value=mock_db),
                     patch('ingest.UploadRouter', return_value=MagicMock()),
                     patch('ingest.ProcessPoolExecutor', return_value=mock_pool),
                     patch('ingest.as_completed', side_effect=self._fake_as_completed),
@@ -1063,18 +1063,18 @@ class TestIngestUrl(unittest.TestCase):
         self._td = tempfile.TemporaryDirectory()
         self.db_path = str(Path(self._td.name) / "OpenReturn.db")
         # Populate schema + seed once so the in-ingest open skips re-populate.
-        ScoreDatabase(path=self.db_path).close()
+        OpenReturnDB(path=self.db_path).close()
         self.created = []
 
     def tearDown(self):
         self._td.cleanup()
 
     def _open_db(self):
-        return ScoreDatabase(path=self.db_path)
+        return OpenReturnDB(path=self.db_path)
 
     def _run(self, argv, discover=None, download=None, extra_patches=None):
         patches = [patch('sys.argv', ['ingest'] + argv),
-                   patch('ingest.ScoreDatabase', side_effect=lambda *a, **k: ScoreDatabase(path=self.db_path)),
+                   patch('ingest.OpenReturnDB', side_effect=lambda *a, **k: OpenReturnDB(path=self.db_path)),
                    patch('ingest.UploadRouter', return_value=MagicMock())]
         if discover is not None:
             patches.append(patch('ingest.sources.discover_zip_urls', discover))
@@ -1108,7 +1108,7 @@ class TestIngestUrl(unittest.TestCase):
 
     def test_list_mode_shows_status_and_skips_download(self):
         db = self._open_db()
-        db.record_ingested_zip(_URL_1, url=_URL_1, filename="2024_TEOS_XML_01A.zip")
+        db.ingest.record_ingested_zip(_URL_1, url=_URL_1, filename="2024_TEOS_XML_01A.zip")
         db.close()
         dl = MagicMock()
         result, out, _ = self._run(
@@ -1125,8 +1125,8 @@ class TestIngestUrl(unittest.TestCase):
 
     def test_all_recorded_nothing_new(self):
         db = self._open_db()
-        db.record_ingested_zip(_URL_1, url=_URL_1, filename="a.zip")
-        db.record_ingested_zip(_URL_2, url=_URL_2, filename="b.zip")
+        db.ingest.record_ingested_zip(_URL_1, url=_URL_1, filename="a.zip")
+        db.ingest.record_ingested_zip(_URL_2, url=_URL_2, filename="b.zip")
         db.close()
         dl = MagicMock()
         result, out, _ = self._run(
@@ -1153,7 +1153,7 @@ class TestIngestUrl(unittest.TestCase):
         self.assertIn("Complete", out)
         # Recorded in the DB with the stored count.
         db = self._open_db()
-        rows = db.list_ingested_zips()
+        rows = db.ingest.list_ingested_zips()
         db.close()
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["source"], _URL_1)
@@ -1165,7 +1165,7 @@ class TestIngestUrl(unittest.TestCase):
 
     def test_force_reingests_recorded(self):
         db = self._open_db()
-        db.record_ingested_zip(_URL_1, url=_URL_1, filename="2024_TEOS_XML_01A.zip", filings_stored=0)
+        db.ingest.record_ingested_zip(_URL_1, url=_URL_1, filename="2024_TEOS_XML_01A.zip", filings_stored=0)
         db.close()
         router = MagicMock()
         router._process_xml.return_value = {'status': 'stored', 'file': 'f.xml', 'ein': '1'}
@@ -1179,7 +1179,7 @@ class TestIngestUrl(unittest.TestCase):
         self.assertEqual(result, 0)
         dl.assert_called_once()
         db = self._open_db()
-        self.assertEqual(db.list_ingested_zips()[0]["filings_stored"], 1)
+        self.assertEqual(db.ingest.list_ingested_zips()[0]["filings_stored"], 1)
         db.close()
 
     # ── failure handling ────────────────────────────────────────────────────
@@ -1194,7 +1194,7 @@ class TestIngestUrl(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertIn("download failed", out)
         db = self._open_db()
-        self.assertEqual(db.get_ingested_sources(), set())
+        self.assertEqual(db.ingest.get_ingested_sources(), set())
         db.close()
 
     def test_corrupt_download_not_recorded(self):
@@ -1206,7 +1206,7 @@ class TestIngestUrl(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertIn("invalid ZIP", out)
         db = self._open_db()
-        self.assertEqual(db.get_ingested_sources(), set())
+        self.assertEqual(db.ingest.get_ingested_sources(), set())
         db.close()
 
     # ── download retention ──────────────────────────────────────────────────
@@ -1263,7 +1263,7 @@ class TestIngestUrl(unittest.TestCase):
         )
         self.assertEqual(result, 0)
         db = self._open_db()
-        self.assertEqual(db.get_ingested_sources(), {_URL_1})
+        self.assertEqual(db.ingest.get_ingested_sources(), {_URL_1})
         # The parsed filing was written through the bulk-load flush path.
         self.assertEqual(
             db.cursor.execute("SELECT COUNT(*) FROM filing").fetchone()[0], 1
@@ -1284,7 +1284,7 @@ class TestIngestUrl(unittest.TestCase):
         )
         self.assertEqual(result, 0)
         db = self._open_db()
-        self.assertEqual(db.get_ingested_sources(), {_URL_1})
+        self.assertEqual(db.ingest.get_ingested_sources(), {_URL_1})
         db.close()
 
 
@@ -1349,7 +1349,7 @@ class TestIngestParallelBranches(unittest.TestCase):
             zd = Path(td) / "zips"; zd.mkdir()
             _make_zip(zd, "test.zip", {"a.xml": _MINIMAL_XML})
             result, out = self._run(['--workers', '2', str(zd)], [
-                patch('ingest.ScoreDatabase', return_value=MagicMock()),
+                patch('ingest.OpenReturnDB', return_value=MagicMock()),
                 patch('ingest.UploadRouter', return_value=MagicMock()),
                 patch('ingest.ProcessPoolExecutor', return_value=self._pool([])),
                 patch('ingest.as_completed', side_effect=self._iter),
@@ -1366,7 +1366,7 @@ class TestIngestParallelBranches(unittest.TestCase):
             zd = Path(td) / "zips"; zd.mkdir()
             _make_zip(zd, "big.zip", files)
             result, _ = self._run(['--workers', '2', str(zd)], [
-                patch('ingest.ScoreDatabase', return_value=MagicMock()),
+                patch('ingest.OpenReturnDB', return_value=MagicMock()),
                 patch('ingest.UploadRouter', return_value=MagicMock()),
                 patch('ingest.ProcessPoolExecutor', return_value=pool),
                 patch('ingest.as_completed', side_effect=self._iter),
@@ -1385,7 +1385,7 @@ class TestIngestParallelBranches(unittest.TestCase):
             zd = Path(td) / "zips"; zd.mkdir()
             _make_zip(zd, "test.zip", {"f.xml": _MINIMAL_XML})
             result, _ = self._run(['--workers', '2', str(zd)], [
-                patch('ingest.ScoreDatabase', return_value=MagicMock()),
+                patch('ingest.OpenReturnDB', return_value=MagicMock()),
                 patch('ingest.UploadRouter', return_value=MagicMock()),
                 patch('ingest.ProcessPoolExecutor', return_value=self._pool([parsed])),
                 patch('ingest.as_completed', side_effect=self._iter),
@@ -1403,7 +1403,7 @@ class TestIngestParallelBranches(unittest.TestCase):
             zd = Path(td) / "zips"; zd.mkdir()
             _make_zip(zd, "test.zip", {"a.xml": _MINIMAL_XML})
             result, out = self._run(['--workers', '2', str(zd)], [
-                patch('ingest.ScoreDatabase', return_value=MagicMock()),
+                patch('ingest.OpenReturnDB', return_value=MagicMock()),
                 patch('ingest.UploadRouter', return_value=MagicMock()),
                 patch('ingest.ProcessPoolExecutor', return_value=self._pool([])),
                 patch('ingest.as_completed', side_effect=self._iter),
@@ -1423,7 +1423,7 @@ class TestIngestParallelBranches(unittest.TestCase):
             zd = Path(td) / "zips"; zd.mkdir()
             _make_zip(zd, "test.zip", {"f.xml": _MINIMAL_XML})
             result, out = self._run(['--workers', '2', '--profile', str(zd)], [
-                patch('ingest.ScoreDatabase', return_value=MagicMock()),
+                patch('ingest.OpenReturnDB', return_value=MagicMock()),
                 patch('ingest.UploadRouter', return_value=MagicMock()),
                 patch('ingest.ProcessPoolExecutor', return_value=self._pool([parsed])),
                 patch('ingest.as_completed', side_effect=self._iter),

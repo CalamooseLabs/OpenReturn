@@ -6,7 +6,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from database.Score import ScoreDatabase
+from database import OpenReturnDB
 from scoring import ScoringEngine
 import models as models_mod
 
@@ -43,22 +43,22 @@ def _add_filing(db, ein='123456789', year=2023, filing_id=1, uuid='u1'):
 class TestModelTypeSeed(unittest.TestCase):
 
     def setUp(self):
-        self.db = ScoreDatabase(path=":memory:")
+        self.db = OpenReturnDB(path=":memory:")
 
     def tearDown(self):
         self.db.close()
 
     def test_types_seeded(self):
-        codes = {t['code'] for t in self.db.list_model_types()}
+        codes = {t['code'] for t in self.db.scores.list_model_types()}
         self.assertEqual(codes, {'financial', 'governance', 'whole_person', 'christ_centeredness'})
 
     def test_v1_is_financial_computed(self):
-        m = self.db.get_model(1)
+        m = self.db.scores.get_model(1)
         self.assertEqual(m['model_type'], 'financial')
         self.assertEqual(m['scoring_mode'], 'computed')
 
     def test_list_models_includes_type_and_mode(self):
-        ms = self.db.list_models()
+        ms = self.db.scores.list_models()
         self.assertEqual(ms[0]['model_type'], 'financial')
         self.assertEqual(ms[0]['scoring_mode'], 'computed')
 
@@ -66,7 +66,7 @@ class TestModelTypeSeed(unittest.TestCase):
 class TestNormalizeManual(unittest.TestCase):
 
     def setUp(self):
-        self.eng = ScoringEngine(ScoreDatabase(path=":memory:"))
+        self.eng = ScoringEngine(OpenReturnDB(path=":memory:"))
 
     def tearDown(self):
         self.eng.db.close()
@@ -93,11 +93,11 @@ class TestNormalizeManual(unittest.TestCase):
 class TestGrade(unittest.TestCase):
 
     def setUp(self):
-        self.db = ScoreDatabase(path=":memory:")
+        self.db = OpenReturnDB(path=":memory:")
         self.eng = ScoringEngine(self.db)
         _add_filing(self.db)
         self.fids = _add_manual_model(self.db, version=2)
-        self.score_id = self.db.create_score('u1', 2)
+        self.score_id = self.db.scores.create_score('u1', 2)
 
     def tearDown(self):
         self.db.close()
@@ -120,7 +120,7 @@ class TestGrade(unittest.TestCase):
     def test_grade_rejects_computed_model(self):
         # v1 is computed; make a score for it and try to grade
         _add_filing(self.db, year=2022, filing_id=2, uuid='u2')
-        sid = self.db.create_score('u2', 1)
+        sid = self.db.scores.create_score('u2', 1)
         with self.assertRaises(ValueError):
             self.eng.grade(sid, 1, 0.5, "nope")
 
@@ -141,7 +141,7 @@ class TestGrade(unittest.TestCase):
 class TestCalculateRejectsManual(unittest.TestCase):
 
     def test_calculate_manual_raises(self):
-        db = ScoreDatabase(path=":memory:")
+        db = OpenReturnDB(path=":memory:")
         _add_filing(db)
         _add_manual_model(db, version=2)
         with self.assertRaises(ValueError):
@@ -152,7 +152,7 @@ class TestCalculateRejectsManual(unittest.TestCase):
 class TestDebugManual(unittest.TestCase):
 
     def setUp(self):
-        self.db = ScoreDatabase(path=":memory:")
+        self.db = OpenReturnDB(path=":memory:")
         self.eng = ScoringEngine(self.db)
         _add_filing(self.db)
         self.fids = _add_manual_model(self.db, version=2)
@@ -172,7 +172,7 @@ class TestDebugManual(unittest.TestCase):
         self.assertEqual(f0['weighted_value'], 0.0)
 
     def test_debug_graded_shows_values_and_comments(self):
-        sid = self.db.create_score('u1', 2)
+        sid = self.db.scores.create_score('u1', 2)
         self.eng.grade(sid, self.fids[0], 80, "indep")
         rep = self.eng.debug('123456789', 2023, 2)
         self.assertTrue(rep['graded'])

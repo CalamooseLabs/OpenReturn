@@ -3,11 +3,11 @@ from typing import Any
 from http.client import HTTPMessage
 
 from router import Router
-from database.IRS990 import IRS990Database
+from database import OpenReturnDB
 
 
 class OrgRouter(Router):
-  def __init__(self, prefix: str = '/organizations', db: IRS990Database = None, secure_by_default: bool = False) -> None:
+  def __init__(self, prefix: str = '/organizations', db: OpenReturnDB = None, secure_by_default: bool = False) -> None:
     super().__init__(prefix, secure_by_default=secure_by_default)
     self.db = db
     self._register_routes()
@@ -24,7 +24,7 @@ class OrgRouter(Router):
       limit  = min(limit, 500)
       offset = max(offset, 0)
       favorites_only = (self._qp(query_params, 'favorite') or '').strip().lower() in ('1', 'true', 'yes')
-      return self.db.list_organizations(search=search, limit=limit, offset=offset,
+      return self.db.orgs.list_organizations(search=search, limit=limit, offset=offset,
                                         favorites_only=favorites_only)
 
     @self.get('/detail')
@@ -32,7 +32,7 @@ class OrgRouter(Router):
       ein = self._qp(query_params, 'ein')
       if not ein:
         return {"error": "missing query param: ein"}
-      org = self.db.get_organization(ein)
+      org = self.db.orgs.get_organization(ein)
       if org is None:
         return {"error": f"organization not found: {ein}"}
       return org
@@ -42,10 +42,10 @@ class OrgRouter(Router):
       ein = self._qp(query_params, 'ein')
       if not ein:
         return {"error": "missing query param: ein"}
-      org = self.db.get_organization(ein)
+      org = self.db.orgs.get_organization(ein)
       if org is None:
         return {"error": f"organization not found: {ein}"}
-      filings = self.db.list_filings(ein)
+      filings = self.db.filings.list_filings(ein)
       for f in filings:
         f['links'] = {
           "detail": f"/filings/detail?filing_id={f['filing_id']}",
@@ -60,10 +60,11 @@ class OrgRouter(Router):
       if err:
         return err
       try:
-        self.db.upsert_organization(data['ein'], data['name'])
+        self.db.orgs.upsert_organization(data['ein'], data['name'])
+        self.db.commit()
       except sqlite3.IntegrityError as e:
         return {"error": str(e)}
-      return self.db.get_organization(data['ein'])
+      return self.db.orgs.get_organization(data['ein'])
 
     @self.post('/favorite')
     def set_favorite(query_params: dict, body: Any, headers: HTTPMessage):
@@ -72,6 +73,6 @@ class OrgRouter(Router):
         return err
       raw = data['is_favorite']
       is_favorite = raw if isinstance(raw, bool) else str(raw).strip().lower() in ('1', 'true', 'yes')
-      if not self.db.set_favorite(data['ein'], is_favorite):
+      if not self.db.orgs.set_favorite(data['ein'], is_favorite):
         return {"error": f"organization not found: {data['ein']}"}
-      return self.db.get_organization(data['ein'])
+      return self.db.orgs.get_organization(data['ein'])

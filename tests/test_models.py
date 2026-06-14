@@ -623,7 +623,7 @@ class TestCmdRegisterDryRun(unittest.TestCase):
     def test_dry_run_does_not_call_database(self):
         path = self._write_toml(_valid_toml(version=2), self._tmp)
         args = self._args(path)
-        with patch('models.ScoreDatabase') as mock_db_cls:
+        with patch('models.OpenReturnDB') as mock_db_cls:
             cmd_register(args)
         mock_db_cls.assert_not_called()
 
@@ -709,8 +709,8 @@ class TestCmdRegisterWrite(unittest.TestCase):
         self._write_toml(version=2)
         with patch('builtins.print'):
             cmd_register(self._args())
-        from database.Score import ScoreDatabase
-        db = ScoreDatabase(path=self._db_path)
+        from database import OpenReturnDB
+        db = OpenReturnDB(path=self._db_path)
         count = db.cursor.execute(
             "SELECT COUNT(*) FROM score_model WHERE version = 2"
         ).fetchone()[0]
@@ -721,8 +721,8 @@ class TestCmdRegisterWrite(unittest.TestCase):
         self._write_toml(version=2)
         with patch('builtins.print'):
             cmd_register(self._args())
-        from database.Score import ScoreDatabase
-        db = ScoreDatabase(path=self._db_path)
+        from database import OpenReturnDB
+        db = OpenReturnDB(path=self._db_path)
         count = db.cursor.execute(
             "SELECT COUNT(*) FROM score_factor WHERE model_id = "
             "(SELECT model_id FROM score_model WHERE version = 2)"
@@ -830,8 +830,8 @@ class TestCmdList(unittest.TestCase):
 
     def test_list_with_no_models_prints_message(self):
         mock_db = MagicMock()
-        mock_db.list_models.return_value = []
-        with patch('models.ScoreDatabase', return_value=mock_db), \
+        mock_db.scores.list_models.return_value = []
+        with patch('models.OpenReturnDB', return_value=mock_db), \
              patch('builtins.print') as mock_print:
             cmd_list(self._args())
         output = ' '.join(str(c) for c in mock_print.call_args_list)
@@ -844,8 +844,8 @@ class TestCmdList(unittest.TestCase):
         self.assertIn('v1', output)
 
     def test_list_shows_model_description_when_present(self):
-        from database.Score import ScoreDatabase
-        db = ScoreDatabase(path=self._db_path)
+        from database import OpenReturnDB
+        db = OpenReturnDB(path=self._db_path)
         db.cursor.execute(
             "UPDATE score_model SET description = 'My desc' WHERE version = 1"
         )

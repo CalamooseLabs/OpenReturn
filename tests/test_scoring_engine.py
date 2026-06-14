@@ -831,7 +831,7 @@ def _full_factor(factor_id, name, formula_type, inputs, direction, lo, hi, weigh
 class TestCalculate(unittest.TestCase):
     def _make_db(self, filing=None):
         db = MagicMock()
-        db.get_filing_data_by_ein_year.return_value = filing
+        db.filings.get_filing_data_by_ein_year.return_value = filing
         return db
 
     def test_raises_value_error_when_no_filing(self):
@@ -866,20 +866,20 @@ class TestCalculate(unittest.TestCase):
         expected_score = {'score_id': 99, 'total': 0.72}
 
         db = MagicMock()
-        db.get_filing_data_by_ein_year.return_value = filing
-        db.get_factors.return_value = factors
-        db.create_score.return_value = 99
-        db.get_score.return_value = expected_score
+        db.filings.get_filing_data_by_ein_year.return_value = filing
+        db.scores.get_factors.return_value = factors
+        db.scores.create_score.return_value = 99
+        db.scores.get_score.return_value = expected_score
 
         engine = ScoringEngine(db=db)
         result = engine.calculate('12-3456789', 2023, model_version=1)
 
-        db.get_filing_data_by_ein_year.assert_called_once_with('12-3456789', 2023)
-        db.get_factors.assert_called_once_with(1)
-        db.create_score.assert_called_once_with(42, 1)
-        db.store_factor_values.assert_called_once()
-        db.finalize_score.assert_called_once()
-        db.get_score.assert_called_once_with(99)
+        db.filings.get_filing_data_by_ein_year.assert_called_once_with('12-3456789', 2023)
+        db.scores.get_factors.assert_called_once_with(1)
+        db.scores.create_score.assert_called_once_with(42, 1)
+        db.scores.store_factor_values.assert_called_once()
+        db.scores.finalize_score.assert_called_once()
+        db.scores.get_score.assert_called_once_with(99)
 
         self.assertEqual(result, expected_score)
 
@@ -892,14 +892,14 @@ class TestCalculate(unittest.TestCase):
         ]
 
         db = MagicMock()
-        db.get_filing_data_by_ein_year.return_value = filing
-        db.get_factors.return_value = factors
-        db.create_score.return_value = 1
-        db.get_score.return_value = {}
+        db.filings.get_filing_data_by_ein_year.return_value = filing
+        db.scores.get_factors.return_value = factors
+        db.scores.create_score.return_value = 1
+        db.scores.get_score.return_value = {}
 
         ScoringEngine(db=db).calculate('00-0000000', 2022)
 
-        score_id_arg, total_arg = db.finalize_score.call_args[0]
+        score_id_arg, total_arg = db.scores.finalize_score.call_args[0]
         self.assertEqual(score_id_arg, 1)
         # prog/total_exp = 1000/1000 = 1.0 → normalize higher, lo=0.60, hi=0.85
         # (1.0-0.60)/(0.25) = 1.6 → clamped to 1.0 → weighted = 1.0 * 0.5
@@ -910,14 +910,14 @@ class TestCalculate(unittest.TestCase):
         factors = [_full_factor(1, 'Program Expense', 'ratio', ['prog', 'total_exp'], 'higher', 0.60, 0.85, 1.0)]
 
         db = MagicMock()
-        db.get_filing_data_by_ein_year.return_value = filing
-        db.get_factors.return_value = factors
-        db.create_score.return_value = 5
-        db.get_score.return_value = {}
+        db.filings.get_filing_data_by_ein_year.return_value = filing
+        db.scores.get_factors.return_value = factors
+        db.scores.create_score.return_value = 5
+        db.scores.get_score.return_value = {}
 
         ScoringEngine(db=db).calculate('00-0000001', 2021)
 
-        total_arg = db.finalize_score.call_args[0][1]
+        total_arg = db.scores.finalize_score.call_args[0][1]
         self.assertAlmostEqual(total_arg, 0.0)
 
 
@@ -1049,15 +1049,15 @@ class TestCalculateFactorRefs(unittest.TestCase):
             _full_factor(2, 'Final',        'ratio', ['prog', 'total_exp'], 'higher', 0.0, 1.0, 1.0),
         ]
         db = MagicMock()
-        db.get_filing_data_by_ein_year.return_value = self._make_filing()
-        db.get_factors.return_value = factors
-        db.create_score.return_value = 1
-        db.get_score.return_value = {}
+        db.filings.get_filing_data_by_ein_year.return_value = self._make_filing()
+        db.scores.get_factors.return_value = factors
+        db.scores.create_score.return_value = 1
+        db.scores.get_score.return_value = {}
         ScoringEngine(db=db).calculate('000000000', 2023)
-        _, total = db.finalize_score.call_args[0]
+        _, total = db.scores.finalize_score.call_args[0]
         # Intermediate weight=0 contributes nothing; Final weight=1.0 normalized
         self.assertGreater(total, 0.0)
-        stored = db.store_factor_values.call_args[0][1]
+        stored = db.scores.store_factor_values.call_args[0][1]
         # Both factors stored (weight-zero factor still persisted)
         self.assertIn(1, stored)
         self.assertIn(2, stored)
@@ -1076,12 +1076,12 @@ class TestCalculateFactorRefs(unittest.TestCase):
             _full_factor(2, 'Derived',    'ratio', ['factor:Prog Ratio', 'total_exp'], 'higher', 0.0, 1.0, 1.0),
         ]
         db = MagicMock()
-        db.get_filing_data_by_ein_year.return_value = filing
-        db.get_factors.return_value = factors
-        db.create_score.return_value = 1
-        db.get_score.return_value = {}
+        db.filings.get_filing_data_by_ein_year.return_value = filing
+        db.scores.get_factors.return_value = factors
+        db.scores.create_score.return_value = 1
+        db.scores.get_score.return_value = {}
         ScoringEngine(db=db).calculate('000000000', 2023)
-        stored = db.store_factor_values.call_args[0][1]
+        stored = db.scores.store_factor_values.call_args[0][1]
         upstream_raw, _ = stored[1]
         downstream_raw, _ = stored[2]
         self.assertAlmostEqual(upstream_raw, 0.5)
@@ -1096,11 +1096,11 @@ class TestCalculateHistorical(unittest.TestCase):
 
     def _make_db(self, factors, hist=None):
         db = MagicMock()
-        db.get_filing_data_by_ein_year.return_value = {'filing_id': 1, 'fields': []}
-        db.get_factors.return_value = factors
-        db.create_score.return_value = 1
-        db.get_score.return_value = {}
-        db.get_historical_values.return_value = hist or {}
+        db.filings.get_filing_data_by_ein_year.return_value = {'filing_id': 1, 'fields': []}
+        db.scores.get_factors.return_value = factors
+        db.scores.create_score.return_value = 1
+        db.scores.get_score.return_value = {}
+        db.reported_data.get_historical_values.return_value = hist or {}
         return db
 
     def test_historical_formula_triggers_fetch(self):
@@ -1108,20 +1108,20 @@ class TestCalculateHistorical(unittest.TestCase):
         hist = {_PATHS['cy_rev']: [800.0, 1000.0, 1200.0]}
         db = self._make_db(factors, hist)
         ScoringEngine(db=db).calculate('000000001', 2023)
-        db.get_historical_values.assert_called_once_with('000000001')
+        db.reported_data.get_historical_values.assert_called_once_with('000000001')
 
     def test_no_historical_formula_skips_fetch(self):
         factors = [_full_factor(1, 'Ratio', 'ratio', ['prog', 'total_exp'], 'higher', 0.0, 1.0, 1.0)]
         db = self._make_db(factors)
         ScoringEngine(db=db).calculate('000000001', 2023)
-        db.get_historical_values.assert_not_called()
+        db.reported_data.get_historical_values.assert_not_called()
 
     def test_running_average_stored_correctly(self):
         factors = [_full_factor(1, 'Avg Rev', 'running_average', ['cy_rev'], 'higher', 0.0, 2000.0, 1.0)]
         hist = {_PATHS['cy_rev']: [800.0, 1000.0, 1200.0]}
         db = self._make_db(factors, hist)
         ScoringEngine(db=db).calculate('000000001', 2023)
-        stored = db.store_factor_values.call_args[0][1]
+        stored = db.scores.store_factor_values.call_args[0][1]
         raw, _ = stored[1]
         self.assertAlmostEqual(raw, 1000.0)
 
@@ -1130,7 +1130,7 @@ class TestCalculateHistorical(unittest.TestCase):
         hist = {_PATHS['cy_rev']: [1000.0, 1500.0, 2000.0]}
         db = self._make_db(factors, hist)
         ScoringEngine(db=db).calculate('000000001', 2023)
-        stored = db.store_factor_values.call_args[0][1]
+        stored = db.scores.store_factor_values.call_args[0][1]
         raw, _ = stored[1]
         self.assertAlmostEqual(raw, 4500.0)
 

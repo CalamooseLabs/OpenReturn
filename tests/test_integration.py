@@ -1,7 +1,7 @@
 """
 Integration tests covering three levels:
   1. Unzipper → IRS990Parser  (no DB)
-  2. Unzipper → IRS990Parser → IRS990Database  (full pipeline)
+  2. Unzipper → IRS990Parser → OpenReturnDB  (full pipeline)
   3. Real ZIP fixtures from tests/data/zips/  (skipped when absent)
 """
 import io
@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from unzipper import Unzipper
 from parser.IRS990 import IRS990Parser
-from database.IRS990 import IRS990Database
+from database import OpenReturnDB
 from tests.fixtures import (
     VALID_990_XML,
     VALID_990_XML_2,
@@ -39,9 +39,9 @@ def _make_zip(directory: str, name: str, files: dict[str, str]) -> str:
     return path
 
 
-def _run_pipeline(zip_path: str, db: IRS990Database) -> list[dict]:
+def _run_pipeline(zip_path: str, db: OpenReturnDB) -> list[dict]:
     """Full Unzipper → Parser → DB pipeline. Returns one result dict per XML."""
-    xpath_index = db.get_xpath_index()
+    xpath_index = db.meta.get_xpath_index()
     results = []
     uz = Unzipper(zip_path)
     for entry in uz:
@@ -55,14 +55,14 @@ def _run_pipeline(zip_path: str, db: IRS990Database) -> list[dict]:
         if not all([ein, name, year, form_code]):
             results.append({"file": entry.name(), "status": "error"})
             continue
-        db.upsert_organization(ein, name)
-        filing_id = db.create_filing(ein, int(year), form_code)
+        db.orgs.upsert_organization(ein, name)
+        filing_id = db.filings.create_filing(ein, int(year), form_code)
         values = {}
         for xpath, field_id in xpath_index.items():
             value = parser.getElem(xpath)
             if value is not None:
                 values[field_id] = value
-        db.store_reported_data(filing_id, values)
+        db.reported_data.store_reported_data(filing_id, values)
         results.append({
             "file": entry.name(), "status": "stored",
             "filing_id": filing_id, "ein": ein,
@@ -177,14 +177,14 @@ class TestUnzipperToParser(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# 2. Unzipper → IRS990Parser → IRS990Database  (full pipeline)
+# 2. Unzipper → IRS990Parser → OpenReturnDB  (full pipeline)
 # ---------------------------------------------------------------------------
 
 class TestPipelineEndToEnd(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.db = IRS990Database(path=":memory:")
+        cls.db = OpenReturnDB(path=":memory:")
         cls._tmpdir = tempfile.mkdtemp()
 
     @classmethod
@@ -218,44 +218,44 @@ class TestPipelineEndToEnd(unittest.TestCase):
 
     def test_pipeline_correct_ein_stored(self):
         self._run(self._zip(**{'filing.xml': VALID_990_XML}))
-        org = self.db.get_organization("123456789")
+        org = self.db.orgs.get_organization("123456789")
         self.assertIsNotNone(org)
         self.assertEqual(org['ein'], "123456789")
 
     def test_pipeline_correct_name_stored(self):
         self._run(self._zip(**{'filing.xml': VALID_990_XML}))
-        org = self.db.get_organization("123456789")
+        org = self.db.orgs.get_organization("123456789")
         self.assertEqual(org['name'], "Test Org")
 
     def test_pipeline_creates_filing(self):
         results = self._run(self._zip(**{'filing.xml': VALID_990_XML}))
-        filing = self.db.get_filing(results[0]['filing_id'])
+        filing = self.db.filings.get_filing(results[0]['filing_id'])
         self.assertIsNotNone(filing)
 
     def test_pipeline_correct_year_in_filing(self):
         results = self._run(self._zip(**{'filing.xml': VALID_990_XML}))
-        filing = self.db.get_filing(results[0]['filing_id'])
+        filing = self.db.filings.get_filing(results[0]['filing_id'])
         self.assertEqual(filing['year'], 2023)
 
     def test_pipeline_correct_form_code_in_filing(self):
         results = self._run(self._zip(**{'filing.xml': VALID_990_XML}))
-        filing = self.db.get_filing(results[0]['filing_id'])
+        filing = self.db.filings.get_filing(results[0]['filing_id'])
         self.assertEqual(filing['form_code'], "990")
 
     def test_pipeline_filing_linked_to_correct_org(self):
         results = self._run(self._zip(**{'filing.xml': VALID_990_XML}))
-        filing = self.db.get_filing(results[0]['filing_id'])
+        filing = self.db.filings.get_filing(results[0]['filing_id'])
         self.assertEqual(filing['ein'], "123456789")
 
     def test_pipeline_stores_reported_data(self):
         results = self._run(self._zip(**{'filing.xml': VALID_990_XML}))
-        data = self.db.get_reported_data(results[0]['filing_id'])
+        data = self.db.reported_data.get_reported_data(results[0]['filing_id'])
         self.assertIsInstance(data, list)
         self.assertGreater(len(data), 0)
 
     def test_pipeline_known_field_value_stored(self):
         results = self._run(self._zip(**{'filing.xml': VALID_990_XML}))
-        data = self.db.get_reported_data(results[0]['filing_id'])
+        data = self.db.reported_data.get_reported_data(results[0]['filing_id'])
         mission_row = next(
             (r for r in data if r['xml_path'] == 'ReturnData/IRS990/ActivityOrMissionDesc'),
             None
@@ -444,7 +444,7 @@ class TestZipFixtures(unittest.TestCase):
         zips = _find_zips(FIXTURE_ZIPS_DIR)
         if not zips:
             self.skipTest("No fixture ZIPs in tests/data/zips/")
-        db = IRS990Database(path=":memory:")
+        db = OpenReturnDB(path=":memory:")
         for zip_path in zips:
             with self.subTest(zip=zip_path.name):
                 results = _run_pipeline(str(zip_path), db)
@@ -457,7 +457,7 @@ class TestZipFixtures(unittest.TestCase):
         zips = _find_zips(FIXTURE_ZIPS_DIR)
         if not zips:
             self.skipTest("No fixture ZIPs in tests/data/zips/")
-        db = IRS990Database(path=":memory:")
+        db = OpenReturnDB(path=":memory:")
         for zip_path in zips:
             with self.subTest(zip=zip_path.name):
                 results = _run_pipeline(str(zip_path), db)
@@ -529,7 +529,7 @@ class TestZipFixtures(unittest.TestCase):
         zips = _find_zips(FIXTURE_BAD_ZIPS_DIR)
         if not zips:
             self.skipTest("No fixture ZIPs in tests/data/zips/bad/")
-        db = IRS990Database(path=":memory:")
+        db = OpenReturnDB(path=":memory:")
         for zip_path in zips:
             with self.subTest(zip=zip_path.name):
                 results = _run_pipeline(str(zip_path), db)

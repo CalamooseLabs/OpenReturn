@@ -4,10 +4,9 @@
 
 ```
 src/
-  database/      → Database (base) / IRS990Database / ScoreDatabase
-                   IRS990/repositories/  → query/command mixins
-                   IRS990/sql/{setup,populate,migrations}/
-                   Score/sql/{setup,populate,migrations}/
+  database/      → Database (base, connection) / OpenReturnDB (facade)
+                   IRS990/repositories/ + Score/ → repository classes (composed by the facade)
+                   IRS990/sql/{setup,populate,migrations}/  +  Score/sql/{setup,populate}/
   parser/        → Parser (base) / IRS990Parser
   router/        → Router (base) / UploadRouter / OrgRouter / FilingRouter / ScoreRouter
   openapi.py     → OpenAPI 3.1 spec builder (dumped to the committed openapi.json by `openreturn openapi`)
@@ -24,7 +23,7 @@ src/
   main.py        → Server entry point
 ```
 
-Each layer has a base class in its package `__init__.py` and a concrete implementation in a subpackage. For example, `database/__init__.py` exports `Database`; `database/IRS990/` contains `IRS990Database`.
+Each layer has a base class in its package `__init__.py` and a concrete implementation in a subpackage. The database layer is a **facade + repositories**: `database/__init__.py` exports `Database` (the connection/schema base) and `OpenReturnDB` (the facade); each concern is a repository class under `database/IRS990/repositories/` (and `database/Score/` for scoring) that the facade composes.
 
 ```mermaid
 graph TD
@@ -36,7 +35,7 @@ graph TD
   routers --> upload[UploadRouter]
   score --> engine[ScoringEngine]
   upload --> parser[IRS990Parser]
-  org --> db[(ScoreDatabase<br/>SQLite)]
+  org --> db[(OpenReturnDB<br/>SQLite)]
   filing --> db
   score --> db
   engine --> db
@@ -140,48 +139,28 @@ SQLite connection manager. Opens (or creates) a `.db` file and runs setup/popula
 - `begin_bulk_load()` / `end_bulk_load()` — toggle WAL mode, a 512 MB page cache, and a 10 GB mmap for high-throughput ingest. Call these around large batch operations.
 - `populate_guard` — optional table name; when set, the `sql/populate/` files only run if that table is empty (used for performance-sensitive subclasses).
 
-### `IRS990Database` (`src/database/IRS990/irs990.py`)
+### `OpenReturnDB` (`src/database/openreturn.py`) — the facade
 
-Extends `Database`. Loads `sql/setup/*.sql` (schema + `api_key` table) then `sql/populate/*.sql` on **every startup**. `populate/` is split by form — `00_reference` (states, forms, parts, and the core 990/EZ/PF/T structure), then `10_form_990`, `20_form_990ez`, `30_form_990pf`, `40_form_990t`, `50_return_header` — each loaded in sorted order. The `INSERT OR IGNORE` statements cover all five supported form types (990, 990-EZ, 990-N, 990-PF, 990-T), their parts/sections/lines/fields, states, and data types. First-run startup is slow (~seconds) because all rows are new; subsequent startups are fast because `INSERT OR IGNORE` skips existing rows instantly. FK enforcement is on, so file order matters: `50_return_header` depends on part 14 from `10_form_990`.
+Extends `Database`. Owns the single connection and loads the schema/seed for **both** sql trees: `IRS990/sql/{setup,populate}` then `Score/sql/{setup,populate}`. `IRS990` `populate/` is split by form — `00_reference` (states, forms, parts, and the core structure), then `10_form_990`, `20_form_990ez`, `30_form_990pf`, `40_form_990t`, `50_return_header` — loaded in sorted order; the `INSERT OR IGNORE` statements cover all five supported forms (990/EZ/N/PF/T) and re-run cheaply on every startup. FK enforcement is on, so file order matters (`50_return_header` depends on part 14 from `10_form_990`). `_migrate_model_columns()` and the `api_key.rate_limit` ALTER additively migrate pre-existing databases.
 
-The class itself is thin — its query/command methods come from the repository mixins in `src/database/IRS990/repositories/` (`ApiKeyRepository`, `FilingRepository`, `IngestRepository`, `MetadataRepository`, `MigrationRepository`, `OrganizationRepository`, `ReportedDataRepository`), composed via multiple inheritance so the public interface stays flat. `__init__` wires the `_field_meta` cache and `_key_cache` the mixins rely on.
+Behaviour is **composed, not inherited**: the facade instantiates one repository per concern and exposes them as namespaces — the database analog of the router split. Each repository captures the facade's shared `cursor`/`connection` in `__init__(self, db)` and reaches siblings via `self._db` when a query spans concerns (e.g. `db.filings.get_filing_data_by_ein_year` joins through `db.reported_data`). Connection lifecycle — `commit`/`close`/`begin_bulk_load`/`end_bulk_load` — stays on the base `Database`. The shared `_field_meta` cache is built once on the facade; the API-key validation cache lives on `db.keys`.
 
-Key methods (defined in the mixin shown, called as `db.<method>`):
+| Namespace (repository) | Representative methods |
+|------------------------|------------------------|
+| `db.meta` (`MetadataRepository`) | `get_xpath_index()`, `get_supported_forms()`, `get_field_source()`, `drop_/restore_ingest_indexes()` |
+| `db.orgs` (`OrganizationRepository`) | `list_organizations()`, `get_organization()`, `upsert_organization()`, `set_favorite()` |
+| `db.filings` (`FilingRepository`) | `list_filings()`, `get_filing()`, `create_filing()`, `get_filing_data_by_ein_year()` |
+| `db.reported_data` (`ReportedDataRepository`) | `get_reported_data()`, `get_historical_values()`, `store_reported_data()` |
+| `db.keys` (`ApiKeyRepository`) | `create_api_key()`, `validate_api_key()`, `list_api_keys()`, `revoke_api_key()` |
+| `db.migrations` (`MigrationRepository`) | `list_available_migrations()` (static), `get_applied_migrations()`, `apply_migration()` |
+| `db.ingest` (`IngestRepository`) | `get_ingested_sources()`, `record_ingested_zip()`, `find_/forget_ingested_zips()` |
+| `db.scores` (`ScoreRepository`) | `get_factors()`, `get_model()`, `create_score()`, `finalize_score()`, `grade_factor()`, `get_score()`, `compare_scores()`, `delete_filings_by_zip()` |
 
-| Method | Purpose |
-|--------|---------|
-| `get_xpath_index()` | Returns `{xml_path: field_id}` — maps parsed XPath strings to DB field IDs |
-| `get_supported_forms()` | Returns the set of form codes stored in the DB (`{'990', '990EZ', ...}`) |
-| `create_filing(ein, year, form_code, ...)` | Inserts a filing row and returns its UUID |
-| `upsert_organization(ein, name)` | Insert-or-update organization record |
-| `store_reported_data(filing_id, values)` | Bulk insert `{field_id: value}` pairs |
-| `get_filing_data_by_ein_year(ein, year)` | Returns filing metadata + all field values |
-| `get_historical_values(ein)` | Returns `{xml_path: [float, ...]}` oldest-to-newest across all filings |
-| `get_ingested_sources()` / `record_ingested_zip(...)` | Read/write the `ingested_zip` table so URL ingest skips archives already loaded (`IngestRepository`) |
-| `list_organizations(search, limit, offset, favorites_only)` | Paginated org list with optional name substring match; `favorites_only` restricts to favorited orgs |
-| `set_favorite(ein, is_favorite)` | Sets the org's `is_favorite` flag and bumps `updated_at`; returns False if the EIN doesn't exist |
-| `create_api_key(name, rate_limit)` | SHA-256 hashes the raw key, stores hash; returns raw key once |
-| `validate_api_key(raw_key)` | Checks hash against DB; caches result in memory for the process lifetime |
-| `revoke_api_key(key_id)` | Marks key inactive and clears the in-memory cache |
+**Standalone concerns** (`db.keys`, `db.migrations`) have no FKs to the rest. The 990 data graph (`db.orgs`/`db.filings`/`db.reported_data` + the form reference tables) and `db.scores` are FK-linked and JOIN across each other, so they all share the one connection (separate databases would break joins/FKs/transactions).
 
-**Non-obvious**: field metadata (`_field_meta`) is loaded into memory at init. The API key validation cache is per-process, not TTL-based — it is only invalidated on revoke. Schema migration for the `rate_limit` column runs on every startup for databases created before the column was added.
+**Scoring** (`db.scores`, `src/database/Score/score.py`) is a **sibling** repository, not a subclass: a model declares a `model_type` (seeded category) and a `scoring_mode` — **computed** (formula factors) or **manual** (graded by a person via `POST /scores/grade`, with a `manual_scale` + `comment`). `ScoringEngine.calculate` rejects manual models; `grade()` normalizes per `manual_scale` and recomputes the total. The purge helpers (`delete_filings_by_zip`/`delete_all_filings`) live on `db.scores` because deleting a filing must first delete its scores (`organization_score.filing_id → filing.uuid` has no cascade; `reported_data` does cascade).
 
-**Filing keys**: `filing` has an integer `filing_id` PRIMARY KEY (rowid) and a separate `uuid UNIQUE`. **`uuid` is the public/API identifier** (filing responses, `FilingRouter`/`ScoreRouter` lookups, and `organization_score.filing_id` all use it). The large `reported_data` table references the integer `filing_id` instead — an 8-byte int rather than a 36-char uuid on ~190M rows roughly halves the DB and speeds bulk inserts and the index rebuild. `store_reported_data`/`get_reported_data` take the public uuid and resolve it to the integer internally; the bulk ingest path assigns integer ids directly.
-
-### `ScoreDatabase` (`src/database/Score/score.py`)
-
-Extends `IRS990Database`. Loads its own `Score/sql/setup/*.sql` and `Score/sql/populate/*.sql` (after the inherited IRS990 schema) and adds scoring tables (`model_type`, `score_model`, `score_factor`, `organization_score`, `organization_score_factor`). A model declares a `model_type` (seeded category — financial / governance / whole_person / christ_centeredness) and a `scoring_mode`: **computed** (factors evaluated from formulas) or **manual** (factors graded by a person via `POST /scores/grade`, with a `manual_scale` and a `comment` per factor). `_migrate_model_columns()` ALTERs these columns onto pre-existing databases. `ScoringEngine.calculate` rejects manual models; `grade()` records a value+comment, normalizes per `manual_scale`, and recomputes the total.
-
-Key methods:
-
-| Method | Purpose |
-|--------|---------|
-| `get_factors(model_version)` | Returns all factor definitions for a model version |
-| `create_score(filing_id, model_version)` | Creates a bare score row; returns `score_id` |
-| `store_factor_values(score_id, results)` | Bulk insert `{factor_id: (raw, weighted)}` |
-| `finalize_score(score_id, total)` | Sets the `total_score` field |
-| `get_score(score_id)` | Returns score + per-factor breakdown |
-| `compare_scores(ein, year)` | All model version scores for a given EIN + year |
+**Filing keys**: `filing` has an integer `filing_id` PRIMARY KEY (rowid) and a separate `uuid UNIQUE`. **`uuid` is the public/API identifier** (filing responses, lookups, and `organization_score.filing_id` all use it). The large `reported_data` table references the integer `filing_id` — an 8-byte int rather than a 36-char uuid on ~190M rows roughly halves the DB and speeds inserts/index rebuild. `store_reported_data`/`get_reported_data` take the public uuid and resolve it internally; the bulk ingest path assigns integer ids directly.
 
 ---
 
@@ -263,7 +242,7 @@ sequenceDiagram
   participant C as Client
   participant S as Server (RequestHandler)
   participant H as Route handler
-  participant DB as ScoreDatabase
+  participant DB as OpenReturnDB
   C->>S: HTTP request
   alt --auth and route is secured
     S->>DB: validate_api_key(key)

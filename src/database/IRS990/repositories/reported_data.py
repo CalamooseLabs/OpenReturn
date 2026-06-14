@@ -1,20 +1,26 @@
 class ReportedDataRepository:
   """Read/write of per-filing reported field values.
 
-  ``get_reported_data`` joins each stored value against ``self._field_meta``
-  (built in IRS990Database.__init__ by MetadataRepository).
+  ``get_reported_data`` joins each stored value against the facade's
+  ``_field_meta`` cache (built once by ``OpenReturnDB`` via the metadata repo).
   """
+
+  def __init__(self, db) -> None:
+    self._db = db
+    self.cursor = db.cursor
+    self.connection = db.connection
 
   def get_reported_data(self, filing_uuid: str) -> list[dict]:
     """filing_uuid is the public filing uuid; the join resolves it to the
     integer reported_data.filing_id."""
+    field_meta = self._db._field_meta
     rows = self.cursor.execute(
       "SELECT rd.field_id, rd.raw_value FROM reported_data rd "
       "JOIN filing f ON f.filing_id = rd.filing_id WHERE f.uuid = ?", (filing_uuid,)
     ).fetchall()
     result = [
-      {**self._field_meta[fid], "value": val}
-      for fid, val in rows if fid in self._field_meta
+      {**field_meta[fid], "value": val}
+      for fid, val in rows if fid in field_meta
     ]
     result.sort(key=lambda f: (
       f["part"]["number"]    or "",

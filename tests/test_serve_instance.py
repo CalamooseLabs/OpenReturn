@@ -26,7 +26,7 @@ class TestSingleInstanceGuard(unittest.TestCase):
     def test_refuses_when_a_server_is_running(self):
         buf = io.StringIO()
         with patch('daemon.running_daemon', return_value={"pid": 999, "host": "localhost", "port": 8080}), \
-             patch('main.ScoreDatabase') as SD, \
+             patch('main.OpenReturnDB') as SD, \
              contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
             rc = main.cmd_serve(_args())
         self.assertEqual(rc, 1)
@@ -40,7 +40,7 @@ class TestSingleInstanceGuard(unittest.TestCase):
             os.chdir(td)
             try:
                 with patch('daemon.running_daemon', return_value={"pid": 999}) as rd, \
-                     patch('main.ScoreDatabase'), patch('main.UploadRouter'), \
+                     patch('main.OpenReturnDB'), patch('main.UploadRouter'), \
                      patch('main.OrgRouter'), patch('main.FilingRouter'), \
                      patch('main.ScoreRouter'), patch('main.Server') as Srv, \
                      patch('main.signal.signal'), \
@@ -73,7 +73,7 @@ class TestPidfileLifecycle(unittest.TestCase):
             seen['pid'] = daemon.read_pidfile(daemon.SERVER_PIDFILE)
 
         with patch('daemon.running_daemon', return_value=None), \
-             patch('main.ScoreDatabase'), patch('main.UploadRouter'), \
+             patch('main.OpenReturnDB'), patch('main.UploadRouter'), \
              patch('main.OrgRouter'), patch('main.FilingRouter'), \
              patch('main.ScoreRouter'), patch('main.Server') as Srv, \
              patch('main.signal.signal'), \
@@ -91,7 +91,7 @@ class TestPidfileLifecycle(unittest.TestCase):
 
     def test_pidfile_removed_even_if_run_raises(self):
         with patch('daemon.running_daemon', return_value=None), \
-             patch('main.ScoreDatabase'), patch('main.UploadRouter'), \
+             patch('main.OpenReturnDB'), patch('main.UploadRouter'), \
              patch('main.OrgRouter'), patch('main.FilingRouter'), \
              patch('main.ScoreRouter'), patch('main.Server') as Srv, \
              patch('main.signal.signal'), \

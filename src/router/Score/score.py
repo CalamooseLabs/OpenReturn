@@ -4,12 +4,12 @@ from typing import Any
 from http.client import HTTPMessage
 
 from router import Router
-from database.Score import ScoreDatabase
+from database import OpenReturnDB
 from scoring import ScoringEngine
 
 
 class ScoreRouter(Router):
-  def __init__(self, prefix: str = '/scores', db: ScoreDatabase = None, secure_by_default: bool = False) -> None:
+  def __init__(self, prefix: str = '/scores', db: OpenReturnDB = None, secure_by_default: bool = False) -> None:
     super().__init__(prefix, secure_by_default=secure_by_default)
     self.db = db
     self.engine = ScoringEngine(db)
@@ -22,18 +22,18 @@ class ScoreRouter(Router):
     @self.get('/factors')
     def get_factors(query_params: dict, body: Any, headers: HTTPMessage):
       version = self._qp_int(query_params, 'version', default=1)
-      model = self.db.get_model(version)
+      model = self.db.scores.get_model(version)
       return {
         "model_version": version,
         "model_type": model.get("model_type") if model else None,
         "scoring_mode": model.get("scoring_mode") if model else "computed",
-        "factors": self.db.get_factors(version),
+        "factors": self.db.scores.get_factors(version),
       }
 
     @self.get('/types')
     def list_model_types(query_params: dict, body: Any, headers: HTTPMessage):
       """The available model categories (financial, governance, …)."""
-      return {"types": self.db.list_model_types()}
+      return {"types": self.db.scores.list_model_types()}
 
     # --- Manual (graded) scoring ---
 
@@ -65,14 +65,14 @@ class ScoreRouter(Router):
       ein = self._qp(query_params, 'ein')
       if not ein:
         return {"error": "missing query param: ein"}
-      return {"ein": ein, "scores": self.db.list_scores(ein)}
+      return {"ein": ein, "scores": self.db.scores.list_scores(ein)}
 
     @self.get('/filing')
     def get_score_by_filing(query_params: dict, body: Any, headers: HTTPMessage):
       filing_id = self._qp(query_params, 'filing_id')
       if not filing_id:
         return {"error": "missing query param: filing_id"}
-      score = self.db.get_score_by_filing(filing_id)
+      score = self.db.scores.get_score_by_filing(filing_id)
       if score is None:
         return {"error": f"no score found for filing: {filing_id}"}
       return score
@@ -84,7 +84,7 @@ class ScoreRouter(Router):
       score_id, err = self._qp_int_or_error(query_params, 'score_id')
       if err:
         return err
-      score = self.db.get_score(score_id)
+      score = self.db.scores.get_score(score_id)
       if score is None:
         return {"error": f"score not found: {score_id}"}
       return score
@@ -96,7 +96,7 @@ class ScoreRouter(Router):
         return err
       try:
         model_version = int(data.get('model_version', 1))
-        score_id = self.db.create_score(data['filing_id'], model_version)
+        score_id = self.db.scores.create_score(data['filing_id'], model_version)
       except ValueError as e:
         return {"error": str(e)}
       except sqlite3.IntegrityError as e:
@@ -123,7 +123,7 @@ class ScoreRouter(Router):
           raw = item.get('raw_value')
           weighted = item.get('weighted_value')
           values[fid] = (raw, weighted)
-        self.db.store_factor_values(score_id, values)
+        self.db.scores.store_factor_values(score_id, values)
       except (sqlite3.IntegrityError, ValueError) as e:
         return {"error": str(e)}
       return {"score_id": score_id, "factors_stored": len(values)}
@@ -136,7 +136,7 @@ class ScoreRouter(Router):
       try:
         score_id = int(data['score_id'])
         total_score = float(data['total_score'])
-        self.db.finalize_score(score_id, total_score)
+        self.db.scores.finalize_score(score_id, total_score)
       except ValueError as e:
         return {"error": str(e)}
       return {"score_id": score_id, "total_score": total_score}
@@ -165,7 +165,7 @@ class ScoreRouter(Router):
       year_int, err = self._qp_int_or_error(query_params, 'year', field='year')
       if err:
         return err
-      score = self.db.get_score_by_ein_year(ein, year_int)
+      score = self.db.scores.get_score_by_ein_year(ein, year_int)
       if score is None:
         return {"error": f"no score found for EIN {ein} year {year}"}
       return score
@@ -179,7 +179,7 @@ class ScoreRouter(Router):
       version = self._qp_int(query_params, 'version', default=1)
       filing_id = self._qp(query_params, 'filing_id')
       if filing_id:
-        filing = self.db.get_filing(filing_id)
+        filing = self.db.filings.get_filing(filing_id)
         if filing is None:
           return {"error": f"filing not found: {filing_id}"}
         ein, year = filing['ein'], filing['year']
@@ -206,5 +206,5 @@ class ScoreRouter(Router):
       year_int, err = self._qp_int_or_error(query_params, 'year', field='year')
       if err:
         return err
-      scores = self.db.compare_scores(ein, year_int)
+      scores = self.db.scores.compare_scores(ein, year_int)
       return {"ein": ein, "year": year_int, "scores": scores}

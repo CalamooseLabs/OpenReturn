@@ -1,5 +1,15 @@
 class OrganizationRepository:
-  """Organization lookups, upserts, and favorite flagging."""
+  """Organization lookups, upserts, and favorite flagging.
+
+  A repository composed onto ``OpenReturnDB``: it shares the facade's single
+  SQLite connection (``db.cursor``/``db.connection``) and reaches sibling
+  repositories via ``self._db`` when a query spans concerns.
+  """
+
+  def __init__(self, db) -> None:
+    self._db = db
+    self.cursor = db.cursor
+    self.connection = db.connection
 
   def list_organizations(self, search: str | None = None,
                          limit: int = 50, offset: int = 0,

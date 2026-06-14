@@ -31,11 +31,11 @@ REPORTED_ROW = {"xml_path": "ReturnData/IRS990/ActivityOrMissionDesc", "raw_valu
 
 def _make_router():
     db = MagicMock()
-    db.list_filings.return_value = []
-    db.get_filing.return_value = None
-    db.create_filing.return_value = "uuid-abc-123"
-    db.get_reported_data.return_value = []
-    db.get_filing_data_by_ein_year.return_value = None
+    db.filings.list_filings.return_value = []
+    db.filings.get_filing.return_value = None
+    db.filings.create_filing.return_value = "uuid-abc-123"
+    db.reported_data.get_reported_data.return_value = []
+    db.filings.get_filing_data_by_ein_year.return_value = None
     return FilingRouter(db=db), db
 
 
@@ -129,19 +129,19 @@ class TestListFilings(unittest.TestCase):
 
     def test_calls_list_filings_with_ein(self):
         self._call(ein="111111111")
-        self.db.list_filings.assert_called_once_with("111111111")
+        self.db.filings.list_filings.assert_called_once_with("111111111")
 
     def test_empty_list_when_no_filings(self):
         result = self._call(ein="111111111")
         self.assertEqual(result["filings"], [])
 
     def test_returns_filings_from_db(self):
-        self.db.list_filings.return_value = [FILING_ONE]
+        self.db.filings.list_filings.return_value = [FILING_ONE]
         result = self._call(ein="111111111")
         self.assertEqual(result["filings"], [FILING_ONE])
 
     def test_count_matches_db(self):
-        self.db.list_filings.return_value = [FILING_ONE, FILING_ONE]
+        self.db.filings.list_filings.return_value = [FILING_ONE, FILING_ONE]
         result = self._call(ein="111111111")
         self.assertEqual(len(result["filings"]), 2)
 
@@ -167,7 +167,7 @@ class TestGetFiling(unittest.TestCase):
         self.assertIn("filing_id", result["error"])
 
     def test_not_found_returns_error(self):
-        self.db.get_filing.return_value = None
+        self.db.filings.get_filing.return_value = None
         result = self._call(filing_id="no-such-uuid")
         self.assertIn("error", result)
 
@@ -176,26 +176,26 @@ class TestGetFiling(unittest.TestCase):
         self.assertIn("no-such-uuid", result["error"])
 
     def test_found_returns_filing_dict(self):
-        self.db.get_filing.return_value = FILING_ONE
+        self.db.filings.get_filing.return_value = FILING_ONE
         result = self._call(filing_id="uuid-abc-123")
         self.assertEqual(result, FILING_ONE)
 
     def test_calls_get_filing_with_id(self):
         self._call(filing_id="uuid-abc-123")
-        self.db.get_filing.assert_called_once_with("uuid-abc-123")
+        self.db.filings.get_filing.assert_called_once_with("uuid-abc-123")
 
     def test_found_has_filing_id_field(self):
-        self.db.get_filing.return_value = FILING_ONE
+        self.db.filings.get_filing.return_value = FILING_ONE
         result = self._call(filing_id="uuid-abc-123")
         self.assertEqual(result["filing_id"], "uuid-abc-123")
 
     def test_found_has_year_field(self):
-        self.db.get_filing.return_value = FILING_ONE
+        self.db.filings.get_filing.return_value = FILING_ONE
         result = self._call(filing_id="uuid-abc-123")
         self.assertEqual(result["year"], 2023)
 
     def test_found_has_form_code_field(self):
-        self.db.get_filing.return_value = FILING_ONE
+        self.db.filings.get_filing.return_value = FILING_ONE
         result = self._call(filing_id="uuid-abc-123")
         self.assertEqual(result["form_code"], "990")
 
@@ -222,11 +222,11 @@ class TestCreateFiling(unittest.TestCase):
 
     def test_calls_create_filing_with_int_year(self):
         self._call({"ein": "111111111", "year": 2023, "form_code": "990"})
-        self.db.create_filing.assert_called_once_with("111111111", 2023, "990")
+        self.db.filings.create_filing.assert_called_once_with("111111111", 2023, "990")
 
     def test_year_as_string_is_cast_to_int(self):
         self._call({"ein": "111111111", "year": "2022", "form_code": "990"})
-        self.db.create_filing.assert_called_once_with("111111111", 2022, "990")
+        self.db.filings.create_filing.assert_called_once_with("111111111", 2022, "990")
 
     def test_missing_ein_returns_error(self):
         result = self._call({"year": 2023, "form_code": "990"})
@@ -254,17 +254,27 @@ class TestCreateFiling(unittest.TestCase):
         self.assertIn("error", result)
 
     def test_integrity_error_returns_error(self):
-        self.db.create_filing.side_effect = sqlite3.IntegrityError("fk constraint")
+        self.db.filings.create_filing.side_effect = sqlite3.IntegrityError("fk constraint")
         result = self._call({"ein": "111111111", "year": 2023, "form_code": "990"})
         self.assertIn("error", result)
 
     def test_integrity_error_does_not_raise(self):
-        self.db.create_filing.side_effect = sqlite3.IntegrityError("fk constraint")
+        self.db.filings.create_filing.side_effect = sqlite3.IntegrityError("fk constraint")
         self._call({"ein": "111111111", "year": 2023, "form_code": "990"})  # must not raise
 
     def test_value_error_on_bad_year_returns_error(self):
         result = self._call({"ein": "111111111", "year": "not-a-year", "form_code": "990"})
         self.assertIn("error", result)
+
+    def test_successful_create_commits(self):
+        # Durability: create_filing does not commit itself, so the handler must.
+        self._call({"ein": "111111111", "year": 2023, "form_code": "990"})
+        self.db.commit.assert_called_once()
+
+    def test_integrity_error_does_not_commit(self):
+        self.db.filings.create_filing.side_effect = sqlite3.IntegrityError("fk constraint")
+        self._call({"ein": "111111111", "year": 2023, "form_code": "990"})
+        self.db.commit.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -275,7 +285,7 @@ class TestGetReportedData(unittest.TestCase):
 
     def setUp(self):
         self.router, self.db = _make_router()
-        self.db.get_filing.return_value = FILING_ONE_FULL
+        self.db.filings.get_filing.return_value = FILING_ONE_FULL
 
     def _call(self, **qp):
         return _call(self.router, "GET", "/filings/data", _qp(**qp) if qp else {})
@@ -289,12 +299,12 @@ class TestGetReportedData(unittest.TestCase):
         self.assertIn("filing_id", result["error"])
 
     def test_not_found_returns_error(self):
-        self.db.get_filing.return_value = None
+        self.db.filings.get_filing.return_value = None
         result = self._call(filing_id="no-such-uuid")
         self.assertIn("error", result)
 
     def test_not_found_error_contains_id(self):
-        self.db.get_filing.return_value = None
+        self.db.filings.get_filing.return_value = None
         result = self._call(filing_id="no-such-uuid")
         self.assertIn("no-such-uuid", result["error"])
 
@@ -316,19 +326,19 @@ class TestGetReportedData(unittest.TestCase):
 
     def test_calls_get_reported_data_with_id(self):
         self._call(filing_id="uuid-abc-123")
-        self.db.get_reported_data.assert_called_once_with("uuid-abc-123")
+        self.db.reported_data.get_reported_data.assert_called_once_with("uuid-abc-123")
 
     def test_empty_fields_when_no_data(self):
         result = self._call(filing_id="uuid-abc-123")
         self.assertEqual(result["fields"], [])
 
     def test_returns_fields_from_db(self):
-        self.db.get_reported_data.return_value = [REPORTED_ROW]
+        self.db.reported_data.get_reported_data.return_value = [REPORTED_ROW]
         result = self._call(filing_id="uuid-abc-123")
         self.assertEqual(result["fields"], [REPORTED_ROW])
 
     def test_fields_count_matches_db(self):
-        self.db.get_reported_data.return_value = [REPORTED_ROW, REPORTED_ROW]
+        self.db.reported_data.get_reported_data.return_value = [REPORTED_ROW, REPORTED_ROW]
         result = self._call(filing_id="uuid-abc-123")
         self.assertEqual(len(result["fields"]), 2)
 
@@ -359,11 +369,11 @@ class TestStoreReportedData(unittest.TestCase):
 
     def test_string_keys_cast_to_int(self):
         self._call({"filing_id": "uuid-abc-123", "values": {"42": "hello"}})
-        self.db.store_reported_data.assert_called_once_with("uuid-abc-123", {42: "hello"})
+        self.db.reported_data.store_reported_data.assert_called_once_with("uuid-abc-123", {42: "hello"})
 
     def test_calls_store_reported_data(self):
         self._call({"filing_id": "uuid-abc-123", "values": {"1": "v"}})
-        self.db.store_reported_data.assert_called_once()
+        self.db.reported_data.store_reported_data.assert_called_once()
 
     def test_empty_values_stores_nothing(self):
         result = self._call({"filing_id": "uuid-abc-123", "values": {}})
@@ -390,13 +400,23 @@ class TestStoreReportedData(unittest.TestCase):
         self.assertIn("error", result)
 
     def test_integrity_error_returns_error(self):
-        self.db.store_reported_data.side_effect = sqlite3.IntegrityError("constraint")
+        self.db.reported_data.store_reported_data.side_effect = sqlite3.IntegrityError("constraint")
         result = self._call({"filing_id": "uuid-abc-123", "values": {"1": "v"}})
         self.assertIn("error", result)
 
     def test_value_error_on_non_int_key_returns_error(self):
         result = self._call({"filing_id": "uuid-abc-123", "values": {"not-an-int": "v"}})
         self.assertIn("error", result)
+
+    def test_successful_store_commits(self):
+        # Durability: store_reported_data does not commit itself, so the handler must.
+        self._call({"filing_id": "uuid-abc-123", "values": {"1": "v"}})
+        self.db.commit.assert_called_once()
+
+    def test_integrity_error_does_not_commit(self):
+        self.db.reported_data.store_reported_data.side_effect = sqlite3.IntegrityError("constraint")
+        self._call({"filing_id": "uuid-abc-123", "values": {"1": "v"}})
+        self.db.commit.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -449,40 +469,40 @@ class TestLookupFilingByEinYear(unittest.TestCase):
 
     def test_calls_db_with_ein_and_int_year(self):
         self._call(ein="111111111", year="2023")
-        self.db.get_filing_data_by_ein_year.assert_called_once_with("111111111", 2023)
+        self.db.filings.get_filing_data_by_ein_year.assert_called_once_with("111111111", 2023)
 
     def test_found_returns_db_result(self):
-        self.db.get_filing_data_by_ein_year.return_value = FILING_DATA
+        self.db.filings.get_filing_data_by_ein_year.return_value = FILING_DATA
         result = self._call(ein="111111111", year="2023")
         self.assertEqual(result, FILING_DATA)
 
     def test_found_result_is_dict(self):
-        self.db.get_filing_data_by_ein_year.return_value = FILING_DATA
+        self.db.filings.get_filing_data_by_ein_year.return_value = FILING_DATA
         result = self._call(ein="111111111", year="2023")
         self.assertIsInstance(result, dict)
 
     def test_format_md_returns_string(self):
-        self.db.get_filing_data_by_ein_year.return_value = FILING_DATA
+        self.db.filings.get_filing_data_by_ein_year.return_value = FILING_DATA
         result = self._call(ein="111111111", year="2023", format="md")
         self.assertIsInstance(result, str)
 
     def test_format_html_returns_string(self):
-        self.db.get_filing_data_by_ein_year.return_value = FILING_DATA
+        self.db.filings.get_filing_data_by_ein_year.return_value = FILING_DATA
         result = self._call(ein="111111111", year="2023", format="html")
         self.assertIsInstance(result, str)
 
     def test_format_xml_returns_tuple(self):
-        self.db.get_filing_data_by_ein_year.return_value = FILING_DATA
+        self.db.filings.get_filing_data_by_ein_year.return_value = FILING_DATA
         result = self._call(ein="111111111", year="2023", format="xml")
         self.assertIsInstance(result, tuple)
 
     def test_format_xml_content_type(self):
-        self.db.get_filing_data_by_ein_year.return_value = FILING_DATA
+        self.db.filings.get_filing_data_by_ein_year.return_value = FILING_DATA
         _, content_type = self._call(ein="111111111", year="2023", format="xml")
         self.assertEqual(content_type, 'application/xml')
 
     def test_format_case_insensitive(self):
-        self.db.get_filing_data_by_ein_year.return_value = FILING_DATA
+        self.db.filings.get_filing_data_by_ein_year.return_value = FILING_DATA
         result_lower = self._call(ein="111111111", year="2023", format="xml")
         result_upper = self._call(ein="111111111", year="2023", format="XML")
         self.assertIsInstance(result_lower, tuple)
@@ -497,7 +517,7 @@ class TestGetReportedDataFormat(unittest.TestCase):
 
     def setUp(self):
         self.router, self.db = _make_router()
-        self.db.get_filing.return_value = FILING_ONE_FULL
+        self.db.filings.get_filing.return_value = FILING_ONE_FULL
 
     def _call(self, **qp):
         return _call(self.router, "GET", "/filings/data", _qp(**qp) if qp else {})

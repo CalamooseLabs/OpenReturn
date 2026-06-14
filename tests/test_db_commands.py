@@ -15,7 +15,7 @@ sys.path.insert(0, _SRC)
 sys.path.insert(0, _ROOT)
 
 import db as db_mod
-from database.IRS990 import IRS990Database
+from database import OpenReturnDB
 
 
 # ---------------------------------------------------------------------------
@@ -36,14 +36,14 @@ def _make_args(**kwargs):
 class TestCmdInit(unittest.TestCase):
 
     def setUp(self):
-        self.db = IRS990Database(path=":memory:")
+        self.db = OpenReturnDB(path=":memory:")
 
     def tearDown(self):
         self.db.close()
 
     def _run(self, **kwargs):
         args = _make_args(db=":memory:", **kwargs)
-        with patch('db.IRS990Database', return_value=self.db), \
+        with patch('db.OpenReturnDB', return_value=self.db), \
              patch.object(self.db, 'close'):
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
@@ -79,7 +79,7 @@ class TestCmdInit(unittest.TestCase):
         mock_db = MagicMock()
         mock_db.cursor.execute.return_value.fetchone.return_value = (5,)
         args = _make_args(db=":memory:")
-        with patch('db.IRS990Database', return_value=mock_db):
+        with patch('db.OpenReturnDB', return_value=mock_db):
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
                 db_mod.cmd_init(args)
@@ -94,13 +94,13 @@ class TestCmdMigrateList(unittest.TestCase):
 
     def _mock_db(self, available, applied):
         mock_db = MagicMock()
-        mock_db.list_available_migrations.return_value = available
-        mock_db.get_applied_migrations.return_value = set(applied)
+        mock_db.migrations.list_available_migrations.return_value = available
+        mock_db.migrations.get_applied_migrations.return_value = set(applied)
         return mock_db
 
     def _run_list(self, mock_db):
         args = _make_args(db=":memory:", list=True)
-        with patch('db.IRS990Database', return_value=mock_db):
+        with patch('db.OpenReturnDB', return_value=mock_db):
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
                 result = db_mod.cmd_migrate(args)
@@ -132,7 +132,7 @@ class TestCmdMigrateList(unittest.TestCase):
     def test_list_closes_db(self):
         mock_db = self._mock_db([("001_test", Path("/dev/null"))], [])
         args = _make_args(db=":memory:", list=True)
-        with patch('db.IRS990Database', return_value=mock_db):
+        with patch('db.OpenReturnDB', return_value=mock_db):
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
                 db_mod.cmd_migrate(args)
@@ -146,17 +146,17 @@ class TestCmdMigrateList(unittest.TestCase):
 class TestCmdMigrateNoPending(unittest.TestCase):
 
     def setUp(self):
-        self.db = IRS990Database(path=":memory:")
+        self.db = OpenReturnDB(path=":memory:")
         # Pre-apply all migrations so nothing is pending
-        for name, path in self.db.list_available_migrations():
-            self.db.apply_migration(name, path.read_text())
+        for name, path in self.db.migrations.list_available_migrations():
+            self.db.migrations.apply_migration(name, path.read_text())
 
     def tearDown(self):
         self.db.close()
 
     def _run(self):
         args = _make_args(db=":memory:", list=False)
-        with patch('db.IRS990Database', return_value=self.db), \
+        with patch('db.OpenReturnDB', return_value=self.db), \
              patch.object(self.db, 'close'):
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
@@ -183,13 +183,13 @@ class TestCmdMigrateApply(unittest.TestCase):
         mock_path = MagicMock(spec=Path)
         mock_path.read_text.return_value = "-- no-op"
         mock_db = MagicMock()
-        mock_db.list_available_migrations.return_value = [(n, mock_path) for n in names]
-        mock_db.get_applied_migrations.return_value = set()
+        mock_db.migrations.list_available_migrations.return_value = [(n, mock_path) for n in names]
+        mock_db.migrations.get_applied_migrations.return_value = set()
         return mock_db
 
     def _run(self, mock_db):
         args = _make_args(db=":memory:", list=False)
-        with patch('db.IRS990Database', return_value=mock_db):
+        with patch('db.OpenReturnDB', return_value=mock_db):
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
                 result = db_mod.cmd_migrate(args)
@@ -210,12 +210,12 @@ class TestCmdMigrateApply(unittest.TestCase):
     def test_apply_migration_called_for_each_pending(self):
         mock_db = self._make_mock_db(["001_a", "002_b"])
         self._run(mock_db)
-        self.assertEqual(mock_db.apply_migration.call_count, 2)
+        self.assertEqual(mock_db.migrations.apply_migration.call_count, 2)
 
     def test_second_run_with_none_pending_shows_no_pending(self):
         mock_db = MagicMock()
-        mock_db.list_available_migrations.return_value = []
-        mock_db.get_applied_migrations.return_value = set()
+        mock_db.migrations.list_available_migrations.return_value = []
+        mock_db.migrations.get_applied_migrations.return_value = set()
         _, out = self._run(mock_db)
         self.assertIn("No pending migrations", out)
 
@@ -230,12 +230,12 @@ class TestCmdMigrateFailure(unittest.TestCase):
         mock_db = MagicMock()
         mock_path = MagicMock(spec=Path)
         mock_path.read_text.return_value = "-- bad sql"
-        mock_db.list_available_migrations.return_value = [("001_bad", mock_path)]
-        mock_db.get_applied_migrations.return_value = set()
-        mock_db.apply_migration.side_effect = Exception("SQL error")
+        mock_db.migrations.list_available_migrations.return_value = [("001_bad", mock_path)]
+        mock_db.migrations.get_applied_migrations.return_value = set()
+        mock_db.migrations.apply_migration.side_effect = Exception("SQL error")
 
         args = _make_args(db=":memory:", list=False)
-        with patch('db.IRS990Database', return_value=mock_db):
+        with patch('db.OpenReturnDB', return_value=mock_db):
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
                 result = db_mod.cmd_migrate(args)
@@ -245,12 +245,12 @@ class TestCmdMigrateFailure(unittest.TestCase):
         mock_db = MagicMock()
         mock_path = MagicMock(spec=Path)
         mock_path.read_text.return_value = "-- bad sql"
-        mock_db.list_available_migrations.return_value = [("001_bad", mock_path)]
-        mock_db.get_applied_migrations.return_value = set()
-        mock_db.apply_migration.side_effect = Exception("SQL error")
+        mock_db.migrations.list_available_migrations.return_value = [("001_bad", mock_path)]
+        mock_db.migrations.get_applied_migrations.return_value = set()
+        mock_db.migrations.apply_migration.side_effect = Exception("SQL error")
 
         args = _make_args(db=":memory:", list=False)
-        with patch('db.IRS990Database', return_value=mock_db):
+        with patch('db.OpenReturnDB', return_value=mock_db):
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
                 db_mod.cmd_migrate(args)
@@ -260,12 +260,12 @@ class TestCmdMigrateFailure(unittest.TestCase):
         mock_db = MagicMock()
         mock_path = MagicMock(spec=Path)
         mock_path.read_text.return_value = "-- bad sql"
-        mock_db.list_available_migrations.return_value = [("001_bad", mock_path)]
-        mock_db.get_applied_migrations.return_value = set()
-        mock_db.apply_migration.side_effect = Exception("SQL error")
+        mock_db.migrations.list_available_migrations.return_value = [("001_bad", mock_path)]
+        mock_db.migrations.get_applied_migrations.return_value = set()
+        mock_db.migrations.apply_migration.side_effect = Exception("SQL error")
 
         args = _make_args(db=":memory:", list=False)
-        with patch('db.IRS990Database', return_value=mock_db):
+        with patch('db.OpenReturnDB', return_value=mock_db):
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
                 db_mod.cmd_migrate(args)

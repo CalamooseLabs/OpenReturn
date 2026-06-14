@@ -94,15 +94,15 @@ class ScoringEngine:
         self.db = db
 
     def calculate(self, ein: str, year: int, model_version: int = 1) -> dict:
-        filing = self.db.get_filing_data_by_ein_year(ein, year)
+        filing = self.db.filings.get_filing_data_by_ein_year(ein, year)
         if filing is None:
             raise ValueError(f"No filing found for EIN {ein} year {year}")
 
         vals = self._load_values(filing['fields'])
-        factors = self.db.get_factors(model_version)
+        factors = self.db.scores.get_factors(model_version)
         if not factors:
             raise ValueError(f"Score model version {model_version} has no factors")
-        model = self.db.get_model(model_version)
+        model = self.db.scores.get_model(model_version)
         if model and model.get('scoring_mode') == 'manual':
             raise ValueError(
                 f"Score model version {model_version} is manual — grade its factors "
@@ -110,7 +110,7 @@ class ScoringEngine:
         sorted_factors = self._topo_sort(factors)
 
         needs_history = any(f['formula_type'] in _HISTORICAL_TYPES for f in sorted_factors)
-        historical: dict[str, list[float]] = self.db.get_historical_values(ein) if needs_history else {}
+        historical: dict[str, list[float]] = self.db.reported_data.get_historical_values(ein) if needs_history else {}
 
         computed: dict[str, float | None] = {}
         factor_results: dict[int, tuple[float | None, float]] = {}
@@ -121,12 +121,12 @@ class ScoringEngine:
             weighted = normalized * f['weight']
             factor_results[f['factor_id']] = (raw, weighted)
 
-        score_id = self.db.create_score(filing['filing_id'], model_version)
-        self.db.store_factor_values(score_id, factor_results)
+        score_id = self.db.scores.create_score(filing['filing_id'], model_version)
+        self.db.scores.store_factor_values(score_id, factor_results)
         total = sum(w for _, w in factor_results.values())
-        self.db.finalize_score(score_id, total)
+        self.db.scores.finalize_score(score_id, total)
 
-        return self.db.get_score(score_id)
+        return self.db.scores.get_score(score_id)
 
     def _topo_sort(self, factors: list[dict]) -> list[dict]:
         name_to_factor = {f['name']: f for f in factors}
@@ -310,7 +310,7 @@ class ScoringEngine:
     # written to the database.
 
     def debug(self, ein: str, year: int, model_version: int = 1) -> dict:
-        filing = self.db.get_filing_data_by_ein_year(ein, year)
+        filing = self.db.filings.get_filing_data_by_ein_year(ein, year)
         if filing is None:
             raise ValueError(f"No filing found for EIN {ein} year {year}")
 
@@ -319,22 +319,22 @@ class ScoringEngine:
         raw_by_path = {f['xml_path']: f.get('value')
                        for f in fields if f.get('xml_path')}
 
-        factors = self.db.get_factors(model_version)
+        factors = self.db.scores.get_factors(model_version)
         if not factors:
             raise ValueError(f"Score model version {model_version} has no factors")
-        model = self.db.get_model(model_version)
+        model = self.db.scores.get_model(model_version)
         if model and model.get('scoring_mode') == 'manual':
             return self._debug_manual(ein, year, filing, model, factors)
         sorted_factors = self._topo_sort(factors)
 
         needs_history = any(f['formula_type'] in _HISTORICAL_TYPES for f in sorted_factors)
-        historical = self.db.get_historical_values(ein) if needs_history else {}
+        historical = self.db.reported_data.get_historical_values(ein) if needs_history else {}
 
         source_cache: dict[str, dict | None] = {}
 
         def source_for(path: str) -> dict | None:
             if path not in source_cache:
-                source_cache[path] = self.db.get_field_source(path)
+                source_cache[path] = self.db.meta.get_field_source(path)
             return source_cache[path]
 
         computed: dict[str, float | None] = {}
@@ -537,13 +537,13 @@ class ScoringEngine:
         """Record a grader's value (+ optional comment) for one manual factor,
         recompute the score total, and return the updated score. Validates that
         the score belongs to a manual model and the factor is part of that model."""
-        score = self.db.get_score(score_id)
+        score = self.db.scores.get_score(score_id)
         if score is None:
             raise ValueError(f"Score {score_id} not found")
         if score.get('scoring_mode') != 'manual':
             raise ValueError(
                 f"Score {score_id} is for a computed model — grading applies to manual models")
-        valid = {f['factor_id'] for f in self.db.get_factors(score['model_version'])}
+        valid = {f['factor_id'] for f in self.db.scores.get_factors(score['model_version'])}
         if factor_id not in valid:
             raise ValueError(
                 f"Factor {factor_id} is not part of model version {score['model_version']}")
@@ -551,13 +551,13 @@ class ScoringEngine:
                                   or not isinstance(value, (int, float))
                                   or not math.isfinite(value)):
             raise ValueError(f"factor value must be a finite number, got: {value!r}")
-        factor = self.db.get_factor(factor_id)
+        factor = self.db.scores.get_factor(factor_id)
         if factor is None:  # pragma: no cover — in `valid` but vanished (consistency)
             raise ValueError(f"Factor {factor_id} not found")
         weighted = self._normalize_manual(factor, value) * factor['weight']
-        self.db.grade_factor(score_id, factor_id, value, weighted, comment)
-        self.db.finalize_score(score_id, self.db.sum_weighted(score_id))
-        return self.db.get_score(score_id)
+        self.db.scores.grade_factor(score_id, factor_id, value, weighted, comment)
+        self.db.scores.finalize_score(score_id, self.db.scores.sum_weighted(score_id))
+        return self.db.scores.get_score(score_id)
 
     def _debug_manual(self, ein: str, year: int, filing: dict, model: dict,
                       factors: list[dict]) -> dict:
@@ -567,8 +567,8 @@ class ScoringEngine:
         version = model['version']
         graded: dict[int, dict] = {}
         total = None
-        score_id = self.db.get_score_id_for(ein, year, version)
-        stored = self.db.get_score(score_id) if score_id is not None else None
+        score_id = self.db.scores.get_score_id_for(ein, year, version)
+        stored = self.db.scores.get_score(score_id) if score_id is not None else None
         if stored is not None:
             total = stored['total_score']
             graded = {f['factor_id']: f for f in stored['factors']}

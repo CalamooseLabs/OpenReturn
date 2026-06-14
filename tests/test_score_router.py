@@ -28,10 +28,10 @@ SCORE_LIST_STUB = [
 
 def _make_router():
     db = MagicMock()
-    db.get_factors.return_value = []
-    db.list_scores.return_value = []
-    db.get_score.return_value = None
-    db.create_score.return_value = 7
+    db.scores.get_factors.return_value = []
+    db.scores.list_scores.return_value = []
+    db.scores.get_score.return_value = None
+    db.scores.create_score.return_value = 7
     return ScoreRouter(db=db), db
 
 
@@ -128,7 +128,7 @@ class TestGetFactors(unittest.TestCase):
 
     def test_default_version_is_1(self):
         self._call()
-        self.db.get_factors.assert_called_once_with(1)
+        self.db.scores.get_factors.assert_called_once_with(1)
 
     def test_default_model_version_in_response_is_1(self):
         result = self._call()
@@ -136,7 +136,7 @@ class TestGetFactors(unittest.TestCase):
 
     def test_explicit_version_passed_to_db(self):
         self._call(version="2")
-        self.db.get_factors.assert_called_once_with(2)
+        self.db.scores.get_factors.assert_called_once_with(2)
 
     def test_explicit_version_reflected_in_response(self):
         result = self._call(version="2")
@@ -144,19 +144,19 @@ class TestGetFactors(unittest.TestCase):
 
     def test_non_digit_version_falls_back_to_1(self):
         self._call(version="abc")
-        self.db.get_factors.assert_called_once_with(1)
+        self.db.scores.get_factors.assert_called_once_with(1)
 
     def test_missing_version_falls_back_to_1(self):
         self._call()
-        self.db.get_factors.assert_called_once_with(1)
+        self.db.scores.get_factors.assert_called_once_with(1)
 
     def test_returns_factors_from_db(self):
-        self.db.get_factors.return_value = [FACTOR_STUB]
+        self.db.scores.get_factors.return_value = [FACTOR_STUB]
         result = self._call()
         self.assertEqual(result["factors"], [FACTOR_STUB])
 
     def test_empty_factors_when_unknown_version(self):
-        self.db.get_factors.return_value = []
+        self.db.scores.get_factors.return_value = []
         result = self._call(version="99")
         self.assertEqual(result["factors"], [])
 
@@ -199,19 +199,19 @@ class TestListScores(unittest.TestCase):
 
     def test_calls_list_scores_with_ein(self):
         self._call(ein="111111111")
-        self.db.list_scores.assert_called_once_with("111111111")
+        self.db.scores.list_scores.assert_called_once_with("111111111")
 
     def test_empty_list_when_no_scores(self):
         result = self._call(ein="111111111")
         self.assertEqual(result["scores"], [])
 
     def test_returns_scores_from_db(self):
-        self.db.list_scores.return_value = SCORE_LIST_STUB
+        self.db.scores.list_scores.return_value = SCORE_LIST_STUB
         result = self._call(ein="111111111")
         self.assertEqual(result["scores"], SCORE_LIST_STUB)
 
     def test_score_count_matches_db(self):
-        self.db.list_scores.return_value = SCORE_LIST_STUB
+        self.db.scores.list_scores.return_value = SCORE_LIST_STUB
         result = self._call(ein="111111111")
         self.assertEqual(len(result["scores"]), 2)
 
@@ -241,7 +241,7 @@ class TestGetScore(unittest.TestCase):
         self.assertIn("error", result)
 
     def test_not_found_returns_error(self):
-        self.db.get_score.return_value = None
+        self.db.scores.get_score.return_value = None
         result = self._call(score_id="99999")
         self.assertIn("error", result)
 
@@ -250,30 +250,30 @@ class TestGetScore(unittest.TestCase):
         self.assertIn("99999", result["error"])
 
     def test_found_returns_score_dict(self):
-        self.db.get_score.return_value = SCORE_STUB
+        self.db.scores.get_score.return_value = SCORE_STUB
         result = self._call(score_id="7")
         self.assertEqual(result, SCORE_STUB)
 
     def test_calls_get_score_with_int_id(self):
         self._call(score_id="7")
-        self.db.get_score.assert_called_once_with(7)
+        self.db.scores.get_score.assert_called_once_with(7)
 
     def test_score_id_cast_to_int(self):
         self._call(score_id="42")
-        self.db.get_score.assert_called_once_with(42)
+        self.db.scores.get_score.assert_called_once_with(42)
 
     def test_found_has_score_id_field(self):
-        self.db.get_score.return_value = SCORE_STUB
+        self.db.scores.get_score.return_value = SCORE_STUB
         result = self._call(score_id="7")
         self.assertEqual(result["score_id"], 7)
 
     def test_found_has_model_version_field(self):
-        self.db.get_score.return_value = SCORE_STUB
+        self.db.scores.get_score.return_value = SCORE_STUB
         result = self._call(score_id="7")
         self.assertEqual(result["model_version"], 1)
 
     def test_found_has_factors_field(self):
-        self.db.get_score.return_value = SCORE_STUB
+        self.db.scores.get_score.return_value = SCORE_STUB
         result = self._call(score_id="7")
         self.assertIn("factors", result)
 
@@ -312,11 +312,11 @@ class TestCreateScore(unittest.TestCase):
 
     def test_calls_create_score_with_default_version(self):
         self._call({"filing_id": "test-filing-uuid"})
-        self.db.create_score.assert_called_once_with("test-filing-uuid", 1)
+        self.db.scores.create_score.assert_called_once_with("test-filing-uuid", 1)
 
     def test_explicit_model_version_passed_to_db(self):
         self._call({"filing_id": "test-filing-uuid", "model_version": 2})
-        self.db.create_score.assert_called_once_with("test-filing-uuid", 2)
+        self.db.scores.create_score.assert_called_once_with("test-filing-uuid", 2)
 
     def test_explicit_model_version_in_response(self):
         result = self._call({"filing_id": "test-filing-uuid", "model_version": 2})
@@ -343,21 +343,21 @@ class TestCreateScore(unittest.TestCase):
         self.assertIn("error", result)
 
     def test_value_error_unknown_version_returns_error(self):
-        self.db.create_score.side_effect = ValueError("Score model version 99 not found")
+        self.db.scores.create_score.side_effect = ValueError("Score model version 99 not found")
         result = self._call({"filing_id": "test-filing-uuid", "model_version": 99})
         self.assertIn("error", result)
 
     def test_value_error_does_not_raise(self):
-        self.db.create_score.side_effect = ValueError("Score model version 99 not found")
+        self.db.scores.create_score.side_effect = ValueError("Score model version 99 not found")
         self._call({"filing_id": "test-filing-uuid", "model_version": 99})  # must not raise
 
     def test_integrity_error_unknown_filing_returns_error(self):
-        self.db.create_score.side_effect = sqlite3.IntegrityError("fk violation")
+        self.db.scores.create_score.side_effect = sqlite3.IntegrityError("fk violation")
         result = self._call({"filing_id": "nonexistent-uuid"})
         self.assertIn("error", result)
 
     def test_integrity_error_does_not_raise(self):
-        self.db.create_score.side_effect = sqlite3.IntegrityError("fk violation")
+        self.db.scores.create_score.side_effect = sqlite3.IntegrityError("fk violation")
         self._call({"filing_id": "nonexistent-uuid"})  # must not raise
 
 
@@ -396,7 +396,7 @@ class TestStoreFactorValues(unittest.TestCase):
         self._call({"score_id": 7, "values": [
             {"factor_id": 1, "raw_value": 0.8, "weighted_value": 0.04},
         ]})
-        self.db.store_factor_values.assert_called_once_with(7, {1: (0.8, 0.04)})
+        self.db.scores.store_factor_values.assert_called_once_with(7, {1: (0.8, 0.04)})
 
     def test_multiple_factors_passed_correctly(self):
         self._call({"score_id": 7, "values": [
@@ -404,7 +404,7 @@ class TestStoreFactorValues(unittest.TestCase):
             {"factor_id": 2, "raw_value": 0.5,  "weighted_value": 0.025},
             {"factor_id": 3, "raw_value": 0.3,  "weighted_value": 0.015},
         ]})
-        self.db.store_factor_values.assert_called_once_with(7, {
+        self.db.scores.store_factor_values.assert_called_once_with(7, {
             1: (0.8, 0.04), 2: (0.5, 0.025), 3: (0.3, 0.015),
         })
 
@@ -412,23 +412,23 @@ class TestStoreFactorValues(unittest.TestCase):
         self._call({"score_id": "7", "values": [
             {"factor_id": 1, "raw_value": 0.8, "weighted_value": 0.04},
         ]})
-        self.db.store_factor_values.assert_called_once_with(7, {1: (0.8, 0.04)})
+        self.db.scores.store_factor_values.assert_called_once_with(7, {1: (0.8, 0.04)})
 
     def test_null_raw_and_weighted_values_allowed(self):
         result = self._call({"score_id": 7, "values": [
             {"factor_id": 1, "raw_value": None, "weighted_value": None},
         ]})
         self.assertNotIn("error", result)
-        self.db.store_factor_values.assert_called_once_with(7, {1: (None, None)})
+        self.db.scores.store_factor_values.assert_called_once_with(7, {1: (None, None)})
 
     def test_missing_raw_value_defaults_to_none(self):
         self._call({"score_id": 7, "values": [{"factor_id": 1}]})
-        self.db.store_factor_values.assert_called_once_with(7, {1: (None, None)})
+        self.db.scores.store_factor_values.assert_called_once_with(7, {1: (None, None)})
 
     def test_empty_values_list_stores_nothing(self):
         result = self._call({"score_id": 7, "values": []})
         self.assertEqual(result["factors_stored"], 0)
-        self.db.store_factor_values.assert_called_once_with(7, {})
+        self.db.scores.store_factor_values.assert_called_once_with(7, {})
 
     def test_missing_score_id_returns_error(self):
         result = self._call({"values": [{"factor_id": 1, "raw_value": 0.8, "weighted_value": 0.04}]})
@@ -448,7 +448,7 @@ class TestStoreFactorValues(unittest.TestCase):
 
     def test_item_missing_factor_id_does_not_call_db(self):
         self._call({"score_id": 7, "values": [{"raw_value": 0.8}]})
-        self.db.store_factor_values.assert_not_called()
+        self.db.scores.store_factor_values.assert_not_called()
 
     def test_string_body_returns_error(self):
         result = self._call("not json")
@@ -459,14 +459,14 @@ class TestStoreFactorValues(unittest.TestCase):
         self.assertIn("error", result)
 
     def test_integrity_error_returns_error(self):
-        self.db.store_factor_values.side_effect = sqlite3.IntegrityError("constraint")
+        self.db.scores.store_factor_values.side_effect = sqlite3.IntegrityError("constraint")
         result = self._call({"score_id": 7, "values": [
             {"factor_id": 1, "raw_value": 0.8, "weighted_value": 0.04},
         ]})
         self.assertIn("error", result)
 
     def test_integrity_error_does_not_raise(self):
-        self.db.store_factor_values.side_effect = sqlite3.IntegrityError("constraint")
+        self.db.scores.store_factor_values.side_effect = sqlite3.IntegrityError("constraint")
         self._call({"score_id": 7, "values": [
             {"factor_id": 1, "raw_value": 0.8, "weighted_value": 0.04},
         ]})  # must not raise
@@ -498,19 +498,19 @@ class TestFinalizeScore(unittest.TestCase):
 
     def test_calls_finalize_score(self):
         self._call({"score_id": 7, "total_score": 0.75})
-        self.db.finalize_score.assert_called_once_with(7, 0.75)
+        self.db.scores.finalize_score.assert_called_once_with(7, 0.75)
 
     def test_score_id_cast_to_int(self):
         self._call({"score_id": "7", "total_score": 0.75})
-        self.db.finalize_score.assert_called_once_with(7, 0.75)
+        self.db.scores.finalize_score.assert_called_once_with(7, 0.75)
 
     def test_total_score_cast_to_float(self):
         self._call({"score_id": 7, "total_score": "0.75"})
-        self.db.finalize_score.assert_called_once_with(7, 0.75)
+        self.db.scores.finalize_score.assert_called_once_with(7, 0.75)
 
     def test_integer_total_score_cast_to_float(self):
         self._call({"score_id": 7, "total_score": 1})
-        args = self.db.finalize_score.call_args[0]
+        args = self.db.scores.finalize_score.call_args[0]
         self.assertIsInstance(args[1], float)
 
     def test_zero_total_score(self):
@@ -558,7 +558,7 @@ class TestFinalizeScore(unittest.TestCase):
 
     def test_non_numeric_total_score_does_not_call_db(self):
         self._call({"score_id": 7, "total_score": "not-a-number"})
-        self.db.finalize_score.assert_not_called()
+        self.db.scores.finalize_score.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -582,23 +582,23 @@ class TestGetScoreByFiling(unittest.TestCase):
         self.assertIn("filing_id", result["error"])
 
     def test_not_found_returns_error(self):
-        self.db.get_score_by_filing.return_value = None
+        self.db.scores.get_score_by_filing.return_value = None
         result = self._call(filing_id="nonexistent-uuid")
         self.assertIn("error", result)
 
     def test_not_found_error_contains_filing_id(self):
-        self.db.get_score_by_filing.return_value = None
+        self.db.scores.get_score_by_filing.return_value = None
         result = self._call(filing_id="nonexistent-uuid")
         self.assertIn("nonexistent-uuid", result["error"])
 
     def test_found_returns_score(self):
-        self.db.get_score_by_filing.return_value = SCORE_STUB
+        self.db.scores.get_score_by_filing.return_value = SCORE_STUB
         result = self._call(filing_id="test-uuid")
         self.assertEqual(result, SCORE_STUB)
 
     def test_calls_get_score_by_filing_with_id(self):
         self._call(filing_id="test-uuid")
-        self.db.get_score_by_filing.assert_called_once_with("test-uuid")
+        self.db.scores.get_score_by_filing.assert_called_once_with("test-uuid")
 
 
 # ---------------------------------------------------------------------------
@@ -697,30 +697,30 @@ class TestLookupScore(unittest.TestCase):
         self.assertIn("error", result)
 
     def test_not_found_returns_error(self):
-        self.db.get_score_by_ein_year.return_value = None
+        self.db.scores.get_score_by_ein_year.return_value = None
         result = self._call(ein="111111111", year="2023")
         self.assertIn("error", result)
 
     def test_not_found_error_contains_ein_and_year(self):
-        self.db.get_score_by_ein_year.return_value = None
+        self.db.scores.get_score_by_ein_year.return_value = None
         result = self._call(ein="111111111", year="2023")
         self.assertIn("111111111", result["error"])
         self.assertIn("2023", result["error"])
 
     def test_found_returns_score(self):
-        self.db.get_score_by_ein_year.return_value = SCORE_STUB
+        self.db.scores.get_score_by_ein_year.return_value = SCORE_STUB
         result = self._call(ein="111111111", year="2023")
         self.assertEqual(result, SCORE_STUB)
 
     def test_calls_get_score_by_ein_year_with_correct_args(self):
-        self.db.get_score_by_ein_year.return_value = SCORE_STUB
+        self.db.scores.get_score_by_ein_year.return_value = SCORE_STUB
         self._call(ein="111111111", year="2023")
-        self.db.get_score_by_ein_year.assert_called_once_with("111111111", 2023)
+        self.db.scores.get_score_by_ein_year.assert_called_once_with("111111111", 2023)
 
     def test_year_cast_to_int(self):
-        self.db.get_score_by_ein_year.return_value = SCORE_STUB
+        self.db.scores.get_score_by_ein_year.return_value = SCORE_STUB
         self._call(ein="111111111", year="2022")
-        args = self.db.get_score_by_ein_year.call_args[0]
+        args = self.db.scores.get_score_by_ein_year.call_args[0]
         self.assertIsInstance(args[1], int)
 
 
@@ -732,7 +732,7 @@ class TestCompareScores(unittest.TestCase):
 
     def setUp(self):
         self.router, self.db = _make_router()
-        self.db.compare_scores = MagicMock(return_value=[])
+        self.db.scores.compare_scores = MagicMock(return_value=[])
 
     def _call(self, **qp):
         return _call(self.router, "GET", "/scores/compare", _qp(**qp) if qp else {})
@@ -771,7 +771,7 @@ class TestCompareScores(unittest.TestCase):
 
     def test_calls_compare_scores_with_correct_args(self):
         self._call(ein="111111111", year="2023")
-        self.db.compare_scores.assert_called_once_with("111111111", 2023)
+        self.db.scores.compare_scores.assert_called_once_with("111111111", 2023)
 
     def test_empty_scores_when_no_matches(self):
         result = self._call(ein="111111111", year="2023")
@@ -782,12 +782,12 @@ class TestCompareScores(unittest.TestCase):
             {"score_id": 1, "model_version": 1, "total_score": 0.70, "scored_at": "2024-01-01"},
             {"score_id": 2, "model_version": 2, "total_score": 0.75, "scored_at": "2024-01-02"},
         ]
-        self.db.compare_scores.return_value = stub
+        self.db.scores.compare_scores.return_value = stub
         result = self._call(ein="111111111", year="2023")
         self.assertEqual(result["scores"], stub)
 
     def test_score_count_matches_db(self):
-        self.db.compare_scores.return_value = [
+        self.db.scores.compare_scores.return_value = [
             {"score_id": 1, "model_version": 1, "total_score": 0.70, "scored_at": "2024-01-01"},
             {"score_id": 2, "model_version": 2, "total_score": 0.75, "scored_at": "2024-01-02"},
         ]
@@ -814,13 +814,13 @@ class TestDebugRoute(unittest.TestCase):
         self.router.engine.debug.assert_called_once_with("111111111", 2023, 2)
 
     def test_filing_id_resolves_to_ein_year(self):
-        self.db.get_filing.return_value = {"ein": "222222222", "year": 2021}
+        self.db.filings.get_filing.return_value = {"ein": "222222222", "year": 2021}
         self._call(filing_id="abc-uuid")
-        self.db.get_filing.assert_called_once_with("abc-uuid")
+        self.db.filings.get_filing.assert_called_once_with("abc-uuid")
         self.router.engine.debug.assert_called_once_with("222222222", 2021, 1)
 
     def test_filing_id_not_found(self):
-        self.db.get_filing.return_value = None
+        self.db.filings.get_filing.return_value = None
         result = self._call(filing_id="missing")
         self.assertIn("error", result)
         self.router.engine.debug.assert_not_called()
@@ -847,7 +847,7 @@ class TestTypesRoute(unittest.TestCase):
 
     def test_lists_model_types(self):
         router, db = _make_router()
-        db.list_model_types.return_value = [{"code": "financial", "name": "Financial Health",
+        db.scores.list_model_types.return_value = [{"code": "financial", "name": "Financial Health",
                                              "description": "d"}]
         result = _call(router, "GET", "/scores/types")
         self.assertEqual(result["types"][0]["code"], "financial")
@@ -891,9 +891,9 @@ class TestFactorsRouteModelHeader(unittest.TestCase):
 
     def test_factors_includes_model_type_and_mode(self):
         router, db = _make_router()
-        db.get_model.return_value = {"version": 1, "model_type": "governance",
+        db.scores.get_model.return_value = {"version": 1, "model_type": "governance",
                                      "scoring_mode": "manual"}
-        db.get_factors.return_value = []
+        db.scores.get_factors.return_value = []
         result = _call(router, "GET", "/scores/factors", _qp(version="1"))
         self.assertEqual(result["model_type"], "governance")
         self.assertEqual(result["scoring_mode"], "manual")

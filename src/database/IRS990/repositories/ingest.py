@@ -7,6 +7,11 @@ class IngestRepository:
   identifier of the archive (its download URL for remote ingests).
   """
 
+  def __init__(self, db) -> None:
+    self._db = db
+    self.cursor = db.cursor
+    self.connection = db.connection
+
   def get_ingested_sources(self) -> set[str]:
     return {row[0] for row in self.cursor.execute("SELECT source FROM ingested_zip").fetchall()}
 

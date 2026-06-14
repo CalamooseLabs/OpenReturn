@@ -3,6 +3,11 @@ class MetadataRepository:
   forms, and the ingest-time index drop/restore helpers used during bulk load.
   """
 
+  def __init__(self, db) -> None:
+    self._db = db
+    self.cursor = db.cursor
+    self.connection = db.connection
+
   def _build_field_meta_cache(self) -> dict[int, dict]:
     rows = self.cursor.execute("""
       SELECT fi.field_id, fi.xml_path, fi.sub_letter, fi.column_code, fi.box_label,

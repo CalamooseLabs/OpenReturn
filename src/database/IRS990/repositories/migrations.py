@@ -6,7 +6,14 @@ class MigrationRepository:
 
   Migration files live in ``IRS990/sql/migrations/*.sql`` and are applied
   once each; the ``migration`` table (created in setup) records applied names.
+  ``list_available_migrations`` stays a staticmethod so callers (e.g. status)
+  can list migrations without opening the database.
   """
+
+  def __init__(self, db) -> None:
+    self._db = db
+    self.cursor = db.cursor
+    self.connection = db.connection
 
   @staticmethod
   def list_available_migrations() -> list[tuple[str, Path]]:

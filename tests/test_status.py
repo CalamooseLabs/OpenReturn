@@ -18,7 +18,7 @@ sys.path.insert(0, _SRC)
 sys.path.insert(0, _ROOT)
 
 import status
-from database.Score import ScoreDatabase
+from database import OpenReturnDB
 
 
 def _args(db=None, host='localhost', port=9, as_json=False):
@@ -49,8 +49,8 @@ class TestSeededDB(unittest.TestCase):
     def setUpClass(cls):
         cls.td = tempfile.mkdtemp()
         cls.db_path = os.path.join(cls.td, 'OpenReturn.db')
-        # ScoreDatabase(name=...) writes <name>.db
-        db = ScoreDatabase(name=os.path.join(cls.td, 'OpenReturn'))
+        # OpenReturnDB(name=...) writes <name>.db
+        db = OpenReturnDB(name=os.path.join(cls.td, 'OpenReturn'))
         db.cursor.execute("INSERT INTO organization (ein, name) VALUES ('123456789','Org')")
         db.cursor.execute(
             "INSERT INTO filing (filing_id, uuid, year, organization_id, form_code, zip_filename) "

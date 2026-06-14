@@ -4,7 +4,7 @@ from typing import Any
 from http.client import HTTPMessage
 
 from router import Router
-from database.IRS990 import IRS990Database
+from database import OpenReturnDB
 
 
 def _render(result: dict, fmt: str) -> dict | str:
@@ -69,7 +69,7 @@ def _render(result: dict, fmt: str) -> dict | str:
 
 
 class FilingRouter(Router):
-  def __init__(self, prefix: str = '/filings', db: IRS990Database = None, secure_by_default: bool = False) -> None:
+  def __init__(self, prefix: str = '/filings', db: OpenReturnDB = None, secure_by_default: bool = False) -> None:
     super().__init__(prefix, secure_by_default=secure_by_default)
     self.db = db
     self._register_routes()
@@ -81,14 +81,14 @@ class FilingRouter(Router):
       ein = self._qp(query_params, 'ein')
       if not ein:
         return {"error": "missing query param: ein"}
-      return {"filings": self.db.list_filings(ein)}
+      return {"filings": self.db.filings.list_filings(ein)}
 
     @self.get('/detail')
     def get_filing(query_params: dict, body: Any, headers: HTTPMessage):
       filing_id = self._qp(query_params, 'filing_id')
       if not filing_id:
         return {"error": "missing query param: filing_id"}
-      filing = self.db.get_filing(filing_id)
+      filing = self.db.filings.get_filing(filing_id)
       if filing is None:
         return {"error": f"filing not found: {filing_id}"}
       return filing
@@ -99,7 +99,8 @@ class FilingRouter(Router):
       if err:
         return err
       try:
-        filing_id = self.db.create_filing(data['ein'], int(data['year']), data['form_code'])
+        filing_id = self.db.filings.create_filing(data['ein'], int(data['year']), data['form_code'])
+        self.db.commit()
       except (sqlite3.IntegrityError, ValueError) as e:
         return {"error": str(e)}
       return {"filing_id": filing_id}
@@ -110,7 +111,7 @@ class FilingRouter(Router):
       if not filing_id:
         return {"error": "missing query param: filing_id"}
       fmt = (self._qp(query_params, 'format') or 'json').lower()
-      filing = self.db.get_filing(filing_id)
+      filing = self.db.filings.get_filing(filing_id)
       if filing is None:
         return {"error": f"filing not found: {filing_id}"}
       result = {
@@ -120,7 +121,7 @@ class FilingRouter(Router):
         "form_code":    filing['form_code'],
         "xml_filename": filing['xml_filename'],
         "zip_filename": filing['zip_filename'],
-        "fields":       self.db.get_reported_data(filing_id),
+        "fields":       self.db.reported_data.get_reported_data(filing_id),
       }
       return _render(result, fmt)
 
@@ -133,7 +134,8 @@ class FilingRouter(Router):
         return {"error": "values must be a dict mapping field_id to raw_value"}
       try:
         values = {int(k): v for k, v in data['values'].items()}
-        self.db.store_reported_data(data['filing_id'], values)
+        self.db.reported_data.store_reported_data(data['filing_id'], values)
+        self.db.commit()
       except (sqlite3.IntegrityError, ValueError) as e:
         return {"error": str(e)}
       return {"filing_id": data['filing_id'], "fields_stored": len(values)}
@@ -148,7 +150,7 @@ class FilingRouter(Router):
       if err:
         return err
       fmt = (self._qp(query_params, 'format') or 'json').lower()
-      result = self.db.get_filing_data_by_ein_year(ein, year_int)
+      result = self.db.filings.get_filing_data_by_ein_year(ein, year_int)
       if result is None:
         return {"error": f"no filing found for EIN {ein} in year {year}"}
       return _render(result, fmt)

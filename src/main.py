@@ -11,7 +11,7 @@ from pathlib import Path
 
 import daemon
 from console import _B, _R, _DIM, _CYN, _GRN, _YLW, _MAG, _RED
-from database.Score import ScoreDatabase
+from database import OpenReturnDB
 from router.Upload import UploadRouter
 from router.Org import OrgRouter
 from router.Filing import FilingRouter
@@ -42,7 +42,7 @@ _USER_TABLES: dict[str, list[str]] = {
 }
 
 
-def _dump_db(db: ScoreDatabase) -> None:
+def _dump_db(db: OpenReturnDB) -> None:
   cur = db.cursor
   cur.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
   all_tables = {row[0] for row in cur.fetchall()}
@@ -112,7 +112,7 @@ def cmd_serve(args) -> int:
         print(f"  {_DIM}Stop it first, or check: openreturn status{_R}\n", file=sys.stderr)
         return 1
 
-    db = ScoreDatabase()
+    db = OpenReturnDB()
     upload_router = UploadRouter(db=db, secure_by_default=True, workers=args.workers)
 
     if args.testing:
@@ -133,7 +133,7 @@ def cmd_serve(args) -> int:
 
     app = Server(
         host=args.host, port=args.port, debug=args.debug,
-        key_validator=db.validate_api_key if args.auth else None,
+        key_validator=db.keys.validate_api_key if args.auth else None,
     )
     app.include_router(upload_router)
     app.include_router(OrgRouter(db=db, secure_by_default=True))

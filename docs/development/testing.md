@@ -51,7 +51,6 @@ The project maintains **100% statement coverage**. PRs that reduce coverage shou
 | `tests/test_score_debug.py` | `src/scoring/engine.py` (`debug()` walkthrough) + `GET /scores/debug` + `get_field_source` |
 | `tests/test_model_types.py` | model types + manual scoring: `src/models.py` (manual TOML), `src/scoring/engine.py` (`_normalize_manual`/`grade`), `src/database/Score/score.py` |
 | `tests/test_openapi.py` | `src/openapi.py` (spec + route-coverage + committed `openapi.json` sync) |
-| `tests/test_build_wiki.py` | `tools/build_wiki.py` (docs/ → wiki page rendering + link rewriting) |
 | `tests/test_api_keys.py` | `src/keys.py` |
 | `tests/test_server_auth.py` | `src/server/server.py` (auth/rate-limit paths) |
 | `tests/test_server_coverage.py` | `src/server/server.py` (request handling, formats, errors) |

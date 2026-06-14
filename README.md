@@ -24,4 +24,4 @@ A machine-readable **OpenAPI 3.1** spec is committed at [`openapi.json`](openapi
 | [Testing](docs/development/testing.md) | Running tests, coverage |
 | [Architecture](docs/development/architecture.md) | Class design, internals, non-obvious details |
 
-The docs include mermaid diagrams (architecture, database schema, ingest/scoring workflows) that render on GitHub. To populate the repository's **Wiki** from these docs (the wiki is a separate `…​.wiki.git` repo, so it must be pushed to), the dev shell provides two commands: `build-wiki` renders `docs/` into wiki pages with rewritten links, and `publish-wiki <repo>.wiki.git` builds and pushes them. `docs/` stays the single source of truth — don't hand-edit the wiki.
+The docs include mermaid diagrams (architecture, database schema, ingest/scoring workflows) that render on GitHub. To populate the repository's **Wiki** from these docs (the wiki is a separate `…​.wiki.git` repo), the dev shell provides `publish-wiki <repo>.wiki.git`, which copies the docs pages into the wiki and pushes. `docs/` stays the single source of truth — don't hand-edit the wiki.

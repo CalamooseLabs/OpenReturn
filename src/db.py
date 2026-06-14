@@ -2,12 +2,12 @@ import sys
 from pathlib import Path
 
 from console import _B, _R, _DIM, _GRN, _RED, _YLW, _CYN
-from database.IRS990 import IRS990Database
+from database import OpenReturnDB
 
 
-def _open_db(args) -> IRS990Database:
+def _open_db(args) -> OpenReturnDB:
     path = getattr(args, 'db', None)
-    return IRS990Database(path=path)
+    return OpenReturnDB(path=path)
 
 
 def cmd_init(args) -> int:
@@ -26,8 +26,8 @@ def cmd_migrate(args) -> int:
     """Apply pending database migrations."""
     db = _open_db(args)
 
-    available  = db.list_available_migrations()
-    applied    = db.get_applied_migrations()
+    available  = db.migrations.list_available_migrations()
+    applied    = db.migrations.get_applied_migrations()
     pending    = [(name, path) for name, path in available if name not in applied]
 
     if getattr(args, 'list', False):
@@ -48,7 +48,7 @@ def cmd_migrate(args) -> int:
     for name, path in pending:
         print(f"  {_CYN}→{_R} {name}", end="", flush=True)
         try:
-            db.apply_migration(name, path.read_text())
+            db.migrations.apply_migration(name, path.read_text())
             print(f"  {_GRN}done{_R}")
         except Exception as exc:
             print(f"  {_RED}FAILED{_R}: {exc}")

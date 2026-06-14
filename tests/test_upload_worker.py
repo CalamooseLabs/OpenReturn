@@ -32,9 +32,9 @@ _FULL_XML = b"""<?xml version="1.0" encoding="UTF-8"?>
 
 def _make_mock_db():
     mock_db = MagicMock()
-    mock_db.get_xpath_index.return_value = {}
-    mock_db.get_supported_forms.return_value = {"990"}
-    mock_db.create_filing.return_value = "test-uuid"
+    mock_db.meta.get_xpath_index.return_value = {}
+    mock_db.meta.get_supported_forms.return_value = {"990"}
+    mock_db.filings.create_filing.return_value = "test-uuid"
     return mock_db
 
 
@@ -184,15 +184,15 @@ class TestStoreParsed(unittest.TestCase):
 
     def test_calls_upsert_organization(self):
         self.router._store_parsed(self._parsed(), self.results)
-        self.mock_db.upsert_organization.assert_called_once_with("123456789", "Test Org")
+        self.mock_db.orgs.upsert_organization.assert_called_once_with("123456789", "Test Org")
 
     def test_calls_create_filing(self):
         self.router._store_parsed(self._parsed(), self.results)
-        self.mock_db.create_filing.assert_called_once()
+        self.mock_db.filings.create_filing.assert_called_once()
 
     def test_calls_store_reported_data(self):
         self.router._store_parsed(self._parsed(), self.results)
-        self.mock_db.store_reported_data.assert_called_once()
+        self.mock_db.reported_data.store_reported_data.assert_called_once()
 
     def test_fields_stored_count(self):
         self.router._store_parsed(
@@ -270,7 +270,7 @@ class TestProcessZipDir(unittest.TestCase):
             'form_code': '990', 'file': 'f.xml', 'zip_filename': 'test.zip', 'values': {},
         }
         mock_pool, _ = self._mock_pool(future_result=parsed)
-        self.mock_db.create_filing.side_effect = RuntimeError("DB write failed")
+        self.mock_db.filings.create_filing.side_effect = RuntimeError("DB write failed")
 
         with tempfile.TemporaryDirectory() as td:
             self._make_zip(td, "test.zip", {"f.xml": _FULL_XML})

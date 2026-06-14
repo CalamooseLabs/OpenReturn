@@ -7,7 +7,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from database.Score import ScoreDatabase
+from database import OpenReturnDB
 from scoring import ScoringEngine
 from scoring.engine import _PATHS, _fmt_num
 
@@ -19,7 +19,7 @@ def _add_filing(db, ein='123456789', year=2023, filing_id=1, uuid='u1',
         "INSERT INTO filing (filing_id, uuid, year, organization_id, form_code, zip_filename) "
         "VALUES (?,?,?,?,?,?)", (filing_id, uuid, year, ein, form_code, zip_filename))
     if values:
-        xidx = db.get_xpath_index()
+        xidx = db.meta.get_xpath_index()
         for key, amt in values.items():
             fid = xidx.get(_PATHS[key])
             if fid is not None:
@@ -58,7 +58,7 @@ class TestFmtNum(unittest.TestCase):
 class TestDebugRatio(unittest.TestCase):
 
     def setUp(self):
-        self.db = ScoreDatabase(path=":memory:")  # seeds model v1
+        self.db = OpenReturnDB(path=":memory:")  # seeds model v1
         _add_filing(self.db, values={'prog': 812000, 'total_exp': 950000})
         self.eng = ScoringEngine(self.db)
         self.report = self.eng.debug('123456789', 2023, 1)
@@ -123,7 +123,7 @@ class TestDebugRatio(unittest.TestCase):
 class TestDebugMissingInput(unittest.TestCase):
 
     def test_missing_field_marks_incomputable(self):
-        db = ScoreDatabase(path=":memory:")
+        db = OpenReturnDB(path=":memory:")
         # total_exp present, prog absent → ratio prog/total_exp has a None numerator
         _add_filing(db, values={'total_exp': 950000})
         rep = ScoringEngine(db).debug('123456789', 2023, 1)
@@ -143,7 +143,7 @@ class TestDebugMissingInput(unittest.TestCase):
 class TestDebugLiteralAndFactorRef(unittest.TestCase):
 
     def setUp(self):
-        self.db = ScoreDatabase(path=":memory:")
+        self.db = OpenReturnDB(path=":memory:")
         _add_model(self.db, 9, [
             ("Base", 0.0, "ratio", '["prog","total_exp"]', "higher", 0.0, 1.0, "base ratio"),
             ("Clamped", 0.5, "clamp", '["factor:Base","0","0.5"]', "higher", 0.0, 1.0, "clamp the base"),
@@ -181,7 +181,7 @@ class TestDebugLiteralAndFactorRef(unittest.TestCase):
 class TestDebugHistorical(unittest.TestCase):
 
     def test_series_in_variable_and_formula(self):
-        db = ScoreDatabase(path=":memory:")
+        db = OpenReturnDB(path=":memory:")
         _add_model(db, 7, [
             ("Rev Trend", 1.0, "running_average", '["cy_rev"]', "higher", 0.0, 1000000.0, "avg revenue"),
         ])
@@ -203,7 +203,7 @@ class TestDebugWorkingCapital(unittest.TestCase):
     def test_missing_optionals_render_as_zero(self):
         # working_capital treats missing cash/savings/accts_pay as 0.0; the
         # substituted formula must show 0, not a misleading None.
-        db = ScoreDatabase(path=":memory:")
+        db = OpenReturnDB(path=":memory:")
         _add_model(db, 8, [
             ("WC", 1.0, "working_capital", '["cash","savings","accts_pay","cy_exp"]',
              "higher", 0.0, 0.5, "working capital"),
@@ -224,12 +224,12 @@ class TestFieldSourceConsistency(unittest.TestCase):
         # get_field_source must resolve to the SAME field_id the value was stored
         # under (get_xpath_index, last-wins). Otherwise the traceback could show a
         # different field that merely shares the xml_path.
-        db = ScoreDatabase(path=":memory:")
-        xidx = db.get_xpath_index()
+        db = OpenReturnDB(path=":memory:")
+        xidx = db.meta.get_xpath_index()
         for path in set(_PATHS.values()):
             if path not in xidx:
                 continue
-            src = db.get_field_source(path)
+            src = db.meta.get_field_source(path)
             self.assertIsNotNone(src, path)
             self.assertEqual(src['field_id'], xidx[path], f"mismatch for {path}")
         db.close()
@@ -240,7 +240,7 @@ class TestDebugErrors(unittest.TestCase):
     def test_calculate_empty_model_raises(self):
         # parity with debug(): calculate() must also reject an empty model rather
         # than silently persisting a 0.0 score.
-        db = ScoreDatabase(path=":memory:")
+        db = OpenReturnDB(path=":memory:")
         _add_filing(db, values={'prog': 1, 'total_exp': 2})
         with self.assertRaises(ValueError):
             ScoringEngine(db).calculate('123456789', 2023, 999)
@@ -248,13 +248,13 @@ class TestDebugErrors(unittest.TestCase):
 
 
     def test_unknown_filing_raises(self):
-        db = ScoreDatabase(path=":memory:")
+        db = OpenReturnDB(path=":memory:")
         with self.assertRaises(ValueError):
             ScoringEngine(db).debug('999999999', 1999, 1)
         db.close()
 
     def test_model_with_no_factors_raises(self):
-        db = ScoreDatabase(path=":memory:")
+        db = OpenReturnDB(path=":memory:")
         _add_filing(db, values={'prog': 1, 'total_exp': 2})
         with self.assertRaises(ValueError):
             ScoringEngine(db).debug('123456789', 2023, 999)

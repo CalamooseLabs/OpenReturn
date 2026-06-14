@@ -5,9 +5,15 @@ import secrets
 class ApiKeyRepository:
   """Create, validate, list and revoke API keys.
 
-  Validation results are cached in ``self._key_cache`` (set up by
-  ``IRS990Database.__init__``) and cleared on revoke.
+  Validation results are cached in ``self._key_cache`` (owned by this repo) and
+  cleared on revoke. A standalone concern — no FKs to the rest of the schema.
   """
+
+  def __init__(self, db) -> None:
+    self._db = db
+    self.cursor = db.cursor
+    self.connection = db.connection
+    self._key_cache: dict[str, int | None] = {}
 
   def create_api_key(self, name: str, rate_limit: int = -1) -> tuple[int, str]:
     raw = secrets.token_urlsafe(32)

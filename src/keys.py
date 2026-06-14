@@ -6,19 +6,19 @@ import sys
 from pathlib import Path
 
 from console import _B, _R, _DIM, _CYN, _GRN, _RED, _YLW
-from database.Score import ScoreDatabase
+from database import OpenReturnDB
 
 
-def _require_db() -> ScoreDatabase:
+def _require_db() -> OpenReturnDB:
     if not Path('OpenReturn.db').exists():
         print("OpenReturn.db not found — run openreturn-keys from the server's data directory.", file=sys.stderr)
         sys.exit(1)
-    return ScoreDatabase()
+    return OpenReturnDB()
 
 
 def cmd_create(args) -> int:
     db = _require_db()
-    key_id, raw = db.create_api_key(args.name, rate_limit=args.rate_limit)
+    key_id, raw = db.keys.create_api_key(args.name, rate_limit=args.rate_limit)
     db.close()
     limit_str = "unlimited" if args.rate_limit == -1 else f"{args.rate_limit} req/min"
     print(f"\n{_B}{_GRN}API key created{_R}")
@@ -33,7 +33,7 @@ def cmd_create(args) -> int:
 
 def cmd_list(args) -> int:
     db = _require_db()
-    keys = db.list_api_keys()
+    keys = db.keys.list_api_keys()
     db.close()
     if not keys:
         print("No API keys found.")
@@ -56,7 +56,7 @@ def cmd_list(args) -> int:
 
 def cmd_revoke(args) -> int:
     db = _require_db()
-    ok = db.revoke_api_key(args.key_id)
+    ok = db.keys.revoke_api_key(args.key_id)
     db.close()
     if ok:
         print(f"Key {args.key_id} revoked.")

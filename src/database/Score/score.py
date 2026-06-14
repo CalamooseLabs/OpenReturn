@@ -1,39 +1,16 @@
-from database.IRS990 import IRS990Database
+class ScoreRepository:
+  """Scoring models, factors, and per-filing scores (computed and manual).
 
+  A sibling repository on ``OpenReturnDB`` — not a subclass of the 990 data
+  layer. It shares the facade's connection and joins to the ``filing`` table
+  directly; the purge helpers also touch ``reported_data``/``organization_score``
+  (deleting scores before filings, since organization_score has no FK cascade).
+  """
 
-class ScoreDatabase(IRS990Database):
-  def __init__(self, name="OpenReturn", path: str | None = None) -> None:
-    super().__init__(name, path=path)
-    self._run_dir("sql/setup", "Score")
-    self._migrate_model_columns()
-    if not self._table_has_rows("score_model"):
-      self._run_dir("sql/populate", "Score")
-
-  def _migrate_model_columns(self) -> None:
-    """Add the model-type / manual-scoring columns to databases created before
-    they existed (fresh DBs get them from sql/setup). Each ALTER is independent
-    and ignored if the column is already present."""
-    for ddl in (
-      "ALTER TABLE score_model ADD COLUMN model_type TEXT REFERENCES model_type (code)",
-      "ALTER TABLE score_model ADD COLUMN scoring_mode TEXT NOT NULL DEFAULT 'computed'",
-      "ALTER TABLE score_factor ADD COLUMN manual_scale TEXT",
-      "ALTER TABLE organization_score_factor ADD COLUMN comment TEXT",
-    ):
-      try:
-        self.cursor.execute(ddl)
-      except Exception as exc:
-        # Expected when the column already exists; re-raise anything else so a
-        # genuine migration failure isn't silently swallowed. (String match keeps
-        # this binding-agnostic across sqlite3 / sqlcipher3.)
-        if 'duplicate column' not in str(exc).lower():
-          raise
-    # Backfill pre-existing models as financial/computed (the only kind before).
-    try:
-      self.cursor.execute(
-        "UPDATE score_model SET model_type = 'financial' WHERE model_type IS NULL")
-    except Exception:
-      pass
-    self.connection.commit()
+  def __init__(self, db) -> None:
+    self._db = db
+    self.cursor = db.cursor
+    self.connection = db.connection
 
   def get_model_id(self, version: int = 1) -> int:
     row = self.cursor.execute(

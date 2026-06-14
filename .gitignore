@@ -18,6 +18,3 @@ CLAUDE.md
 .coveragerc
 .coveragerc*
 .claude/
-
-# Generated GitHub wiki (build with tools/build_wiki.py)
-wiki/

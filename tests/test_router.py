@@ -43,11 +43,11 @@ def _mock_headers(content_type: str) -> MagicMock:
 
 def _make_router() -> tuple[UploadRouter, MagicMock]:
     db = MagicMock()
-    db.get_xpath_index.return_value = {
+    db.meta.get_xpath_index.return_value = {
         "ReturnData/IRS990/ActivityOrMissionDesc": 1001,
     }
-    db.get_supported_forms.return_value = {"990", "990-EZ", "990-PF", "990-N", "990-T"}
-    db.create_filing.return_value = "mock-filing-uuid"
+    db.meta.get_supported_forms.return_value = {"990", "990-EZ", "990-PF", "990-N", "990-T"}
+    db.filings.create_filing.return_value = "mock-filing-uuid"
     return UploadRouter(db=db), db
 
 
@@ -188,17 +188,17 @@ class TestUploadRouterProcessXml(unittest.TestCase):
 
     def test_valid_xml_calls_upsert_organization(self):
         self.router._process_xml(VALID_990_XML, "test.xml")
-        self.db.upsert_organization.assert_called_once_with("123456789", "Test Org")
+        self.db.orgs.upsert_organization.assert_called_once_with("123456789", "Test Org")
 
     def test_valid_xml_calls_create_filing(self):
         self.router._process_xml(VALID_990_XML, "test.xml")
-        self.db.create_filing.assert_called_once_with(
+        self.db.filings.create_filing.assert_called_once_with(
             "123456789", 2023, "990", xml_filename="test.xml", zip_filename=None
         )
 
     def test_valid_xml_calls_store_reported_data(self):
         self.router._process_xml(VALID_990_XML, "test.xml")
-        self.db.store_reported_data.assert_called_once_with(
+        self.db.reported_data.store_reported_data.assert_called_once_with(
             "mock-filing-uuid", {1001: "Test mission"}
         )
 
@@ -212,17 +212,17 @@ class TestUploadRouterProcessXml(unittest.TestCase):
 
     def test_missing_header_does_not_touch_db(self):
         self.router._process_xml(MISSING_EIN_XML, "bad.xml")
-        self.db.upsert_organization.assert_not_called()
-        self.db.create_filing.assert_not_called()
-        self.db.store_reported_data.assert_not_called()
+        self.db.orgs.upsert_organization.assert_not_called()
+        self.db.filings.create_filing.assert_not_called()
+        self.db.reported_data.store_reported_data.assert_not_called()
 
     def test_xpath_with_no_match_not_stored(self):
         router, db = _make_router()
-        db.get_xpath_index.return_value = {"ReturnData/IRS990/NoSuchField": 9999}
+        db.meta.get_xpath_index.return_value = {"ReturnData/IRS990/NoSuchField": 9999}
         router = UploadRouter(db=db)
         result = router._process_xml(VALID_990_XML, "test.xml")
         self.assertEqual(result["fields_stored"], 0)
-        db.store_reported_data.assert_called_once_with("mock-filing-uuid", {})
+        db.reported_data.store_reported_data.assert_called_once_with("mock-filing-uuid", {})
 
 
 class TestUploadRouterHandleUpload(unittest.TestCase):
@@ -323,31 +323,31 @@ class TestUploadRouterUnsupportedForm(unittest.TestCase):
 
     def test_unsupported_form_returns_skipped_status(self):
         db = MagicMock()
-        db.get_xpath_index.return_value = {}
-        db.get_supported_forms.return_value = {"990-EZ"}  # 990 not in here
-        db.create_filing.return_value = "mock-uuid"
+        db.meta.get_xpath_index.return_value = {}
+        db.meta.get_supported_forms.return_value = {"990-EZ"}  # 990 not in here
+        db.filings.create_filing.return_value = "mock-uuid"
         router = UploadRouter(db=db)
         result = router._process_xml(VALID_990_XML, "test.xml")
         self.assertEqual(result["status"], "skipped")
 
     def test_unsupported_form_reason_mentions_form(self):
         db = MagicMock()
-        db.get_xpath_index.return_value = {}
-        db.get_supported_forms.return_value = {"990-EZ"}
-        db.create_filing.return_value = "mock-uuid"
+        db.meta.get_xpath_index.return_value = {}
+        db.meta.get_supported_forms.return_value = {"990-EZ"}
+        db.filings.create_filing.return_value = "mock-uuid"
         router = UploadRouter(db=db)
         result = router._process_xml(VALID_990_XML, "test.xml")
         self.assertIn("990", result["reason"])
 
     def test_unsupported_form_does_not_call_db(self):
         db = MagicMock()
-        db.get_xpath_index.return_value = {}
-        db.get_supported_forms.return_value = set()
-        db.create_filing.return_value = "mock-uuid"
+        db.meta.get_xpath_index.return_value = {}
+        db.meta.get_supported_forms.return_value = set()
+        db.filings.create_filing.return_value = "mock-uuid"
         router = UploadRouter(db=db)
         router._process_xml(VALID_990_XML, "test.xml")
-        db.upsert_organization.assert_not_called()
-        db.create_filing.assert_not_called()
+        db.orgs.upsert_organization.assert_not_called()
+        db.filings.create_filing.assert_not_called()
 
 
 class TestUploadRouterGetForm(unittest.TestCase):
@@ -378,13 +378,13 @@ class TestUploadRouterHandleUploadException(unittest.TestCase):
         return self.handler(query_params={}, body=body, headers=headers)
 
     def test_process_xml_exception_does_not_propagate(self):
-        self.db.create_filing.side_effect = RuntimeError("db failure")
+        self.db.filings.create_filing.side_effect = RuntimeError("db failure")
         body, boundary = _make_upload_body({"filing.xml": VALID_990_XML})
         result = self._call(body, boundary)
         self.assertEqual(result["status"], "complete")
 
     def test_process_xml_exception_counted_as_error(self):
-        self.db.create_filing.side_effect = RuntimeError("db failure")
+        self.db.filings.create_filing.side_effect = RuntimeError("db failure")
         body, boundary = _make_upload_body({"filing.xml": VALID_990_XML})
         result = self._call(body, boundary)
         self.assertEqual(result["errors"], 1)
@@ -399,7 +399,7 @@ class TestProcessZipDir(unittest.TestCase):
 
     def setUp(self):
         self.router, self.db = _make_router()
-        self.db.create_filing.return_value = "filing-uuid"
+        self.db.filings.create_filing.return_value = "filing-uuid"
 
     def test_empty_directory_returns_empty_list(self):
         with tempfile.TemporaryDirectory() as td:
@@ -432,7 +432,7 @@ class TestProcessZipDir(unittest.TestCase):
 
     def test_process_xml_exception_caught_per_file(self):
         """Lines 86-87: exceptions from _process_xml are caught per-file."""
-        self.db.create_filing.side_effect = RuntimeError("db down")
+        self.db.filings.create_filing.side_effect = RuntimeError("db down")
         with tempfile.TemporaryDirectory() as td:
             p = Path(td)
             shutil.copy(self._GOOD_ZIP, p / 'good.zip')

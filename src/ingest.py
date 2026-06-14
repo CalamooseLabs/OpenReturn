@@ -19,7 +19,7 @@ from pathlib import Path
 import daemon
 import sources
 from console import _B, _R, _DIM, _CYN, _GRN, _RED, _YLW, _CLR
-from database.Score import ScoreDatabase
+from database import OpenReturnDB
 from router.Upload import UploadRouter
 from router.Upload.upload import _worker_init, _parse_xml_batch
 from unzipper import MemberReader
@@ -361,7 +361,7 @@ def _finish_run(args, ctx: _Ctx, db, t_start: float, t_process: float) -> int:
     )
 
     print(f"{_DIM}Rebuilding indexes…{_R}", flush=True)
-    db.restore_ingest_indexes()
+    db.meta.restore_ingest_indexes()
     print(f"{_DIM}Checkpointing WAL…{_R}", flush=True)
     db.end_bulk_load()
 
@@ -691,7 +691,7 @@ def _cmd_stop_background(args) -> int:
 
 # ── Ingested-archive management (list / forget / purge) ──────────────────────
 
-def _require_db() -> ScoreDatabase | None:
+def _require_db() -> OpenReturnDB | None:
     """Open the existing DB for a management command. Returns None (after an
     error) if it doesn't exist (don't create an empty DB as a side effect) or if
     a background ingest is running — opening a second connection would block on
@@ -705,14 +705,14 @@ def _require_db() -> ScoreDatabase | None:
         print(f"A background ingest is running (PID {running.get('pid')}). "
               f"Stop it first: openreturn ingest --stop", file=sys.stderr)
         return None
-    return ScoreDatabase()
+    return OpenReturnDB()
 
 
 def _cmd_list_ingested(args) -> int:
     db = _require_db()
     if db is None:
         return 1
-    zips = db.list_ingested_zips()
+    zips = db.ingest.list_ingested_zips()
     db.close()
     if not zips:
         print("No ingested archives recorded.")
@@ -739,18 +739,18 @@ def _cmd_manage_ingested(args) -> int:
         if getattr(args, 'purge', None):
             return _do_purge(db, args, pattern=args.purge)
         if getattr(args, 'forget_all', False):
-            n = db.forget_all_ingested_zips()
+            n = db.ingest.forget_all_ingested_zips()
             print(f"{_GRN}Forgot {n} ingested-archive record(s).{_R} "
                   f"{_DIM}Filing data is unchanged; they re-ingest on the next URL run.{_R}")
             return 0
-        matches = db.find_ingested_zips(args.forget)
+        matches = db.ingest.find_ingested_zips(args.forget)
         if not matches:
             print(f"No ingested archives match {_CYN}{args.forget}{_R}.")
             return 0
         print(f"\n{_B}Forgetting {len(matches)} record(s){_R}  {_DIM}(filing data unchanged){_R}")
         for m in matches:
             print(f"  {m['filename']}  {_DIM}{m['source']}{_R}")
-        n = db.forget_ingested_zips([m['source'] for m in matches])
+        n = db.ingest.forget_ingested_zips([m['source'] for m in matches])
         print(f"{_GRN}Forgot {n} record(s).{_R}")
         return 0
     finally:
@@ -767,8 +767,8 @@ def _do_purge(db, args, pattern: str | None) -> int:
         print(f"  {_DIM}Deletes every filing, reported value, and score. Schema, reference "
               f"data, API keys, models, and organizations are kept.{_R}")
     else:
-        archives = db.find_zip_filenames(pattern)
-        tracking = db.find_ingested_zips(pattern)
+        archives = db.scores.find_zip_filenames(pattern)
+        tracking = db.ingest.find_ingested_zips(pattern)
         if not archives and not tracking:
             print(f"Nothing matches {_CYN}{pattern}{_R}.")
             return 0
@@ -788,13 +788,13 @@ def _do_purge(db, args, pattern: str | None) -> int:
             return 1
 
     if pattern is None:
-        result = db.delete_all_filings()
-        db.forget_all_ingested_zips()
+        result = db.scores.delete_all_filings()
+        db.ingest.forget_all_ingested_zips()
     else:
-        result = db.delete_filings_by_zip(pattern)
+        result = db.scores.delete_filings_by_zip(pattern)
         # Forget exactly the records previewed above (reuse `tracking`) rather
         # than re-querying — keeps what's acted on identical to what was shown.
-        db.forget_ingested_zips([m['source'] for m in tracking])
+        db.ingest.forget_ingested_zips([m['source'] for m in tracking])
 
     print(f"{_GRN}Deleted {result['filings']:,} filing(s), {result['values']:,} "
           f"reported value(s), {result['scores']:,} score(s).{_R}")
@@ -837,11 +837,11 @@ def _cmd_ingest_dir(args, dir_str: str) -> int:
 
     t_start = time.monotonic()
     ctx = _Ctx(n_zips=n_zips, total_xmls=total_xmls, workers=args.workers)
-    db = ScoreDatabase()
+    db = OpenReturnDB()
     router = UploadRouter(db=db, secure_by_default=True)
 
     db.begin_bulk_load()
-    db.drop_ingest_indexes()
+    db.meta.drop_ingest_indexes()
 
     if args.workers == 1:
         for zip_idx, (zip_path, xml_names) in enumerate(manifest, 1):
@@ -877,8 +877,8 @@ def _cmd_ingest_url(args, source: str) -> int:
         print(f"No ZIP links found at {source}")
         return 0
 
-    db = ScoreDatabase()
-    recorded = set() if getattr(args, 'force', False) else db.get_ingested_sources()
+    db = OpenReturnDB()
+    recorded = set() if getattr(args, 'force', False) else db.ingest.get_ingested_sources()
     todo = [u for u in urls if u not in recorded]
     skipped = len(urls) - len(todo)
 
@@ -917,7 +917,7 @@ def _cmd_ingest_url(args, source: str) -> int:
     ctx = _Ctx(n_zips=len(todo), total_xmls=0, workers=args.workers)
     router = UploadRouter(db=db, secure_by_default=True)
     db.begin_bulk_load()
-    db.drop_ingest_indexes()
+    db.meta.drop_ingest_indexes()
 
     t_start = time.monotonic()
     if args.workers == 1:
@@ -972,7 +972,7 @@ def _ingest_one_remote(db, router, pool, ctx, idx, url, cache_dir, keep) -> None
     per = _process_zip(db, router, pool, ctx, idx, zip_path, xml_names)
 
     if xml_names is not None:
-        db.record_ingested_zip(
+        db.ingest.record_ingested_zip(
             url, url=url, filename=zip_path.name,
             etag=meta.get('etag'), last_modified=meta.get('last_modified'),
             content_length=meta.get('content_length'), filings_stored=per['stored'],

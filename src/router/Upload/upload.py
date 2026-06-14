@@ -8,7 +8,7 @@ from http.client import HTTPMessage
 from pathlib import Path
 
 from router import Router
-from database.IRS990 import IRS990Database
+from database import OpenReturnDB
 from parser.IRS990 import IRS990Parser
 from unzipper import MemberReader
 
@@ -128,14 +128,14 @@ class UploadRouter(Router):
   _BATCH_SIZE = 1000
   _CHUNK      = 8    # in-flight tasks per worker slot
 
-  def __init__(self, prefix: str = '/upload', db: IRS990Database = None,
+  def __init__(self, prefix: str = '/upload', db: OpenReturnDB = None,
                secure_by_default: bool = False, workers: int | None = None):
     base_path = Path(__file__).parent
     super().__init__(prefix, str(base_path / "views"), secure_by_default=secure_by_default)
     self.db      = db
     self.workers = workers if workers is not None else (os.cpu_count() or 4)
-    self.xpath_index    = db.get_xpath_index()
-    self.supported_forms = db.get_supported_forms()
+    self.xpath_index    = db.meta.get_xpath_index()
+    self.supported_forms = db.meta.get_supported_forms()
     self._register_routes()
 
   def _process_xml(self, xml_content: str, filename: str, zip_filename: str | None = None) -> dict:
@@ -151,8 +151,8 @@ class UploadRouter(Router):
     if issue is not None:
       return issue
 
-    self.db.upsert_organization(ein, name)
-    filing_id = self.db.create_filing(ein, int(year), form_code,
+    self.db.orgs.upsert_organization(ein, name)
+    filing_id = self.db.filings.create_filing(ein, int(year), form_code,
                                       xml_filename=filename, zip_filename=zip_filename)
 
     values: dict[int, str] = {}
@@ -161,7 +161,7 @@ class UploadRouter(Router):
       if value is not None:
         values[field_id] = value
 
-    self.db.store_reported_data(filing_id, values)
+    self.db.reported_data.store_reported_data(filing_id, values)
 
     return {
       "file": filename,
@@ -175,12 +175,12 @@ class UploadRouter(Router):
 
   def _store_parsed(self, parsed: dict, results: list) -> str:
     """Write a parsed filing dict to the DB and append to results. Returns status."""
-    self.db.upsert_organization(parsed["ein"], parsed["name"])
-    filing_id = self.db.create_filing(
+    self.db.orgs.upsert_organization(parsed["ein"], parsed["name"])
+    filing_id = self.db.filings.create_filing(
       parsed["ein"], parsed["year"], parsed["form_code"],
       xml_filename=parsed["file"], zip_filename=parsed["zip_filename"],
     )
-    self.db.store_reported_data(filing_id, parsed["values"])
+    self.db.reported_data.store_reported_data(filing_id, parsed["values"])
     results.append({
       "file":          parsed["file"],
       "status":        "stored",

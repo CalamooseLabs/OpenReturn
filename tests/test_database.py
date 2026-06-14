@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 import database.base as db_base
-from database.IRS990 import IRS990Database
+from database import OpenReturnDB
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +121,7 @@ class TestResolveDbKey(unittest.TestCase):
 class TestDatabaseBase(unittest.TestCase):
 
     def setUp(self):
-        self.db = IRS990Database(path=":memory:")
+        self.db = OpenReturnDB(path=":memory:")
 
     def tearDown(self):
         self.db.close()
@@ -138,7 +138,7 @@ class TestIRS990Database(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.db = IRS990Database(path=":memory:")
+        cls.db = OpenReturnDB(path=":memory:")
 
     @classmethod
     def tearDownClass(cls):
@@ -152,28 +152,28 @@ class TestIRS990Database(unittest.TestCase):
     # --- get_xpath_index ---
 
     def test_xpath_index_is_nonempty_dict(self):
-        index = self.db.get_xpath_index()
+        index = self.db.meta.get_xpath_index()
         self.assertIsInstance(index, dict)
         self.assertGreater(len(index), 0)
 
     def test_xpath_index_keys_are_strings(self):
-        index = self.db.get_xpath_index()
+        index = self.db.meta.get_xpath_index()
         for key in list(index.keys())[:5]:
             self.assertIsInstance(key, str)
 
     def test_xpath_index_values_are_ints(self):
-        index = self.db.get_xpath_index()
+        index = self.db.meta.get_xpath_index()
         for val in list(index.values())[:5]:
             self.assertIsInstance(val, int)
 
     def test_known_xpath_present(self):
-        index = self.db.get_xpath_index()
+        index = self.db.meta.get_xpath_index()
         self.assertIn("ReturnData/IRS990/ActivityOrMissionDesc", index)
 
     # --- upsert_organization ---
 
     def test_upsert_creates_organization(self):
-        self.db.upsert_organization("123456789", "Test Org")
+        self.db.orgs.upsert_organization("123456789", "Test Org")
         row = self.db.cursor.execute(
             "SELECT ein, name FROM organization WHERE ein = ?", ("123456789",)
         ).fetchone()
@@ -182,36 +182,36 @@ class TestIRS990Database(unittest.TestCase):
         self.assertEqual(row[1], "Test Org")
 
     def test_upsert_is_idempotent(self):
-        self.db.upsert_organization("123456789", "Test Org")
-        self.db.upsert_organization("123456789", "Test Org")
+        self.db.orgs.upsert_organization("123456789", "Test Org")
+        self.db.orgs.upsert_organization("123456789", "Test Org")
         count = self.db.cursor.execute(
             "SELECT COUNT(*) FROM organization WHERE ein = ?", ("123456789",)
         ).fetchone()[0]
         self.assertEqual(count, 1)
 
     def test_upsert_multiple_organizations(self):
-        self.db.upsert_organization("111111111", "Org One")
-        self.db.upsert_organization("222222222", "Org Two")
+        self.db.orgs.upsert_organization("111111111", "Org One")
+        self.db.orgs.upsert_organization("222222222", "Org Two")
         count = self.db.cursor.execute("SELECT COUNT(*) FROM organization").fetchone()[0]
         self.assertEqual(count, 2)
 
     # --- create_filing ---
 
     def test_create_filing_returns_string(self):
-        self.db.upsert_organization("123456789", "Test Org")
-        filing_id = self.db.create_filing("123456789", 2023, "990")
+        self.db.orgs.upsert_organization("123456789", "Test Org")
+        filing_id = self.db.filings.create_filing("123456789", 2023, "990")
         self.assertIsInstance(filing_id, str)
         self.assertGreater(len(filing_id), 0)
 
     def test_create_filing_returns_uuid_format(self):
-        self.db.upsert_organization("123456789", "Test Org")
-        filing_id = self.db.create_filing("123456789", 2023, "990")
+        self.db.orgs.upsert_organization("123456789", "Test Org")
+        filing_id = self.db.filings.create_filing("123456789", 2023, "990")
         import uuid
         uuid.UUID(filing_id)  # raises ValueError if not a valid UUID
 
     def test_create_filing_stores_correct_data(self):
-        self.db.upsert_organization("123456789", "Test Org")
-        filing_id = self.db.create_filing("123456789", 2023, "990")
+        self.db.orgs.upsert_organization("123456789", "Test Org")
+        filing_id = self.db.filings.create_filing("123456789", 2023, "990")
         row = self.db.cursor.execute(
             "SELECT year, organization_id, form_code FROM filing WHERE uuid = ?",
             (filing_id,),
@@ -222,34 +222,34 @@ class TestIRS990Database(unittest.TestCase):
         self.assertEqual(row[2], "990")
 
     def test_create_filing_returns_unique_ids(self):
-        self.db.upsert_organization("123456789", "Test Org")
-        id1 = self.db.create_filing("123456789", 2022, "990")
-        id2 = self.db.create_filing("123456789", 2023, "990")
+        self.db.orgs.upsert_organization("123456789", "Test Org")
+        id1 = self.db.filings.create_filing("123456789", 2022, "990")
+        id2 = self.db.filings.create_filing("123456789", 2023, "990")
         self.assertNotEqual(id1, id2)
 
     def test_create_filing_idempotent_on_duplicate(self):
-        self.db.upsert_organization("123456789", "Test Org")
-        id1 = self.db.create_filing("123456789", 2023, "990")
-        id2 = self.db.create_filing("123456789", 2023, "990")
+        self.db.orgs.upsert_organization("123456789", "Test Org")
+        id1 = self.db.filings.create_filing("123456789", 2023, "990")
+        id2 = self.db.filings.create_filing("123456789", 2023, "990")
         self.assertEqual(id1, id2)
 
     def test_create_filing_allows_different_form_same_year(self):
-        self.db.upsert_organization("123456789", "Test Org")
-        id1 = self.db.create_filing("123456789", 2023, "990")
-        id2 = self.db.create_filing("123456789", 2023, "990EZ")
+        self.db.orgs.upsert_organization("123456789", "Test Org")
+        id1 = self.db.filings.create_filing("123456789", 2023, "990")
+        id2 = self.db.filings.create_filing("123456789", 2023, "990EZ")
         self.assertNotEqual(id1, id2)
 
     # --- store_reported_data ---
 
     def test_store_reported_data_inserts_rows(self):
-        self.db.upsert_organization("123456789", "Test Org")
-        filing_id = self.db.create_filing("123456789", 2023, "990")
+        self.db.orgs.upsert_organization("123456789", "Test Org")
+        filing_id = self.db.filings.create_filing("123456789", 2023, "990")
 
-        xpath_index = self.db.get_xpath_index()
+        xpath_index = self.db.meta.get_xpath_index()
         field_ids = list(xpath_index.values())[:3]
         values = {fid: f"value_{fid}" for fid in field_ids}
 
-        self.db.store_reported_data(filing_id, values)
+        self.db.reported_data.store_reported_data(filing_id, values)
 
         count = self.db.cursor.execute(
             "SELECT COUNT(*) FROM reported_data rd JOIN filing f ON f.filing_id = rd.filing_id "
@@ -258,13 +258,13 @@ class TestIRS990Database(unittest.TestCase):
         self.assertEqual(count, len(values))
 
     def test_store_reported_data_stores_correct_values(self):
-        self.db.upsert_organization("123456789", "Test Org")
-        filing_id = self.db.create_filing("123456789", 2023, "990")
+        self.db.orgs.upsert_organization("123456789", "Test Org")
+        filing_id = self.db.filings.create_filing("123456789", 2023, "990")
 
-        xpath_index = self.db.get_xpath_index()
+        xpath_index = self.db.meta.get_xpath_index()
         field_id = list(xpath_index.values())[0]
 
-        self.db.store_reported_data(filing_id, {field_id: "expected value"})
+        self.db.reported_data.store_reported_data(filing_id, {field_id: "expected value"})
 
         raw = self.db.cursor.execute(
             "SELECT rd.raw_value FROM reported_data rd JOIN filing f ON f.filing_id = rd.filing_id "
@@ -274,15 +274,15 @@ class TestIRS990Database(unittest.TestCase):
         self.assertEqual(raw, "expected value")
 
     def test_store_reported_data_is_idempotent(self):
-        self.db.upsert_organization("123456789", "Test Org")
-        filing_id = self.db.create_filing("123456789", 2023, "990")
+        self.db.orgs.upsert_organization("123456789", "Test Org")
+        filing_id = self.db.filings.create_filing("123456789", 2023, "990")
 
-        xpath_index = self.db.get_xpath_index()
+        xpath_index = self.db.meta.get_xpath_index()
         field_id = list(xpath_index.values())[0]
         values = {field_id: "value"}
 
-        self.db.store_reported_data(filing_id, values)
-        self.db.store_reported_data(filing_id, values)  # should not raise
+        self.db.reported_data.store_reported_data(filing_id, values)
+        self.db.reported_data.store_reported_data(filing_id, values)  # should not raise
 
         count = self.db.cursor.execute(
             "SELECT COUNT(*) FROM reported_data rd JOIN filing f ON f.filing_id = rd.filing_id "
@@ -291,9 +291,9 @@ class TestIRS990Database(unittest.TestCase):
         self.assertEqual(count, 1)
 
     def test_store_reported_data_empty_dict(self):
-        self.db.upsert_organization("123456789", "Test Org")
-        filing_id = self.db.create_filing("123456789", 2023, "990")
-        self.db.store_reported_data(filing_id, {})  # should not raise
+        self.db.orgs.upsert_organization("123456789", "Test Org")
+        filing_id = self.db.filings.create_filing("123456789", 2023, "990")
+        self.db.reported_data.store_reported_data(filing_id, {})  # should not raise
 
 
 # --- list_organizations ---
@@ -302,7 +302,7 @@ class TestIRS990DatabaseListMethods(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.db = IRS990Database(path=":memory:")
+        cls.db = OpenReturnDB(path=":memory:")
 
     @classmethod
     def tearDownClass(cls):
@@ -314,26 +314,26 @@ class TestIRS990DatabaseListMethods(unittest.TestCase):
         )
 
     def test_list_organizations_empty(self):
-        result = self.db.list_organizations()
+        result = self.db.orgs.list_organizations()
         self.assertEqual(result["organizations"], [])
         self.assertEqual(result["total"], 0)
 
     def test_list_organizations_returns_inserted(self):
-        self.db.upsert_organization("111111111", "Alpha Org")
-        result = self.db.list_organizations()
+        self.db.orgs.upsert_organization("111111111", "Alpha Org")
+        result = self.db.orgs.list_organizations()
         self.assertEqual(result["total"], 1)
         self.assertEqual(result["organizations"][0]["ein"], "111111111")
 
     def test_list_organizations_multiple(self):
-        self.db.upsert_organization("111111111", "Alpha Org")
-        self.db.upsert_organization("222222222", "Beta Org")
-        result = self.db.list_organizations()
+        self.db.orgs.upsert_organization("111111111", "Alpha Org")
+        self.db.orgs.upsert_organization("222222222", "Beta Org")
+        result = self.db.orgs.list_organizations()
         self.assertEqual(result["total"], 2)
         self.assertEqual(len(result["organizations"]), 2)
 
     def test_list_organizations_has_expected_keys(self):
-        self.db.upsert_organization("111111111", "Alpha Org")
-        result = self.db.list_organizations()
+        self.db.orgs.upsert_organization("111111111", "Alpha Org")
+        result = self.db.orgs.list_organizations()
         self.assertIn("ein", result["organizations"][0])
         self.assertIn("name", result["organizations"][0])
         self.assertIn("is_favorite", result["organizations"][0])
@@ -341,216 +341,216 @@ class TestIRS990DatabaseListMethods(unittest.TestCase):
         self.assertIn("updated_at", result["organizations"][0])
 
     def test_list_organizations_default_not_favorite(self):
-        self.db.upsert_organization("111111111", "Alpha Org")
-        result = self.db.list_organizations()
+        self.db.orgs.upsert_organization("111111111", "Alpha Org")
+        result = self.db.orgs.list_organizations()
         self.assertIs(result["organizations"][0]["is_favorite"], False)
 
     def test_list_organizations_favorites_only_filters(self):
-        self.db.upsert_organization("111111111", "Alpha Org")
-        self.db.upsert_organization("222222222", "Beta Org")
-        self.db.set_favorite("111111111", True)
-        result = self.db.list_organizations(favorites_only=True)
+        self.db.orgs.upsert_organization("111111111", "Alpha Org")
+        self.db.orgs.upsert_organization("222222222", "Beta Org")
+        self.db.orgs.set_favorite("111111111", True)
+        result = self.db.orgs.list_organizations(favorites_only=True)
         self.assertEqual(result["total"], 1)
         self.assertEqual(result["organizations"][0]["ein"], "111111111")
         self.assertTrue(result["organizations"][0]["is_favorite"])
 
     def test_list_organizations_favorites_only_with_search(self):
-        self.db.upsert_organization("111111111", "Alpha Org")
-        self.db.upsert_organization("222222222", "Beta Org")
-        self.db.set_favorite("111111111", True)
-        self.db.set_favorite("222222222", True)
-        result = self.db.list_organizations(search="Beta", favorites_only=True)
+        self.db.orgs.upsert_organization("111111111", "Alpha Org")
+        self.db.orgs.upsert_organization("222222222", "Beta Org")
+        self.db.orgs.set_favorite("111111111", True)
+        self.db.orgs.set_favorite("222222222", True)
+        result = self.db.orgs.list_organizations(search="Beta", favorites_only=True)
         self.assertEqual(result["total"], 1)
         self.assertEqual(result["organizations"][0]["ein"], "222222222")
 
     # --- get_organization ---
 
     def test_get_organization_found(self):
-        self.db.upsert_organization("111111111", "Alpha Org")
-        result = self.db.get_organization("111111111")
+        self.db.orgs.upsert_organization("111111111", "Alpha Org")
+        result = self.db.orgs.get_organization("111111111")
         self.assertIsNotNone(result)
         self.assertEqual(result["ein"], "111111111")
         self.assertEqual(result["name"], "Alpha Org")
 
     def test_get_organization_has_is_favorite(self):
-        self.db.upsert_organization("111111111", "Alpha Org")
-        result = self.db.get_organization("111111111")
+        self.db.orgs.upsert_organization("111111111", "Alpha Org")
+        result = self.db.orgs.get_organization("111111111")
         self.assertIs(result["is_favorite"], False)
 
     def test_get_organization_not_found_returns_none(self):
-        result = self.db.get_organization("999999999")
+        result = self.db.orgs.get_organization("999999999")
         self.assertIsNone(result)
 
     # --- set_favorite ---
 
     def test_set_favorite_marks_org(self):
-        self.db.upsert_organization("111111111", "Alpha Org")
-        self.db.set_favorite("111111111", True)
-        self.assertTrue(self.db.get_organization("111111111")["is_favorite"])
+        self.db.orgs.upsert_organization("111111111", "Alpha Org")
+        self.db.orgs.set_favorite("111111111", True)
+        self.assertTrue(self.db.orgs.get_organization("111111111")["is_favorite"])
 
     def test_set_favorite_unmarks_org(self):
-        self.db.upsert_organization("111111111", "Alpha Org")
-        self.db.set_favorite("111111111", True)
-        self.db.set_favorite("111111111", False)
-        self.assertFalse(self.db.get_organization("111111111")["is_favorite"])
+        self.db.orgs.upsert_organization("111111111", "Alpha Org")
+        self.db.orgs.set_favorite("111111111", True)
+        self.db.orgs.set_favorite("111111111", False)
+        self.assertFalse(self.db.orgs.get_organization("111111111")["is_favorite"])
 
     def test_set_favorite_returns_true_when_org_exists(self):
-        self.db.upsert_organization("111111111", "Alpha Org")
-        self.assertTrue(self.db.set_favorite("111111111", True))
+        self.db.orgs.upsert_organization("111111111", "Alpha Org")
+        self.assertTrue(self.db.orgs.set_favorite("111111111", True))
 
     def test_set_favorite_returns_false_when_org_absent(self):
-        self.assertFalse(self.db.set_favorite("999999999", True))
+        self.assertFalse(self.db.orgs.set_favorite("999999999", True))
 
     def test_set_favorite_absent_org_creates_nothing(self):
-        self.db.set_favorite("999999999", True)
-        self.assertIsNone(self.db.get_organization("999999999"))
+        self.db.orgs.set_favorite("999999999", True)
+        self.assertIsNone(self.db.orgs.get_organization("999999999"))
 
     # --- list_filings ---
 
     def test_list_filings_empty(self):
-        self.db.upsert_organization("111111111", "Alpha Org")
-        result = self.db.list_filings("111111111")
+        self.db.orgs.upsert_organization("111111111", "Alpha Org")
+        result = self.db.filings.list_filings("111111111")
         self.assertEqual(result, [])
 
     def test_list_filings_returns_inserted(self):
-        self.db.upsert_organization("111111111", "Alpha Org")
-        self.db.create_filing("111111111", 2023, "990")
-        result = self.db.list_filings("111111111")
+        self.db.orgs.upsert_organization("111111111", "Alpha Org")
+        self.db.filings.create_filing("111111111", 2023, "990")
+        result = self.db.filings.list_filings("111111111")
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["year"], 2023)
         self.assertEqual(result[0]["form_code"], "990")
 
     def test_list_filings_has_expected_keys(self):
-        self.db.upsert_organization("111111111", "Alpha Org")
-        self.db.create_filing("111111111", 2023, "990")
-        result = self.db.list_filings("111111111")
+        self.db.orgs.upsert_organization("111111111", "Alpha Org")
+        self.db.filings.create_filing("111111111", 2023, "990")
+        result = self.db.filings.list_filings("111111111")
         for key in ("filing_id", "year", "form_code", "created_at"):
             self.assertIn(key, result[0])
 
     def test_list_filings_only_returns_own_org(self):
-        self.db.upsert_organization("111111111", "Alpha Org")
-        self.db.upsert_organization("222222222", "Beta Org")
-        self.db.create_filing("111111111", 2023, "990")
-        self.db.create_filing("222222222", 2023, "990")
-        result = self.db.list_filings("111111111")
+        self.db.orgs.upsert_organization("111111111", "Alpha Org")
+        self.db.orgs.upsert_organization("222222222", "Beta Org")
+        self.db.filings.create_filing("111111111", 2023, "990")
+        self.db.filings.create_filing("222222222", 2023, "990")
+        result = self.db.filings.list_filings("111111111")
         self.assertEqual(len(result), 1)
 
     # --- get_filing ---
 
     def test_get_filing_found(self):
-        self.db.upsert_organization("111111111", "Alpha Org")
-        fid = self.db.create_filing("111111111", 2023, "990")
-        result = self.db.get_filing(fid)
+        self.db.orgs.upsert_organization("111111111", "Alpha Org")
+        fid = self.db.filings.create_filing("111111111", 2023, "990")
+        result = self.db.filings.get_filing(fid)
         self.assertIsNotNone(result)
         self.assertEqual(result["filing_id"], fid)
         self.assertEqual(result["ein"], "111111111")
 
     def test_get_filing_not_found_returns_none(self):
-        result = self.db.get_filing("00000000-0000-0000-0000-000000000000")
+        result = self.db.filings.get_filing("00000000-0000-0000-0000-000000000000")
         self.assertIsNone(result)
 
     def test_get_filing_has_expected_keys(self):
-        self.db.upsert_organization("111111111", "Alpha Org")
-        fid = self.db.create_filing("111111111", 2023, "990")
-        result = self.db.get_filing(fid)
+        self.db.orgs.upsert_organization("111111111", "Alpha Org")
+        fid = self.db.filings.create_filing("111111111", 2023, "990")
+        result = self.db.filings.get_filing(fid)
         for key in ("filing_id", "year", "ein", "form_code", "created_at"):
             self.assertIn(key, result)
 
     # --- get_filing_data_by_ein_year ---
 
     def test_get_filing_data_by_ein_year_not_found_returns_none(self):
-        result = self.db.get_filing_data_by_ein_year("999999999", 2023)
+        result = self.db.filings.get_filing_data_by_ein_year("999999999", 2023)
         self.assertIsNone(result)
 
     def test_get_filing_data_by_ein_year_found(self):
-        self.db.upsert_organization("111111111", "Alpha Org")
-        self.db.create_filing("111111111", 2023, "990")
-        result = self.db.get_filing_data_by_ein_year("111111111", 2023)
+        self.db.orgs.upsert_organization("111111111", "Alpha Org")
+        self.db.filings.create_filing("111111111", 2023, "990")
+        result = self.db.filings.get_filing_data_by_ein_year("111111111", 2023)
         self.assertIsNotNone(result)
         self.assertEqual(result["ein"], "111111111")
         self.assertEqual(result["year"], 2023)
 
     def test_get_filing_data_by_ein_year_includes_fields(self):
-        self.db.upsert_organization("111111111", "Alpha Org")
-        self.db.create_filing("111111111", 2023, "990")
-        result = self.db.get_filing_data_by_ein_year("111111111", 2023)
+        self.db.orgs.upsert_organization("111111111", "Alpha Org")
+        self.db.filings.create_filing("111111111", 2023, "990")
+        result = self.db.filings.get_filing_data_by_ein_year("111111111", 2023)
         self.assertIn("fields", result)
         self.assertIsInstance(result["fields"], list)
 
     def test_get_filing_data_by_ein_year_wrong_year_returns_none(self):
-        self.db.upsert_organization("111111111", "Alpha Org")
-        self.db.create_filing("111111111", 2023, "990")
-        result = self.db.get_filing_data_by_ein_year("111111111", 2022)
+        self.db.orgs.upsert_organization("111111111", "Alpha Org")
+        self.db.filings.create_filing("111111111", 2023, "990")
+        result = self.db.filings.get_filing_data_by_ein_year("111111111", 2022)
         self.assertIsNone(result)
 
     # --- get_supported_forms ---
 
     def test_get_supported_forms_returns_set(self):
-        result = self.db.get_supported_forms()
+        result = self.db.meta.get_supported_forms()
         self.assertIsInstance(result, set)
 
     def test_get_supported_forms_contains_990(self):
-        result = self.db.get_supported_forms()
+        result = self.db.meta.get_supported_forms()
         self.assertIn("990", result)
 
     def test_list_organizations_search_returns_match(self):
-        self.db.upsert_organization("111111111", "Alpha Org")
-        self.db.upsert_organization("222222222", "Beta Org")
-        result = self.db.list_organizations(search="Alpha")
+        self.db.orgs.upsert_organization("111111111", "Alpha Org")
+        self.db.orgs.upsert_organization("222222222", "Beta Org")
+        result = self.db.orgs.list_organizations(search="Alpha")
         self.assertEqual(result["total"], 1)
         self.assertEqual(result["organizations"][0]["name"], "Alpha Org")
 
     def test_list_organizations_search_case_insensitive(self):
-        self.db.upsert_organization("111111111", "Alpha Org")
-        result = self.db.list_organizations(search="alpha")
+        self.db.orgs.upsert_organization("111111111", "Alpha Org")
+        result = self.db.orgs.list_organizations(search="alpha")
         self.assertEqual(result["total"], 1)
 
     def test_list_organizations_search_no_match(self):
-        self.db.upsert_organization("111111111", "Alpha Org")
-        result = self.db.list_organizations(search="Zzz")
+        self.db.orgs.upsert_organization("111111111", "Alpha Org")
+        result = self.db.orgs.list_organizations(search="Zzz")
         self.assertEqual(result["total"], 0)
         self.assertEqual(result["organizations"], [])
 
     def test_drop_and_restore_ingest_indexes(self):
-        self.db.drop_ingest_indexes()
-        self.db.restore_ingest_indexes()
+        self.db.meta.drop_ingest_indexes()
+        self.db.meta.restore_ingest_indexes()
 
     def test_get_historical_values_empty(self):
-        self.db.upsert_organization("111111111", "Alpha Org")
-        result = self.db.get_historical_values("111111111")
+        self.db.orgs.upsert_organization("111111111", "Alpha Org")
+        result = self.db.reported_data.get_historical_values("111111111")
         self.assertIsInstance(result, dict)
         self.assertEqual(result, {})
 
     def test_get_historical_values_returns_values(self):
-        from database.IRS990 import IRS990Database
+        from database import OpenReturnDB
         from scoring.engine import _PATHS
-        self.db.upsert_organization("333333333", "Hist Org")
+        self.db.orgs.upsert_organization("333333333", "Hist Org")
         self.db.connection.commit()
-        fid = self.db.create_filing("333333333", 2021, "990")
-        fid2 = self.db.create_filing("333333333", 2022, "990")
+        fid = self.db.filings.create_filing("333333333", 2021, "990")
+        fid2 = self.db.filings.create_filing("333333333", 2022, "990")
         xpath = _PATHS['cy_rev']
-        xpath_index = self.db.get_xpath_index()
+        xpath_index = self.db.meta.get_xpath_index()
         if xpath in xpath_index:
             field_id = xpath_index[xpath]
-            self.db.store_reported_data(fid,  {field_id: "1000"})
-            self.db.store_reported_data(fid2, {field_id: "1500"})
+            self.db.reported_data.store_reported_data(fid,  {field_id: "1000"})
+            self.db.reported_data.store_reported_data(fid2, {field_id: "1500"})
             self.db.connection.commit()
-            result = self.db.get_historical_values("333333333")
+            result = self.db.reported_data.get_historical_values("333333333")
             self.assertIn(xpath, result)
             self.assertEqual(sorted(result[xpath]), [1000.0, 1500.0])
 
     def test_get_historical_values_skips_non_numeric(self):
-        self.db.upsert_organization("444444444", "Bad Org")
+        self.db.orgs.upsert_organization("444444444", "Bad Org")
         self.db.connection.commit()
-        fid = self.db.create_filing("444444444", 2021, "990")
-        xpath_index = self.db.get_xpath_index()
+        fid = self.db.filings.create_filing("444444444", 2021, "990")
+        xpath_index = self.db.meta.get_xpath_index()
         from scoring.engine import _PATHS
         xpath = _PATHS['cy_rev']
         if xpath in xpath_index:
             field_id = xpath_index[xpath]
-            self.db.store_reported_data(fid, {field_id: "not-a-number"})
+            self.db.reported_data.store_reported_data(fid, {field_id: "not-a-number"})
             self.db.connection.commit()
-            result = self.db.get_historical_values("444444444")
+            result = self.db.reported_data.get_historical_values("444444444")
             self.assertEqual(result.get(xpath, []), [])
 
 
@@ -561,17 +561,17 @@ class TestIRS990DatabaseListMethods(unittest.TestCase):
 class TestIngestRepository(unittest.TestCase):
 
     def setUp(self):
-        self.db = IRS990Database(path=":memory:")
+        self.db = OpenReturnDB(path=":memory:")
 
     def tearDown(self):
         self.db.close()
 
     def test_empty_sources_is_empty_set(self):
-        self.assertEqual(self.db.get_ingested_sources(), set())
-        self.assertEqual(self.db.list_ingested_zips(), [])
+        self.assertEqual(self.db.ingest.get_ingested_sources(), set())
+        self.assertEqual(self.db.ingest.list_ingested_zips(), [])
 
     def test_record_then_get_sources(self):
-        self.db.record_ingested_zip(
+        self.db.ingest.record_ingested_zip(
             "https://x/2024_TEOS_XML_01A.zip",
             url="https://x/2024_TEOS_XML_01A.zip",
             filename="2024_TEOS_XML_01A.zip",
@@ -579,15 +579,15 @@ class TestIngestRepository(unittest.TestCase):
             content_length=12345, filings_stored=7,
         )
         self.assertEqual(
-            self.db.get_ingested_sources(), {"https://x/2024_TEOS_XML_01A.zip"}
+            self.db.ingest.get_ingested_sources(), {"https://x/2024_TEOS_XML_01A.zip"}
         )
 
     def test_list_returns_full_record(self):
-        self.db.record_ingested_zip(
+        self.db.ingest.record_ingested_zip(
             "https://x/a.zip", url="https://x/a.zip", filename="a.zip",
             etag="E", last_modified="LM", content_length=10, filings_stored=3,
         )
-        rows = self.db.list_ingested_zips()
+        rows = self.db.ingest.list_ingested_zips()
         self.assertEqual(len(rows), 1)
         row = rows[0]
         self.assertEqual(row["source"], "https://x/a.zip")
@@ -600,15 +600,15 @@ class TestIngestRepository(unittest.TestCase):
         self.assertIsNotNone(row["ingested_at"])
 
     def test_record_is_upsert(self):
-        self.db.record_ingested_zip("https://x/a.zip", filename="a.zip", filings_stored=1)
-        self.db.record_ingested_zip("https://x/a.zip", filename="a.zip", filings_stored=99)
-        rows = self.db.list_ingested_zips()
+        self.db.ingest.record_ingested_zip("https://x/a.zip", filename="a.zip", filings_stored=1)
+        self.db.ingest.record_ingested_zip("https://x/a.zip", filename="a.zip", filings_stored=99)
+        rows = self.db.ingest.list_ingested_zips()
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["filings_stored"], 99)
 
     def test_record_defaults(self):
-        self.db.record_ingested_zip("local/a.zip", filename="a.zip")
-        rows = self.db.list_ingested_zips()
+        self.db.ingest.record_ingested_zip("local/a.zip", filename="a.zip")
+        rows = self.db.ingest.list_ingested_zips()
         self.assertEqual(rows[0]["url"], None)
         self.assertEqual(rows[0]["etag"], None)
         self.assertEqual(rows[0]["content_length"], None)
@@ -626,7 +626,7 @@ class TestSetFavoritePersists(unittest.TestCase):
     def setUp(self):
         fd, self.path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
-        self.db = IRS990Database(path=self.path)
+        self.db = OpenReturnDB(path=self.path)
 
     def tearDown(self):
         self.db.close()
@@ -635,9 +635,9 @@ class TestSetFavoritePersists(unittest.TestCase):
                 os.remove(self.path + suffix)
 
     def test_set_favorite_visible_to_second_connection(self):
-        self.db.upsert_organization("111111111", "Alpha Org")
+        self.db.orgs.upsert_organization("111111111", "Alpha Org")
         self.db.commit()  # persist the org itself (upsert does not commit)
-        self.db.set_favorite("111111111", True)
+        self.db.orgs.set_favorite("111111111", True)
 
         other = sqlite3.connect(self.path)
         try:

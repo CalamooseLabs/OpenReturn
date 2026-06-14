@@ -1,5 +1,5 @@
 """Tests for ingested-archive management: IngestRepository forget/find helpers,
-ScoreDatabase purge (filings + reported_data + scores), and the ingest CLI
+OpenReturnDB purge (filings + reported_data + scores), and the ingest CLI
 management flags (--ingested / --forget / --purge / --stop)."""
 
 import contextlib
@@ -17,7 +17,7 @@ sys.path.insert(0, _SRC)
 sys.path.insert(0, _ROOT)
 
 import ingest as ingest_mod
-from database.Score import ScoreDatabase
+from database import OpenReturnDB
 
 
 def _seed(db, filings):
@@ -52,7 +52,7 @@ def _count(db, table):
 class TestForget(unittest.TestCase):
 
     def setUp(self):
-        self.db = ScoreDatabase(path=":memory:")
+        self.db = OpenReturnDB(path=":memory:")
         _seed(self.db, [(1, 'u1', 2023, 'd_2023_1.zip', False),
                         (2, 'u2', 2022, 'd_2022_1.zip', False)])
 
@@ -60,44 +60,44 @@ class TestForget(unittest.TestCase):
         self.db.close()
 
     def test_count(self):
-        self.assertEqual(self.db.count_ingested_zips(), 2)
+        self.assertEqual(self.db.ingest.count_ingested_zips(), 2)
 
     def test_find_by_year_substring(self):
-        m = self.db.find_ingested_zips('2023')
+        m = self.db.ingest.find_ingested_zips('2023')
         self.assertEqual([r['filename'] for r in m], ['d_2023_1.zip'])
 
     def test_find_by_source_substring(self):
-        self.assertEqual(len(self.db.find_ingested_zips('http://h/')), 2)
+        self.assertEqual(len(self.db.ingest.find_ingested_zips('http://h/')), 2)
 
     def test_find_no_match(self):
-        self.assertEqual(self.db.find_ingested_zips('nope'), [])
+        self.assertEqual(self.db.ingest.find_ingested_zips('nope'), [])
 
     def test_forget_specific(self):
-        n = self.db.forget_ingested_zips(['http://h/d_2023_1.zip'])
+        n = self.db.ingest.forget_ingested_zips(['http://h/d_2023_1.zip'])
         self.assertEqual(n, 1)
-        self.assertEqual(self.db.count_ingested_zips(), 1)
+        self.assertEqual(self.db.ingest.count_ingested_zips(), 1)
 
     def test_forget_empty_list_is_noop(self):
-        self.assertEqual(self.db.forget_ingested_zips([]), 0)
-        self.assertEqual(self.db.count_ingested_zips(), 2)
+        self.assertEqual(self.db.ingest.forget_ingested_zips([]), 0)
+        self.assertEqual(self.db.ingest.count_ingested_zips(), 2)
 
     def test_forget_all(self):
-        self.assertEqual(self.db.forget_all_ingested_zips(), 2)
-        self.assertEqual(self.db.count_ingested_zips(), 0)
+        self.assertEqual(self.db.ingest.forget_all_ingested_zips(), 2)
+        self.assertEqual(self.db.ingest.count_ingested_zips(), 0)
 
     def test_forget_does_not_touch_filings(self):
-        self.db.forget_all_ingested_zips()
+        self.db.ingest.forget_all_ingested_zips()
         self.assertEqual(_count(self.db, 'filing'), 2)
 
 
 # ---------------------------------------------------------------------------
-# ScoreDatabase: purge (filings + reported_data + scores)
+# OpenReturnDB: purge (filings + reported_data + scores)
 # ---------------------------------------------------------------------------
 
 class TestPurge(unittest.TestCase):
 
     def setUp(self):
-        self.db = ScoreDatabase(path=":memory:")
+        self.db = OpenReturnDB(path=":memory:")
         _seed(self.db, [(1, 'u1', 2023, 'd_2023_1.zip', True),   # has a score
                         (2, 'u2', 2022, 'd_2022_1.zip', False)])
 
@@ -105,55 +105,55 @@ class TestPurge(unittest.TestCase):
         self.db.close()
 
     def test_find_zip_filenames(self):
-        self.assertEqual(self.db.find_zip_filenames('2023'), [('d_2023_1.zip', 1)])
+        self.assertEqual(self.db.scores.find_zip_filenames('2023'), [('d_2023_1.zip', 1)])
 
     def test_delete_by_zip_counts(self):
-        res = self.db.delete_filings_by_zip('2022')
+        res = self.db.scores.delete_filings_by_zip('2022')
         self.assertEqual(res, {"filings": 1, "values": 1, "scores": 0})
         self.assertEqual(_count(self.db, 'filing'), 1)
 
     def test_delete_by_zip_cascades_reported_data(self):
-        self.db.delete_filings_by_zip('2022')
+        self.db.scores.delete_filings_by_zip('2022')
         # filing 2's reported_data is gone; filing 1's remains
         self.assertEqual(_count(self.db, 'reported_data'), 1)
 
     def test_delete_with_score_removes_score_first(self):
         # filing u1 has a score; deleting it must not raise an FK error.
-        res = self.db.delete_filings_by_zip('2023')
+        res = self.db.scores.delete_filings_by_zip('2023')
         self.assertEqual(res, {"filings": 1, "values": 1, "scores": 1})
         self.assertEqual(_count(self.db, 'organization_score'), 0)
 
     def test_delete_all(self):
-        res = self.db.delete_all_filings()
+        res = self.db.scores.delete_all_filings()
         self.assertEqual(res, {"filings": 2, "values": 2, "scores": 1})
         self.assertEqual(_count(self.db, 'filing'), 0)
         self.assertEqual(_count(self.db, 'reported_data'), 0)
         self.assertEqual(_count(self.db, 'organization_score'), 0)
 
     def test_delete_all_keeps_organization(self):
-        self.db.delete_all_filings()
+        self.db.scores.delete_all_filings()
         self.assertEqual(_count(self.db, 'organization'), 1)
 
     def test_no_match_returns_zeros(self):
-        self.assertEqual(self.db.delete_filings_by_zip('zzz'),
+        self.assertEqual(self.db.scores.delete_filings_by_zip('zzz'),
                          {"filings": 0, "values": 0, "scores": 0})
 
     def test_underscore_is_literal_not_wildcard(self):
         # '2023_1' must match '2023_1.zip' literally, NOT '2023X1.zip'.
-        db = ScoreDatabase(path=":memory:")
+        db = OpenReturnDB(path=":memory:")
         _seed(db, [(1, 'a', 2023, '2023_1.zip', False),
                    (2, 'b', 2024, '2023X1.zip', False)])
-        self.assertEqual(db.find_zip_filenames('2023_1'), [('2023_1.zip', 1)])
-        res = db.delete_filings_by_zip('2023_1')
+        self.assertEqual(db.scores.find_zip_filenames('2023_1'), [('2023_1.zip', 1)])
+        res = db.scores.delete_filings_by_zip('2023_1')
         self.assertEqual(res["filings"], 1)
         self.assertEqual(_count(db, 'filing'), 1)  # 2023X1.zip survives
         db.close()
 
     def test_percent_is_literal_not_wildcard(self):
-        db = ScoreDatabase(path=":memory:")
+        db = OpenReturnDB(path=":memory:")
         _seed(db, [(1, 'a', 2023, 'plain.zip', False)])
         # A bare '%' must not match everything.
-        self.assertEqual(db.find_zip_filenames('%'), [])
+        self.assertEqual(db.scores.find_zip_filenames('%'), [])
         db.close()
 
 
@@ -167,7 +167,7 @@ class TestIngestManageCLI(unittest.TestCase):
         self._cwd = os.getcwd()
         self.td = tempfile.mkdtemp()
         os.chdir(self.td)
-        db = ScoreDatabase()  # ./OpenReturn.db
+        db = OpenReturnDB()  # ./OpenReturn.db
         _seed(db, [(1, 'u1', 2023, 'd_2023_1.zip', True),
                    (2, 'u2', 2022, 'd_2022_1.zip', False)])
         db.close()
@@ -203,8 +203,8 @@ class TestIngestManageCLI(unittest.TestCase):
     def test_forget_pattern(self):
         rc, out = self._run(self._args(forget='2023'))
         self.assertEqual(rc, 0)
-        db = ScoreDatabase()
-        self.assertEqual(db.count_ingested_zips(), 1)
+        db = OpenReturnDB()
+        self.assertEqual(db.ingest.count_ingested_zips(), 1)
         self.assertEqual(_count(db, 'filing'), 2)  # data untouched
         db.close()
 
@@ -216,37 +216,37 @@ class TestIngestManageCLI(unittest.TestCase):
     def test_forget_all(self):
         rc, out = self._run(self._args(forget_all=True))
         self.assertEqual(rc, 0)
-        db = ScoreDatabase()
-        self.assertEqual(db.count_ingested_zips(), 0)
+        db = OpenReturnDB()
+        self.assertEqual(db.ingest.count_ingested_zips(), 0)
         db.close()
 
     def test_purge_pattern_confirmed(self):
         rc, out = self._run(self._args(purge='2023'), stdin='yes')
         self.assertEqual(rc, 0)
-        db = ScoreDatabase()
+        db = OpenReturnDB()
         self.assertEqual(_count(db, 'filing'), 1)
-        self.assertEqual(db.count_ingested_zips(), 1)  # the 2023 record was forgotten too
+        self.assertEqual(db.ingest.count_ingested_zips(), 1)  # the 2023 record was forgotten too
         db.close()
 
     def test_purge_aborted_on_wrong_input(self):
         rc, out = self._run(self._args(purge='2023'), stdin='no')
         self.assertEqual(rc, 1)
         self.assertIn("Aborted", out)
-        db = ScoreDatabase()
+        db = OpenReturnDB()
         self.assertEqual(_count(db, 'filing'), 2)
         db.close()
 
     def test_purge_yes_flag_skips_prompt(self):
         rc, out = self._run(self._args(purge='2022', yes=True))  # no stdin
         self.assertEqual(rc, 0)
-        db = ScoreDatabase()
+        db = OpenReturnDB()
         self.assertEqual(_count(db, 'filing'), 1)
         db.close()
 
     def test_purge_all_confirmed(self):
         rc, out = self._run(self._args(purge_all=True), stdin='yes')
         self.assertEqual(rc, 0)
-        db = ScoreDatabase()
+        db = OpenReturnDB()
         self.assertEqual(_count(db, 'filing'), 0)
         self.assertEqual(_count(db, 'organization'), 1)
         db.close()
@@ -276,7 +276,7 @@ class TestIngestManageCLI(unittest.TestCase):
         with patch('daemon.running_daemon', return_value={"pid": 999}):
             rc, out = self._run(self._args(purge_all=True, yes=True))
         self.assertEqual(rc, 1)
-        db = ScoreDatabase()
+        db = OpenReturnDB()
         self.assertEqual(_count(db, 'filing'), 2)  # nothing deleted
         db.close()
 

@@ -5,7 +5,7 @@
 
 Reports database file size, row counts, encryption state, migration status, a
 liveness probe of the API server, and any background ingest. It opens the
-database with a *raw* connection (not ``ScoreDatabase``) so it never runs the
+database with a *raw* connection (not the ``OpenReturnDB`` facade) so it never runs the
 schema/seed setup or creates the file as a side effect, and every query is
 guarded so a missing table or a database locked by a running ingest degrades to
 a note rather than a crash.
@@ -109,10 +109,10 @@ def _counts(db_path: str) -> dict:
 
 
 def _migrations(db_path: str) -> dict:
-    from database.IRS990 import IRS990Database
+    from database.IRS990.repositories.migrations import MigrationRepository
     from database.base import _open_connection
 
-    available = [name for name, _ in IRS990Database.list_available_migrations()]
+    available = [name for name, _ in MigrationRepository.list_available_migrations()]
     conn = _open_connection(db_path)
     try:
         try:

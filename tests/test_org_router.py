@@ -20,9 +20,9 @@ FILING_ONE = {
 
 def _make_router():
     db = MagicMock()
-    db.list_organizations.return_value = {"total": 0, "limit": 50, "offset": 0, "organizations": []}
-    db.get_organization.return_value = None
-    db.list_filings.return_value = []
+    db.orgs.list_organizations.return_value = {"total": 0, "limit": 50, "offset": 0, "organizations": []}
+    db.orgs.get_organization.return_value = None
+    db.filings.list_filings.return_value = []
     return OrgRouter(db=db), db
 
 
@@ -108,22 +108,22 @@ class TestListOrganizations(unittest.TestCase):
 
     def test_calls_list_organizations(self):
         self._call()
-        self.db.list_organizations.assert_called_once_with(search=None, limit=50, offset=0, favorites_only=False)
+        self.db.orgs.list_organizations.assert_called_once_with(search=None, limit=50, offset=0, favorites_only=False)
 
     def test_favorite_param_filters(self):
         self._call(favorite="true")
-        self.db.list_organizations.assert_called_once_with(search=None, limit=50, offset=0, favorites_only=True)
+        self.db.orgs.list_organizations.assert_called_once_with(search=None, limit=50, offset=0, favorites_only=True)
 
     def test_favorite_param_falsey_does_not_filter(self):
         self._call(favorite="0")
-        self.db.list_organizations.assert_called_once_with(search=None, limit=50, offset=0, favorites_only=False)
+        self.db.orgs.list_organizations.assert_called_once_with(search=None, limit=50, offset=0, favorites_only=False)
 
     def test_empty_list_when_no_orgs(self):
         result = self._call()
         self.assertEqual(result["organizations"], [])
 
     def test_returns_orgs_from_db(self):
-        self.db.list_organizations.return_value = {
+        self.db.orgs.list_organizations.return_value = {
             "total": 2, "limit": 50, "offset": 0, "organizations": [ORG_ALPHA, ORG_BETA]
         }
         result = self._call()
@@ -138,7 +138,7 @@ class TestListOrganizations(unittest.TestCase):
         self.assertIn("error", result)
 
     def test_count_matches_db(self):
-        self.db.list_organizations.return_value = {
+        self.db.orgs.list_organizations.return_value = {
             "total": 2, "limit": 50, "offset": 0, "organizations": [ORG_ALPHA, ORG_BETA]
         }
         result = self._call()
@@ -166,7 +166,7 @@ class TestGetOrganization(unittest.TestCase):
         self.assertIn("ein", result["error"])
 
     def test_not_found_returns_error(self):
-        self.db.get_organization.return_value = None
+        self.db.orgs.get_organization.return_value = None
         result = self._call(ein="999999999")
         self.assertIn("error", result)
 
@@ -175,21 +175,21 @@ class TestGetOrganization(unittest.TestCase):
         self.assertIn("999999999", result["error"])
 
     def test_found_returns_org_dict(self):
-        self.db.get_organization.return_value = ORG_ALPHA
+        self.db.orgs.get_organization.return_value = ORG_ALPHA
         result = self._call(ein="111111111")
         self.assertEqual(result, ORG_ALPHA)
 
     def test_calls_get_organization_with_ein(self):
         self._call(ein="111111111")
-        self.db.get_organization.assert_called_once_with("111111111")
+        self.db.orgs.get_organization.assert_called_once_with("111111111")
 
     def test_found_has_ein_field(self):
-        self.db.get_organization.return_value = ORG_ALPHA
+        self.db.orgs.get_organization.return_value = ORG_ALPHA
         result = self._call(ein="111111111")
         self.assertEqual(result["ein"], "111111111")
 
     def test_found_has_name_field(self):
-        self.db.get_organization.return_value = ORG_ALPHA
+        self.db.orgs.get_organization.return_value = ORG_ALPHA
         result = self._call(ein="111111111")
         self.assertEqual(result["name"], "Alpha Org")
 
@@ -202,14 +202,14 @@ class TestUpsertOrganization(unittest.TestCase):
 
     def setUp(self):
         self.router, self.db = _make_router()
-        self.db.get_organization.return_value = ORG_ALPHA
+        self.db.orgs.get_organization.return_value = ORG_ALPHA
 
     def _call(self, body=None):
         return _call(self.router, "POST", "/organizations", body=body)
 
     def test_valid_body_calls_upsert(self):
         self._call({"ein": "111111111", "name": "Alpha Org"})
-        self.db.upsert_organization.assert_called_once_with("111111111", "Alpha Org")
+        self.db.orgs.upsert_organization.assert_called_once_with("111111111", "Alpha Org")
 
     def test_valid_body_returns_org(self):
         result = self._call({"ein": "111111111", "name": "Alpha Org"})
@@ -217,7 +217,7 @@ class TestUpsertOrganization(unittest.TestCase):
 
     def test_calls_get_organization_after_upsert(self):
         self._call({"ein": "111111111", "name": "Alpha Org"})
-        self.db.get_organization.assert_called_once_with("111111111")
+        self.db.orgs.get_organization.assert_called_once_with("111111111")
 
     def test_missing_ein_returns_error(self):
         result = self._call({"name": "Alpha Org"})
@@ -248,13 +248,24 @@ class TestUpsertOrganization(unittest.TestCase):
         self.assertIn("error", result)
 
     def test_integrity_error_returns_error(self):
-        self.db.upsert_organization.side_effect = sqlite3.IntegrityError("constraint")
+        self.db.orgs.upsert_organization.side_effect = sqlite3.IntegrityError("constraint")
         result = self._call({"ein": "111111111", "name": "Alpha Org"})
         self.assertIn("error", result)
 
     def test_integrity_error_does_not_raise(self):
-        self.db.upsert_organization.side_effect = sqlite3.IntegrityError("constraint")
+        self.db.orgs.upsert_organization.side_effect = sqlite3.IntegrityError("constraint")
         self._call({"ein": "111111111", "name": "Alpha Org"})  # must not raise
+
+    def test_successful_upsert_commits(self):
+        # Durability: the write is committed (the repo method does not commit
+        # itself, so the handler must, or the row is rolled back on close()).
+        self._call({"ein": "111111111", "name": "Alpha Org"})
+        self.db.commit.assert_called_once()
+
+    def test_integrity_error_does_not_commit(self):
+        self.db.orgs.upsert_organization.side_effect = sqlite3.IntegrityError("constraint")
+        self._call({"ein": "111111111", "name": "Alpha Org"})
+        self.db.commit.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -287,93 +298,93 @@ class TestGetOrganizationFull(unittest.TestCase):
 
     def test_calls_get_organization_with_ein(self):
         self._call(ein="111111111")
-        self.db.get_organization.assert_called_once_with("111111111")
+        self.db.orgs.get_organization.assert_called_once_with("111111111")
 
     def test_found_calls_list_filings_with_ein(self):
-        self.db.get_organization.return_value = ORG_ALPHA
+        self.db.orgs.get_organization.return_value = ORG_ALPHA
         self._call(ein="111111111")
-        self.db.list_filings.assert_called_once_with("111111111")
+        self.db.filings.list_filings.assert_called_once_with("111111111")
 
     def test_not_found_does_not_call_list_filings(self):
         self._call(ein="999999999")
-        self.db.list_filings.assert_not_called()
+        self.db.filings.list_filings.assert_not_called()
 
     def test_found_includes_org_ein(self):
-        self.db.get_organization.return_value = ORG_ALPHA
+        self.db.orgs.get_organization.return_value = ORG_ALPHA
         result = self._call(ein="111111111")
         self.assertEqual(result["ein"], "111111111")
 
     def test_found_includes_org_name(self):
-        self.db.get_organization.return_value = ORG_ALPHA
+        self.db.orgs.get_organization.return_value = ORG_ALPHA
         result = self._call(ein="111111111")
         self.assertEqual(result["name"], "Alpha Org")
 
     def test_found_includes_filings_key(self):
-        self.db.get_organization.return_value = ORG_ALPHA
+        self.db.orgs.get_organization.return_value = ORG_ALPHA
         result = self._call(ein="111111111")
         self.assertIn("filings", result)
 
     def test_filings_is_list(self):
-        self.db.get_organization.return_value = ORG_ALPHA
+        self.db.orgs.get_organization.return_value = ORG_ALPHA
         result = self._call(ein="111111111")
         self.assertIsInstance(result["filings"], list)
 
     def test_empty_filings_when_none(self):
-        self.db.get_organization.return_value = ORG_ALPHA
+        self.db.orgs.get_organization.return_value = ORG_ALPHA
         result = self._call(ein="111111111")
         self.assertEqual(result["filings"], [])
 
     def test_filing_count_matches_db(self):
-        self.db.get_organization.return_value = ORG_ALPHA
-        self.db.list_filings.return_value = [dict(FILING_ONE), dict(FILING_ONE)]
+        self.db.orgs.get_organization.return_value = ORG_ALPHA
+        self.db.filings.list_filings.return_value = [dict(FILING_ONE), dict(FILING_ONE)]
         result = self._call(ein="111111111")
         self.assertEqual(len(result["filings"]), 2)
 
     def test_each_filing_has_links(self):
-        self.db.get_organization.return_value = ORG_ALPHA
-        self.db.list_filings.return_value = [dict(FILING_ONE)]
+        self.db.orgs.get_organization.return_value = ORG_ALPHA
+        self.db.filings.list_filings.return_value = [dict(FILING_ONE)]
         result = self._call(ein="111111111")
         self.assertIn("links", result["filings"][0])
 
     def test_links_has_detail_key(self):
-        self.db.get_organization.return_value = ORG_ALPHA
-        self.db.list_filings.return_value = [dict(FILING_ONE)]
+        self.db.orgs.get_organization.return_value = ORG_ALPHA
+        self.db.filings.list_filings.return_value = [dict(FILING_ONE)]
         result = self._call(ein="111111111")
         self.assertIn("detail", result["filings"][0]["links"])
 
     def test_links_has_data_key(self):
-        self.db.get_organization.return_value = ORG_ALPHA
-        self.db.list_filings.return_value = [dict(FILING_ONE)]
+        self.db.orgs.get_organization.return_value = ORG_ALPHA
+        self.db.filings.list_filings.return_value = [dict(FILING_ONE)]
         result = self._call(ein="111111111")
         self.assertIn("data", result["filings"][0]["links"])
 
     def test_links_has_lookup_key(self):
-        self.db.get_organization.return_value = ORG_ALPHA
-        self.db.list_filings.return_value = [dict(FILING_ONE)]
+        self.db.orgs.get_organization.return_value = ORG_ALPHA
+        self.db.filings.list_filings.return_value = [dict(FILING_ONE)]
         result = self._call(ein="111111111")
         self.assertIn("lookup", result["filings"][0]["links"])
 
     def test_detail_link_contains_filing_id(self):
-        self.db.get_organization.return_value = ORG_ALPHA
-        self.db.list_filings.return_value = [dict(FILING_ONE)]
+        self.db.orgs.get_organization.return_value = ORG_ALPHA
+        self.db.filings.list_filings.return_value = [dict(FILING_ONE)]
         result = self._call(ein="111111111")
         self.assertIn("uuid-abc-123", result["filings"][0]["links"]["detail"])
 
     def test_lookup_link_contains_ein(self):
-        self.db.get_organization.return_value = ORG_ALPHA
-        self.db.list_filings.return_value = [dict(FILING_ONE)]
+        self.db.orgs.get_organization.return_value = ORG_ALPHA
+        self.db.filings.list_filings.return_value = [dict(FILING_ONE)]
         result = self._call(ein="111111111")
         self.assertIn("111111111", result["filings"][0]["links"]["lookup"])
 
     def test_lookup_link_contains_year(self):
-        self.db.get_organization.return_value = ORG_ALPHA
-        self.db.list_filings.return_value = [dict(FILING_ONE)]
+        self.db.orgs.get_organization.return_value = ORG_ALPHA
+        self.db.filings.list_filings.return_value = [dict(FILING_ONE)]
         result = self._call(ein="111111111")
         self.assertIn("2023", result["filings"][0]["links"]["lookup"])
 
     def test_data_link_contains_filing_id(self):
-        self.db.get_organization.return_value = ORG_ALPHA
-        self.db.list_filings.return_value = [dict(FILING_ONE)]
+        self.db.orgs.get_organization.return_value = ORG_ALPHA
+        self.db.filings.list_filings.return_value = [dict(FILING_ONE)]
         result = self._call(ein="111111111")
         self.assertIn("uuid-abc-123", result["filings"][0]["links"]["data"])
 
@@ -386,19 +397,19 @@ class TestSetFavorite(unittest.TestCase):
 
     def setUp(self):
         self.router, self.db = _make_router()
-        self.db.set_favorite.return_value = True
-        self.db.get_organization.return_value = {**ORG_ALPHA, "is_favorite": True}
+        self.db.orgs.set_favorite.return_value = True
+        self.db.orgs.get_organization.return_value = {**ORG_ALPHA, "is_favorite": True}
 
     def _call(self, body=None):
         return _call(self.router, "POST", "/organizations/favorite", body=body)
 
     def test_valid_body_calls_set_favorite(self):
         self._call({"ein": "111111111", "is_favorite": True})
-        self.db.set_favorite.assert_called_once_with("111111111", True)
+        self.db.orgs.set_favorite.assert_called_once_with("111111111", True)
 
     def test_unfavorite_passes_false(self):
         self._call({"ein": "111111111", "is_favorite": False})
-        self.db.set_favorite.assert_called_once_with("111111111", False)
+        self.db.orgs.set_favorite.assert_called_once_with("111111111", False)
 
     def test_returns_updated_org(self):
         result = self._call({"ein": "111111111", "is_favorite": True})
@@ -406,34 +417,34 @@ class TestSetFavorite(unittest.TestCase):
 
     def test_calls_get_organization_after_set(self):
         self._call({"ein": "111111111", "is_favorite": True})
-        self.db.get_organization.assert_called_once_with("111111111")
+        self.db.orgs.get_organization.assert_called_once_with("111111111")
 
     def test_string_true_coerced(self):
         self._call({"ein": "111111111", "is_favorite": "true"})
-        self.db.set_favorite.assert_called_once_with("111111111", True)
+        self.db.orgs.set_favorite.assert_called_once_with("111111111", True)
 
     def test_string_false_coerced(self):
         self._call({"ein": "111111111", "is_favorite": "false"})
-        self.db.set_favorite.assert_called_once_with("111111111", False)
+        self.db.orgs.set_favorite.assert_called_once_with("111111111", False)
 
     def test_int_one_coerced(self):
         self._call({"ein": "111111111", "is_favorite": 1})
-        self.db.set_favorite.assert_called_once_with("111111111", True)
+        self.db.orgs.set_favorite.assert_called_once_with("111111111", True)
 
     def test_not_found_returns_error(self):
-        self.db.set_favorite.return_value = False
+        self.db.orgs.set_favorite.return_value = False
         result = self._call({"ein": "999999999", "is_favorite": True})
         self.assertIn("error", result)
 
     def test_not_found_error_contains_ein(self):
-        self.db.set_favorite.return_value = False
+        self.db.orgs.set_favorite.return_value = False
         result = self._call({"ein": "999999999", "is_favorite": True})
         self.assertIn("999999999", result["error"])
 
     def test_not_found_does_not_call_get_organization(self):
-        self.db.set_favorite.return_value = False
+        self.db.orgs.set_favorite.return_value = False
         self._call({"ein": "999999999", "is_favorite": True})
-        self.db.get_organization.assert_not_called()
+        self.db.orgs.get_organization.assert_not_called()
 
     def test_missing_ein_returns_error(self):
         result = self._call({"is_favorite": True})

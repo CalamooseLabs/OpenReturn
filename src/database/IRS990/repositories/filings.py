@@ -4,9 +4,14 @@ import uuid
 class FilingRepository:
   """Filing lookups, creation, and the combined filing+reported-data fetch.
 
-  ``get_filing_data_by_ein_year`` calls ``self.get_reported_data`` from
-  ReportedDataRepository — both are flattened onto IRS990Database.
+  ``get_filing_data_by_ein_year`` links to the ReportedData repository via
+  ``self._db.reported_data`` (they share the facade's connection).
   """
+
+  def __init__(self, db) -> None:
+    self._db = db
+    self.cursor = db.cursor
+    self.connection = db.connection
 
   def list_filings(self, ein: str) -> list[dict]:
     rows = self.cursor.execute(
@@ -78,5 +83,5 @@ class FilingRepository:
       "form_code":    form_code,
       "xml_filename": xml_filename,
       "zip_filename": zip_filename,
-      "fields":       self.get_reported_data(filing_id),
+      "fields":       self._db.reported_data.get_reported_data(filing_id),
     }

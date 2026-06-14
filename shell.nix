@@ -27,24 +27,47 @@
   '';
   publish-wiki = pkgs.writeShellScriptBin "publish-wiki" ''
     set -euo pipefail
-    remote="''${1:?usage: publish-wiki <wiki-repo-url>  (e.g. git@github.com:OWNER/REPO.wiki.git)}"
     root="$(git rev-parse --show-toplevel)"
+    src="$root/wiki"
+    # Wiki repo URL: defaults to <origin>.wiki.git; override with arg 1.
+    remote="''${1:-$(git -C "$root" remote get-url origin | sed -E 's#\.git$#.wiki.git#')}"
+
+    if [ ! -d "$src" ] || ! ls "$src"/*.md >/dev/null 2>&1; then
+      echo "publish-wiki: no wiki pages found in $src" >&2
+      exit 1
+    fi
+
+    # Pre-flight: every [[link]] must resolve to a page file.
+    # (GitHub wikis use Gollum: in [[text|page]] the target is the text AFTER the pipe.)
+    echo "Checking wiki link integrity..."
+    missing=0
+    for target in $({ grep -rhoE '\[\[[^]]+\]\]' "$src"/*.md || true; } \
+        | sed -E 's/\[\[//; s/\]\]//; s/^[^|]*\|//; s/ /-/g' | sort -u); do
+      if [ ! -f "$src/$target.md" ]; then
+        echo "  BROKEN: [[$target]] -> $target.md not found" >&2
+        missing=1
+      fi
+    done
+    [ "$missing" -eq 0 ] || { echo "publish-wiki: aborting — fix the broken links above." >&2; exit 1; }
+    echo "  links OK ($(ls "$src"/*.md | wc -l) pages)"
+
     clone="$(mktemp -d)"
-    git clone "$remote" "$clone"
+    trap 'rm -rf "$clone"' EXIT
+    echo "Cloning $remote ..."
+    git clone --quiet "$remote" "$clone"
     rm -f "$clone"/*.md
-    # Copy every docs page (flattened — the wiki is a single namespace);
-    # index.md is the wiki's landing page (Home).
-    find "$root/docs" -name '*.md' -exec cp {} "$clone"/ \;
-    [ -f "$clone/index.md" ] && mv "$clone/index.md" "$clone/Home.md"
+    cp "$src"/*.md "$clone"/
     cd "$clone"
     git add -A
     if git diff --cached --quiet; then
-      echo "Wiki already up to date."
+      echo "Wiki already up to date — nothing to publish."
       exit 0
     fi
-    git commit -m "Sync wiki from docs/"
+    echo "Publishing changes:"
+    git diff --cached --stat
+    git commit -q -m "Sync wiki from wiki/"
     git push
-    echo "Published $(ls *.md | wc -l) pages to $remote"
+    echo "Published wiki to $remote"
   '';
   gcommit = pkgs.writeShellScriptBin "gcommit" ''
     msg_file="GIT_COMMIT_MSG"

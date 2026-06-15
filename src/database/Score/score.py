@@ -24,6 +24,10 @@ class ScoreDatabase(Database):
     for ddl in (
       "ALTER TABLE score_model ADD COLUMN model_type TEXT REFERENCES model_type (code)",
       "ALTER TABLE score_model ADD COLUMN scoring_mode TEXT NOT NULL DEFAULT 'computed'",
+      # FK columns added via ALTER must default NULL (SQLite restriction), so
+      # model_kind is nullable here and backfilled to 'model' below; fresh DBs get
+      # it NOT NULL DEFAULT 'model' from sql/setup.
+      "ALTER TABLE score_model ADD COLUMN model_kind TEXT REFERENCES model_kind (code)",
       "ALTER TABLE score_factor ADD COLUMN manual_scale TEXT",
       "ALTER TABLE organization_score_factor ADD COLUMN comment TEXT",
     ):
@@ -35,10 +39,16 @@ class ScoreDatabase(Database):
         # this binding-agnostic across sqlite3 / sqlcipher3).
         if 'duplicate column' not in str(exc).lower():
           raise
-    # Backfill pre-existing models as financial/computed (the only kind before).
+    # Backfill pre-existing models as financial/computed/base-model (the only kind
+    # before these columns existed).
     try:
       self.cursor.execute(
         "UPDATE score_model SET model_type = 'financial' WHERE model_type IS NULL")
+    except Exception:  # pragma: no cover — column guaranteed present above
+      pass
+    try:
+      self.cursor.execute(
+        "UPDATE score_model SET model_kind = 'model' WHERE model_kind IS NULL")
     except Exception:  # pragma: no cover — column guaranteed present above
       pass
     self.connection.commit()
@@ -122,16 +132,18 @@ class ScoreDatabase(Database):
     return self._factor_row(row) if row else None
 
   def get_model(self, version: int = 1) -> dict | None:
-    """Model header — version, description, category type, and scoring mode."""
+    """Model header — version, description, category type, scoring mode, and kind."""
     row = self.cursor.execute(
-      "SELECT version, description, model_type, scoring_mode, created_at "
+      "SELECT version, description, model_type, scoring_mode, "
+      "COALESCE(model_kind, 'model'), created_at "
       "FROM score_model WHERE version = ?",
       (version,)
     ).fetchone()
     if not row:
       return None
     return {"version": row[0], "description": row[1], "model_type": row[2],
-            "scoring_mode": row[3] or "computed", "created_at": row[4]}
+            "scoring_mode": row[3] or "computed", "model_kind": row[4] or "model",
+            "created_at": row[5]}
 
   def list_model_types(self) -> list[dict]:
     rows = self.cursor.execute(
@@ -139,22 +151,32 @@ class ScoreDatabase(Database):
     ).fetchall()
     return [{"code": r[0], "name": r[1], "description": r[2]} for r in rows]
 
+  def list_model_kinds(self) -> list[dict]:
+    rows = self.cursor.execute(
+      "SELECT code, name, description FROM model_kind ORDER BY code"
+    ).fetchall()
+    return [{"code": r[0], "name": r[1], "description": r[2]} for r in rows]
+
   def list_models(self) -> list[dict]:
     rows = self.cursor.execute(
-      "SELECT version, description, model_type, scoring_mode, created_at "
+      "SELECT version, description, model_type, scoring_mode, "
+      "COALESCE(model_kind, 'model'), created_at "
       "FROM score_model ORDER BY version"
     ).fetchall()
     return [{"version": r[0], "description": r[1], "model_type": r[2],
-             "scoring_mode": r[3] or "computed", "created_at": r[4]} for r in rows]
+             "scoring_mode": r[3] or "computed", "model_kind": r[4] or "model",
+             "created_at": r[5]} for r in rows]
 
   def list_computed_models(self) -> list[dict]:
-    """Versions + model_ids of every non-manual model — the set batch scoring
-    pre-computes. (A model with no factors is still listed; the engine skips it.)"""
+    """Versions + model_ids + kind of every non-manual model — the set batch
+    scoring pre-computes, plus the kind so the engine can order base models before
+    composites before super-composites. (A model with no factors is still listed;
+    the engine skips it.)"""
     rows = self.cursor.execute(
-      "SELECT version, model_id FROM score_model "
+      "SELECT version, model_id, COALESCE(model_kind, 'model') FROM score_model "
       "WHERE COALESCE(scoring_mode, 'computed') != 'manual' ORDER BY version"
     ).fetchall()
-    return [{"version": r[0], "model_id": r[1]} for r in rows]
+    return [{"version": r[0], "model_id": r[1], "model_kind": r[2]} for r in rows]
 
   def replace_org_scores(self, ein: str, model_ids: list[int], results: list) -> None:
     """Batch (re)write of one org's computed scores. Deletes the org's existing
@@ -376,7 +398,8 @@ class ScoreDatabase(Database):
     row = self.cursor.execute(
       """
       SELECT os.score_id, f.organization_id, sm.version, f.uuid, f.year,
-             os.total_score, os.scored_at, sm.model_type, sm.scoring_mode
+             os.total_score, os.scored_at, sm.model_type, sm.scoring_mode,
+             COALESCE(sm.model_kind, 'model')
       FROM organization_score os
       JOIN score_model sm ON sm.model_id = os.model_id
       JOIN filing f ON f.filing_id = os.filing_id
@@ -407,6 +430,7 @@ class ScoreDatabase(Database):
       "scored_at": row[6],
       "model_type": row[7],
       "scoring_mode": row[8] or "computed",
+      "model_kind": row[9] or "model",
       "factors": [
         {"factor_id": f[5], "name": f[0], "weight": f[1], "raw_value": f[2],
          "weighted_value": f[3], "comment": f[4], "manual_scale": f[6]}

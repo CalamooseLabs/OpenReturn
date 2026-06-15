@@ -1,0 +1,69 @@
+# Liquidity & Solvency Ratios  (base model — part of MinistryWatch "Asset Utilization")
+#
+# Short-term liquidity, reserve depth, and leverage. Derived from the ratios on
+# https://db.ministrywatch.com/ministry.php?ein=364348917 (Administer Justice).
+# Weights are illustrative and adjustable in production.
+#
+# NOTE: OpenReturn exposes only a subset of the balance sheet, so "current assets"
+# is approximated as cash + savings/temporary investments and "current liabilities"
+# as accounts payable. MinistryWatch's Debt Ratio (interest-bearing debt ÷ assets)
+# is omitted — there is no long-term-debt field key — and is approximated by the
+# Liabilities Ratio. MinistryWatch ranks these peer-relative; benchmarks below are
+# an absolute approximation.
+
+[model]
+version     = 12
+type        = "financial"
+kind        = "model"
+description = "Liquidity & solvency ratios — current ratio, liquid reserves, coverage, leverage"
+
+[[factor]]
+name                = "Current Ratio"
+weight              = 0.30
+formula_type        = "sum_ratio"
+inputs              = ["cash", "savings", "accts_pay"]
+direction           = "higher"
+benchmark_lo        = 1.0
+benchmark_hi        = 5.0
+formula_description = "(Cash + savings) ÷ accounts payable — short-term liquidity (higher = safer)"
+
+# Intermediate: liquid reserves as a fraction of a year's expenses (weight 0).
+[[factor]]
+name                = "Reserve Fraction"
+weight              = 0.0
+formula_type        = "working_capital"
+inputs              = ["cash", "savings", "accts_pay", "cy_exp"]
+direction           = "higher"
+benchmark_lo        = 0.0
+benchmark_hi        = 1.0
+formula_description = "(Cash + savings − payables) ÷ annual expenses (fraction of a year covered)"
+
+[[factor]]
+name                = "Liquid Reserve (months)"
+weight              = 0.30
+formula_type        = "product"
+inputs              = ["factor:Reserve Fraction", "12"]
+direction           = "higher"
+benchmark_lo        = 3.0
+benchmark_hi        = 18.0
+formula_description = "Reserve Fraction × 12 — months of operating expenses held in liquid reserves"
+
+[[factor]]
+name                = "Reserve Coverage Ratio"
+weight              = 0.20
+formula_type        = "ratio"
+inputs              = ["equity", "cy_exp"]
+direction           = "higher"
+benchmark_lo        = 0.50
+benchmark_hi        = 2.00
+formula_description = "Net assets ÷ annual expenses — years of expenses covered by reserves"
+
+[[factor]]
+name                = "Liabilities Ratio"
+weight              = 0.20
+formula_type        = "ratio"
+inputs              = ["liabilities", "assets"]
+direction           = "lower"
+benchmark_lo        = 0.10
+benchmark_hi        = 0.75
+formula_description = "Total liabilities ÷ total assets — leverage (lower = more solvent)"

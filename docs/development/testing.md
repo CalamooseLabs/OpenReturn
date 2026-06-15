@@ -51,6 +51,7 @@ The project maintains **100% statement coverage**. PRs that reduce coverage shou
 | `tests/test_score_router.py` | `src/router/Score/score.py` |
 | `tests/test_score_debug.py` | `src/scoring/engine.py` (`debug()` walkthrough) + `GET /scores/debug` + `get_field_source` |
 | `tests/test_model_types.py` | model types + manual scoring: `src/models.py` (manual TOML), `src/scoring/engine.py` (`_normalize_manual`/`grade`), `src/database/Score/score.py` |
+| `tests/test_model_kinds.py` | model kinds (model/composite/super_composite): `src/models.py` (kind validation + cross-model registration), `src/scoring/engine.py` (`model:<version>` resolution, dependency ordering, composite scoring), `src/database/Score/score.py` (`list_model_kinds`/`model_kind`), `GET /scores/kinds`, and the shipped `models/*.toml` stack |
 | `tests/test_openapi.py` | `src/openapi.py` (spec + route-coverage + committed `openapi.json` sync) |
 | `tests/test_api_keys.py` | `src/keys.py` |
 | `tests/test_server_auth.py` | `src/server/server.py` (auth/rate-limit paths) |

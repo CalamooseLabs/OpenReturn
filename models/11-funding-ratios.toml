@@ -1,0 +1,48 @@
+# Funding Ratios  (base model — MinistryWatch "Fund Acquisition" dimension)
+#
+# How efficiently the ministry raises money and how reliant it is on donations.
+# Derived from the ratios on
+# https://db.ministrywatch.com/ministry.php?ein=364348917 (Administer Justice).
+# Weights are illustrative and adjustable in production.
+#
+# NOTE: MinistryWatch's "Return on Fundraising Efforts" is published only as a
+# percentage and its exact definition is undisclosed; here it is modeled as the
+# standard fundraising return (contributions raised per dollar of fundraising
+# spend). MinistryWatch ranks these peer-relative; the benchmarks below are an
+# absolute approximation.
+
+[model]
+version     = 11
+type        = "financial"
+kind        = "model"
+description = "Funding ratios (Fund Acquisition) — fundraising efficiency and donation reliance"
+
+[[factor]]
+name                = "Fundraising Cost Ratio"
+weight              = 0.45
+formula_type        = "ratio"
+inputs              = ["fund", "contrib"]
+direction           = "lower"
+benchmark_lo        = 0.05
+benchmark_hi        = 0.35
+formula_description = "Fundraising expenses ÷ total contributions — cost to raise a dollar (lower = better)"
+
+[[factor]]
+name                = "Return on Fundraising Efforts"
+weight              = 0.35
+formula_type        = "ratio"
+inputs              = ["contrib", "fund"]
+direction           = "higher"
+benchmark_lo        = 2.0
+benchmark_hi        = 20.0
+formula_description = "Total contributions ÷ fundraising expenses — dollars raised per dollar spent"
+
+[[factor]]
+name                = "Contributions Reliance"
+weight              = 0.20
+formula_type        = "ratio"
+inputs              = ["contrib", "cy_rev"]
+direction           = "higher"
+benchmark_lo        = 0.40
+benchmark_hi        = 0.95
+formula_description = "Total contributions ÷ total revenue — share of income from donations"

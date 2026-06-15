@@ -27,6 +27,7 @@ class ScoreRouter(Router):
         "model_version": version,
         "model_type": model.get("model_type") if model else None,
         "scoring_mode": model.get("scoring_mode") if model else "computed",
+        "model_kind": model.get("model_kind") if model else "model",
         "factors": self.db.scores.get_factors(version),
       }
 
@@ -34,6 +35,11 @@ class ScoreRouter(Router):
     def list_model_types(query_params: dict, body: Any, headers: HTTPMessage):
       """The available model categories (financial, governance, …)."""
       return {"types": self.db.scores.list_model_types()}
+
+    @self.get('/kinds')
+    def list_model_kinds(query_params: dict, body: Any, headers: HTTPMessage):
+      """The available model kinds (model, composite, super_composite)."""
+      return {"kinds": self.db.scores.list_model_kinds()}
 
     # --- Manual (graded) scoring ---
 

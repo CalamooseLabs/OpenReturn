@@ -3,6 +3,11 @@ import json
 import math
 
 _FACTOR_PREFIX = 'factor:'
+# A composite / super-composite factor input that resolves to another model's
+# final total_score for the same filing, e.g. "model:10". The referenced version
+# must already be evaluated (the engine orders base models before composites
+# before super-composites), and is looked up in the per-filing model_totals map.
+_MODEL_PREFIX = 'model:'
 
 _PATHS: dict[str, str] = {
     'prog':       'ReturnData/IRS990/TotalFunctionalExpensesGrp/ProgramServicesAmt',
@@ -113,21 +118,25 @@ class ScoringEngine:
                 f"via POST /scores/grade instead of calculate")
         sorted_factors = self._topo_sort(factors)
 
-        needs_history = any(f['formula_type'] in _HISTORICAL_TYPES for f in sorted_factors)
-        historical: dict[str, list[float]] = self.db.reported_data.get_historical_values(ein) if needs_history else {}
+        # Composites/super-composites read other models' totals for THIS filing;
+        # compute the dependency chain on the fly so calculate() is self-contained
+        # regardless of whether the batch path pre-stored child scores. Their
+        # children may use historical formulas, so load the org history for the
+        # whole chain; a base model loads history only if it needs it.
+        is_composite = (model or {}).get('model_kind', 'model') in ('composite', 'super_composite')
+        needs_history = is_composite or any(
+            f['formula_type'] in _HISTORICAL_TYPES for f in sorted_factors)
+        historical: dict[str, list[float]] = \
+            self.db.reported_data.get_historical_values(ein) if needs_history else {}
+        model_totals = (self._compute_dependency_totals(model_version, vals, historical)
+                        if is_composite else {})
 
-        computed: dict[str, float | None] = {}
-        factor_results: dict[int, tuple[float | None, float]] = {}
-        for f in sorted_factors:
-            raw = self._compute_factor(f, vals, computed, historical)
-            computed[f['name']] = raw
-            normalized = self._normalize(f, raw)
-            weighted = normalized * f['weight']
-            factor_results[f['factor_id']] = (raw, weighted)
+        total, factor_list = self._score_model_for_filing(
+            sorted_factors, vals, historical, model_totals)
+        factor_results = {fid: (raw, weighted) for fid, raw, weighted in factor_list}
 
         score_id = self.db.scores.create_score(filing['filing_id'], model_version)
         self.db.scores.store_factor_values(score_id, factor_results)
-        total = sum(w for _, w in factor_results.values())
         self.db.scores.finalize_score(score_id, total)
 
         return self.db.scores.get_score(score_id)
@@ -141,31 +150,51 @@ class ScoringEngine:
 
     def _prepare_models(self, model_versions=None) -> list[dict]:
         """Resolve the computed models to score into ready-to-evaluate form:
-        {version, model_id, factors (topo-sorted), needs_history}. Optionally
-        restricted to ``model_versions``. Empty (factorless) models are skipped."""
+        {version, model_id, kind, factors (topo-sorted), needs_history, deps}.
+        Optionally restricted to ``model_versions``. Empty (factorless) models are
+        skipped. The returned list is ordered so a composite's ``model:<v>``
+        dependencies appear before it (base → composite → super-composite).
+
+        When ``model_versions`` restricts the set, transitive ``model:<v>``
+        dependencies are pulled back in (and re-scored) — scoring a composite
+        alone is meaningless without current child-model totals."""
         computed = self.db.scores.list_computed_models()
         if model_versions is not None:
-            want = set(model_versions)
+            by_version = {m['version']: m for m in computed}
+            want: set[int] = set()
+            stack = [v for v in model_versions if v in by_version]
+            while stack:
+                v = stack.pop()
+                if v in want:
+                    continue
+                want.add(v)
+                for dep in self._model_refs(self.db.scores.get_factors(v)):
+                    if dep in by_version and dep not in want:
+                        stack.append(dep)
             computed = [m for m in computed if m['version'] in want]
-        prepared = []
+        prepared_by_version: dict[int, dict] = {}
         for m in computed:
             factors = self.db.scores.get_factors(m['version'])
             if not factors:
                 continue
             sorted_factors = self._topo_sort(factors)
-            prepared.append({
+            prepared_by_version[m['version']] = {
                 "version":       m['version'],
                 "model_id":      m['model_id'],
+                "kind":          m.get('model_kind', 'model'),
                 "factors":       sorted_factors,
                 "needs_history": any(f['formula_type'] in _HISTORICAL_TYPES for f in sorted_factors),
-            })
-        return prepared
+                "deps":          self._model_refs(sorted_factors),
+            }
+        return [prepared_by_version[v] for v in self._order_versions(prepared_by_version)]
 
     def score_org(self, ein: str, prepared_models: list[dict],
                   scoring_paths=_SCORING_PATHS) -> int:
         """(Re)compute and store every prepared model's score for every filing of
         one org, in a single bulk replace (no commit — the caller batches). The
         org's values + history load once and are reused across its years/models.
+        Composites read base-model totals for the same filing, so models run in
+        dependency order while a per-filing {version: total} map accumulates.
         Returns the number of scores written."""
         if not prepared_models:
             return 0
@@ -173,21 +202,21 @@ class ScoringEngine:
             self.db.reported_data.get_org_scoring_data(ein, scoring_paths)
         if not filings:
             return 0
+        # Per-filing {version: total}; a composite's model:<v> inputs find their
+        # child totals here because prepared_models is dependency-ordered.
+        totals_by_filing: dict[str, dict[int, float | None]] = {
+            fil['filing_id']: {} for fil in filings}
         results = []
         for m in prepared_models:
             hist = historical if m['needs_history'] else {}
             for fil in filings:
-                vals = vals_by_uuid.get(fil['filing_id'], {})
-                computed: dict[str, float | None] = {}
-                factor_results = []
-                total = 0.0
-                for f in m['factors']:
-                    raw = self._compute_factor(f, vals, computed, hist)
-                    computed[f['name']] = raw
-                    weighted = self._normalize(f, raw) * f['weight']
-                    total += weighted
-                    factor_results.append((f['factor_id'], raw, weighted))
-                results.append((fil['filing_id'], m['model_id'], total, factor_results))
+                fid = fil['filing_id']
+                vals = vals_by_uuid.get(fid, {})
+                model_totals = totals_by_filing[fid]
+                total, factor_results = self._score_model_for_filing(
+                    m['factors'], vals, hist, model_totals)
+                model_totals[m['version']] = total
+                results.append((fid, m['model_id'], total, factor_results))
         self.db.scores.replace_org_scores(ein, [m['model_id'] for m in prepared_models], results)
         return len(results)
 
@@ -243,6 +272,124 @@ class ScoringEngine:
             visit(f['name'])
         return order
 
+    # ── Cross-model composition (composites / super-composites) ───────────────
+    # A composite's factors take model:<version> inputs that resolve to another
+    # model's total_score for the SAME filing; a super-composite does the same over
+    # composites. Models are evaluated base → composite → super-composite (a
+    # topological order over these refs) so each layer's inputs are ready.
+
+    @staticmethod
+    def _model_refs(factors: list[dict]) -> set[int]:
+        """The model:<version> versions referenced across a model's factors — the
+        other models a composite/super-composite depends on."""
+        refs: set[int] = set()
+        for f in factors:
+            for inp in json.loads(f['inputs']):
+                if isinstance(inp, str) and inp.startswith(_MODEL_PREFIX):
+                    try:
+                        refs.add(int(inp[len(_MODEL_PREFIX):]))
+                    except (ValueError, TypeError):
+                        pass
+        return refs
+
+    def _score_model_for_filing(self, factors: list[dict], vals: dict[str, float],
+                                historical: dict[str, list[float]],
+                                model_totals: dict[int, float | None]):
+        """Evaluate one model's (topo-sorted) factors against a single filing.
+        Returns ``(total_score, [(factor_id, raw, weighted), ...])``. ``model_totals``
+        is the ``{version: total}`` of already-scored models for this filing (for
+        ``model:<version>`` inputs); pass ``{}`` for a base model. This is the shared
+        per-(model, filing) primitive behind both calculate() and the batch path."""
+        computed: dict[str, float | None] = {}
+        factor_results: list[tuple[int, float | None, float]] = []
+        total = 0.0
+        for f in factors:
+            raw = self._compute_factor(f, vals, computed, historical, model_totals)
+            computed[f['name']] = raw
+            weighted = self._normalize(f, raw) * f['weight']
+            total += weighted
+            factor_results.append((f['factor_id'], raw, weighted))
+        return total, factor_results
+
+    @staticmethod
+    def _order_versions(prepared: dict[int, dict]) -> list[int]:
+        """Topologically order prepared model versions so a model's ``model:<v>``
+        dependencies score before it. Deps on versions not in ``prepared`` (manual,
+        factorless, or outside a requested subset) are skipped for ordering — they
+        resolve to None at score time. Raises on a dependency cycle."""
+        order: list[int] = []
+        visited: set[int] = set()
+        in_stack: set[int] = set()
+
+        def visit(v: int) -> None:
+            if v in in_stack:
+                raise ValueError(f"Circular model dependency involving version {v}")
+            if v in visited or v not in prepared:
+                return
+            in_stack.add(v)
+            for dep in prepared[v]['deps']:
+                visit(dep)
+            in_stack.discard(v)
+            visited.add(v)
+            order.append(v)
+
+        for v in sorted(prepared):
+            visit(v)
+        return order
+
+    def _dependency_order(self, target_version: int) -> list[int]:
+        """Versions ``target_version`` transitively depends on (via ``model:<v>``),
+        in evaluation order (dependencies first), EXCLUDING the target. Used by
+        calculate() to score a composite's children on the fly for one filing.
+
+        A child that cannot produce a total — missing, factorless, or manual — is
+        **skipped** rather than scored; its ``model:<v>`` input then resolves to
+        None (a 0 contribution), exactly matching the batch path's handling of an
+        unresolvable dependency (``_order_versions`` skips absent deps). This keeps
+        calculate() and ``rebuild`` consistent for a broken/misconfigured composite
+        instead of one raising while the other silently scores 0. Registration
+        (``cmd_register``) blocks creating such a composite in the first place;
+        this is the defensive fallback for direct-DB edits. Raises only on a true
+        dependency cycle."""
+        order: list[int] = []
+        visited: set[int] = set()
+        in_stack: set[int] = set()
+
+        def visit(v: int, is_target: bool) -> None:
+            if v in in_stack:
+                raise ValueError(f"Circular model dependency involving version {v}")
+            if v in visited:
+                return
+            in_stack.add(v)
+            factors = self.db.scores.get_factors(v)
+            for dep in self._model_refs(factors):
+                visit(dep, False)
+            in_stack.discard(v)
+            visited.add(v)
+            if is_target:
+                return
+            # Only schedule a scoreable child: a computed model with factors.
+            if not factors:
+                return
+            model = self.db.scores.get_model(v)
+            if model and model.get('scoring_mode') == 'manual':
+                return
+            order.append(v)
+
+        visit(target_version, True)
+        return order
+
+    def _compute_dependency_totals(self, target_version: int, vals: dict[str, float],
+                                   historical: dict[str, list[float]]) -> dict[int, float | None]:
+        """Score every model ``target_version`` depends on for a single filing,
+        returning ``{version: total}`` — the model_totals a composite's factors read."""
+        totals: dict[int, float | None] = {}
+        for v in self._dependency_order(target_version):
+            factors = self._topo_sort(self.db.scores.get_factors(v))
+            total, _ = self._score_model_for_filing(factors, vals, historical, totals)
+            totals[v] = total
+        return totals
+
     def _load_values(self, fields: list[dict]) -> dict[str, float]:
         result: dict[str, float] = {}
         for f in fields:
@@ -256,9 +403,16 @@ class ScoringEngine:
         return result
 
     def _resolve_input(self, key: str, vals: dict[str, float],
-                       computed: dict[str, float | None]) -> float | None:
+                       computed: dict[str, float | None],
+                       model_totals: dict[int, float | None] | None = None) -> float | None:
         if key.startswith(_FACTOR_PREFIX):
             return computed.get(key[len(_FACTOR_PREFIX):])
+        if key.startswith(_MODEL_PREFIX):
+            ref = key[len(_MODEL_PREFIX):]
+            try:
+                return (model_totals or {}).get(int(ref))
+            except (ValueError, TypeError):
+                return None
         try:
             return float(key)
         except (ValueError, TypeError):
@@ -268,7 +422,8 @@ class ScoringEngine:
 
     def _compute_factor(self, factor: dict, vals: dict[str, float],
                         computed: dict[str, float | None] | None = None,
-                        historical: dict[str, list[float]] | None = None) -> float | None:
+                        historical: dict[str, list[float]] | None = None,
+                        model_totals: dict[int, float | None] | None = None) -> float | None:
         if computed is None:
             computed = {}
         if historical is None:
@@ -304,7 +459,7 @@ class ScoringEngine:
                 std_dev = math.sqrt(sum((x - mean) ** 2 for x in hist) / len(hist))
                 return std_dev / abs(mean)
 
-        inputs = [self._resolve_input(k, vals, computed) for k in keys]
+        inputs = [self._resolve_input(k, vals, computed, model_totals) for k in keys]
 
         # --- Fixed 2-input ---
         if formula_type == 'ratio':
@@ -416,8 +571,12 @@ class ScoringEngine:
             return self._debug_manual(ein, year, filing, model, factors)
         sorted_factors = self._topo_sort(factors)
 
-        needs_history = any(f['formula_type'] in _HISTORICAL_TYPES for f in sorted_factors)
+        is_composite = (model or {}).get('model_kind', 'model') in ('composite', 'super_composite')
+        needs_history = is_composite or any(
+            f['formula_type'] in _HISTORICAL_TYPES for f in sorted_factors)
         historical = self.db.reported_data.get_historical_values(ein) if needs_history else {}
+        model_totals = (self._compute_dependency_totals(model_version, vals, historical)
+                        if is_composite else {})
 
         source_cache: dict[str, dict | None] = {}
 
@@ -430,13 +589,13 @@ class ScoringEngine:
         traces: list[dict] = []
         total = 0.0
         for f in sorted_factors:
-            raw = self._compute_factor(f, vals, computed, historical)
+            raw = self._compute_factor(f, vals, computed, historical, model_totals)
             computed[f['name']] = raw
             normalized = self._normalize(f, raw)
             weighted = normalized * f['weight']
             total += weighted
             traces.append(self._debug_factor(
-                f, vals, raw_by_path, computed, historical, source_for,
+                f, vals, raw_by_path, computed, historical, model_totals, source_for,
                 raw, normalized, weighted))
 
         return {
@@ -446,6 +605,7 @@ class ScoringEngine:
             "form_code": filing.get('form_code'),
             "model_version": model_version,
             "model_type": (model or {}).get('model_type'),
+            "model_kind": (model or {}).get('model_kind', 'model'),
             "scoring_mode": "computed",
             "total_score": total,
             "evaluation_order": [f['name'] for f in sorted_factors],
@@ -453,13 +613,14 @@ class ScoringEngine:
         }
 
     def _debug_factor(self, factor: dict, vals, raw_by_path, computed, historical,
-                      source_for, raw, normalized, weighted) -> dict:
+                      model_totals, source_for, raw, normalized, weighted) -> dict:
         ftype = factor['formula_type']
         keys = json.loads(factor['inputs'])
         is_hist = ftype in _HISTORICAL_TYPES
 
         variables = [
-            self._describe_variable(k, vals, raw_by_path, computed, historical, source_for, is_hist)
+            self._describe_variable(k, vals, raw_by_path, computed, historical,
+                                    model_totals, source_for, is_hist)
             for k in keys
         ]
 
@@ -479,11 +640,19 @@ class ScoringEngine:
         }
 
     def _describe_variable(self, key: str, vals, raw_by_path, computed, historical,
-                           source_for, is_hist: bool) -> dict:
+                           model_totals, source_for, is_hist: bool) -> dict:
         if key.startswith(_FACTOR_PREFIX):
             name = key[len(_FACTOR_PREFIX):]
             return {"key": key, "kind": "factor", "references": name,
                     "value": computed.get(name)}
+        if key.startswith(_MODEL_PREFIX):
+            ref = key[len(_MODEL_PREFIX):]
+            try:
+                version = int(ref)
+            except (ValueError, TypeError):
+                version = None
+            return {"key": key, "kind": "model", "references": version,
+                    "value": (model_totals or {}).get(version) if version is not None else None}
         try:
             return {"key": key, "kind": "literal", "value": float(key)}
         except (ValueError, TypeError):
@@ -491,7 +660,7 @@ class ScoringEngine:
         path = _PATHS.get(key)
         if path is None:
             return {"key": key, "kind": "unknown", "value": None,
-                    "note": "not a known field key, numeric literal, or factor reference"}
+                    "note": "not a known field key, numeric literal, factor, or model reference"}
         var = {
             "key":       key,
             "kind":      "field",

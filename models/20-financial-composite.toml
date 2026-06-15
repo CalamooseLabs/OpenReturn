@@ -1,0 +1,57 @@
+# Financial  (composite — the MinistryWatch "Financial Efficiency" score)
+#
+# A composite weights the FINAL SCORES of base models (referenced as model:<version>),
+# not 990 fields directly. This is "the financial composite": it blends the four
+# financial ratio models below into a single 0–1 financial-health score, mirroring
+# how MinistryWatch rolls its ratio groups up into one financial efficiency rating.
+#
+# Register the four base models (versions 10–13) BEFORE this one. Each factor is a
+# pass-through (sum of one input) of a child model's total, weighted; with the
+# child scores already in 0–1 the benchmark range 0–1 leaves them unchanged.
+# Weights are illustrative and adjustable in production.
+
+[model]
+version     = 20
+type        = "financial"
+kind        = "composite"
+description = "Financial composite — weighted blend of the operating, funding, liquidity, and investing models"
+
+[[factor]]
+name                = "Operating Ratios"
+weight              = 0.30
+formula_type        = "sum"
+inputs              = ["model:10"]
+direction           = "higher"
+benchmark_lo        = 0.0
+benchmark_hi        = 1.0
+formula_description = "Final score of the Operating Ratios model (v10)"
+
+[[factor]]
+name                = "Funding Ratios"
+weight              = 0.25
+formula_type        = "sum"
+inputs              = ["model:11"]
+direction           = "higher"
+benchmark_lo        = 0.0
+benchmark_hi        = 1.0
+formula_description = "Final score of the Funding Ratios model (v11)"
+
+[[factor]]
+name                = "Liquidity & Solvency Ratios"
+weight              = 0.25
+formula_type        = "sum"
+inputs              = ["model:12"]
+direction           = "higher"
+benchmark_lo        = 0.0
+benchmark_hi        = 1.0
+formula_description = "Final score of the Liquidity & Solvency Ratios model (v12)"
+
+[[factor]]
+name                = "Investing Ratios"
+weight              = 0.20
+formula_type        = "sum"
+inputs              = ["model:13"]
+direction           = "higher"
+benchmark_lo        = 0.0
+benchmark_hi        = 1.0
+formula_description = "Final score of the Investing Ratios model (v13)"

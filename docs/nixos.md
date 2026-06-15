@@ -104,6 +104,7 @@ services.openreturn = {
 | `description` | string or null | no | Human-readable description |
 | `type` | string or null | no | Category — a seeded `model_type` code (`financial`, `governance`, `whole_person`, `christ_centeredness`) |
 | `mode` | `"computed"` or `"manual"` | no (default `"computed"`) | `computed` = formula factors; `manual` = human-graded factors (set each factor's `scale`) |
+| `kind` | `"model"`/`"composite"`/`"super_composite"` | no (default `"model"`) | How the model is composed — `model` reads 990 fields; `composite` weights base models' scores; `super_composite` weights composites' scores (factors use `model:<version>` inputs). See [Model Kinds](scoring/models.md#model-kinds-composites) |
 | `factors` | list | yes | The factors (fields below) |
 
 ### Factor fields
@@ -138,6 +139,22 @@ A **manual** (graded) model omits `formula_type`/`inputs` and sets `scale` per f
 ```
 
 Manual-model factors are then scored through the [grading API](api.md#post-scoresgrade), not computed.
+
+A **composite** sets `kind = "composite"` and each factor weights a base model's score via a `model:<version>` input (a `super_composite` does the same over composites). List children **before** parents in `cfg.models` so they register first:
+
+```nix
+{
+  version = 20;
+  type    = "financial";
+  kind    = "composite";
+  factors = [
+    { name = "Operating Ratios"; weight = 0.6; formula_type = "sum";
+      inputs = [ "model:10" ]; direction = "higher"; benchmark_lo = 0.0; benchmark_hi = 1.0; }
+    { name = "Funding Ratios"; weight = 0.4; formula_type = "sum";
+      inputs = [ "model:11" ]; direction = "higher"; benchmark_lo = 0.0; benchmark_hi = 1.0; }
+  ];
+}
+```
 
 ### How model registration works
 

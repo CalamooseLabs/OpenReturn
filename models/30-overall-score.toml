@@ -1,0 +1,38 @@
+# Overall Score  (super composite — the organization's single overall rating)
+#
+# A super composite weights the FINAL SCORES of COMPOSITES (referenced as
+# model:<version>). This is the top of the hierarchy: the one number that
+# summarizes an organization across every pillar.
+#
+# The MinistryWatch page supplies only FINANCIAL data, so for now the Overall
+# Score is the Financial composite (v20) at weight 1.0. In production this is where
+# the other pillars plug in — register Leadership, Whole-Person Impact, and
+# Christ-Centeredness composites and add them here, reweighting so the weights sum
+# to 1.0. For example:
+#
+#   [[factor]]
+#   name         = "Leadership"
+#   weight       = 0.25
+#   formula_type = "sum"
+#   inputs       = ["model:21"]   # a Leadership composite
+#   direction    = "higher"
+#   benchmark_lo = 0.0
+#   benchmark_hi = 1.0
+#
+# Register the Financial composite (v20) BEFORE this one.
+
+[model]
+version     = 30
+type        = "financial"
+kind        = "super_composite"
+description = "Overall Score — weighted blend of the pillar composites (Financial only for now)"
+
+[[factor]]
+name                = "Financial"
+weight              = 1.0
+formula_type        = "sum"
+inputs              = ["model:20"]
+direction           = "higher"
+benchmark_lo        = 0.0
+benchmark_hi        = 1.0
+formula_description = "Final score of the Financial composite (v20)"

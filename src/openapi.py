@@ -186,6 +186,8 @@ def _schemas() -> dict:
                 "scored_at": {"type": "string"},
                 "model_type": {"type": ["string", "null"]},
                 "scoring_mode": {"type": "string", "enum": ["computed", "manual"]},
+                "model_kind": {"type": "string",
+                               "enum": ["model", "composite", "super_composite"]},
                 "factors": {"type": "array", "items": _ref("ScoreFactorResult")},
             },
         },
@@ -212,6 +214,8 @@ def _schemas() -> dict:
                 "model_version": {"type": "integer"},
                 "model_type": {"type": ["string", "null"]},
                 "scoring_mode": {"type": "string", "enum": ["computed", "manual"]},
+                "model_kind": {"type": "string",
+                               "enum": ["model", "composite", "super_composite"]},
                 "factors": {"type": "array", "items": _ref("FactorDefinition")},
             },
         },
@@ -219,6 +223,16 @@ def _schemas() -> dict:
             "type": "object",
             "properties": {
                 "code": {"type": "string"},
+                "name": {"type": "string"},
+                "description": {"type": ["string", "null"]},
+            },
+        },
+        "ModelKind": {
+            "type": "object",
+            "description": "A model composition kind (model / composite / super_composite).",
+            "properties": {
+                "code": {"type": "string",
+                         "enum": ["model", "composite", "super_composite"]},
                 "name": {"type": "string"},
                 "description": {"type": ["string", "null"]},
             },
@@ -243,6 +257,8 @@ def _schemas() -> dict:
                 "form_code": {"type": ["string", "null"]},
                 "model_version": {"type": "integer"},
                 "model_type": {"type": ["string", "null"]},
+                "model_kind": {"type": "string",
+                               "enum": ["model", "composite", "super_composite"]},
                 "scoring_mode": {"type": "string", "enum": ["computed", "manual"]},
                 "total_score": {"type": "number"},
                 "factors": {"type": "array", "items": {"type": "object"}},
@@ -542,6 +558,15 @@ def _paths() -> dict:
                 "responses": _responses({
                     "type": "object",
                     "properties": {"types": {"type": "array", "items": _ref("ModelType")}}}),
+            },
+        },
+        "/scores/kinds": {
+            "get": {
+                "tags": ["Scores"],
+                "summary": "Available model kinds (model / composite / super_composite)",
+                "responses": _responses({
+                    "type": "object",
+                    "properties": {"kinds": {"type": "array", "items": _ref("ModelKind")}}}),
             },
         },
         "/scores/debug": {

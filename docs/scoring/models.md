@@ -127,6 +127,52 @@ To add a new category, insert a row into the `model_type` table (seeded in `Scor
 - **`computed`** (default) — every factor is evaluated from a formula over 990 data (the formula types below). This is the original behavior.
 - **`manual`** — every factor is **graded by a person**: a value + an optional comment supplied through the [grading API](#manual-graded-models). A model is wholly one or the other.
 
+## Model Kinds (Composites)
+
+A model also declares a **kind** (`[model].kind`, default `model`) — *how it is composed*. This is orthogonal to `type` and `mode`, and lets scores be built in layers:
+
+| `kind` | Made up of… | Factor inputs |
+|--------|-------------|---------------|
+| `model` (default) | factors over 990 fields | field keys, numeric literals, `factor:<name>` |
+| `composite` | the final **scores of base models** | `model:<version>` (+ `factor:`, literals) |
+| `super_composite` | the final **scores of composites** | `model:<version>` (+ `factor:`, literals) |
+
+A `composite`/`super_composite` factor references a child by **`model:<version>`**, which resolves to that model's `total_score` *for the same filing*. Because the children's scores are already in `[0, 1]`, a pass-through factor is just `formula_type = "sum"` over a single `model:` input with `benchmark_lo = 0`, `benchmark_hi = 1` — its `weight` is the child's share of the parent. The parent's total is then the usual `Σ (normalized × weight)`, i.e. a **weighted blend of its children's scores**.
+
+```toml
+# A composite: weight several base models into one score.
+[model]
+version = 20
+type    = "financial"
+kind    = "composite"
+
+[[factor]]
+name         = "Operating Ratios"
+weight       = 0.6
+formula_type = "sum"
+inputs       = ["model:10"]      # → model v10's total_score for this filing
+direction    = "higher"
+benchmark_lo = 0.0
+benchmark_hi = 1.0
+
+[[factor]]
+name         = "Funding Ratios"
+weight       = 0.4
+formula_type = "sum"
+inputs       = ["model:11"]
+direction    = "higher"
+benchmark_lo = 0.0
+benchmark_hi = 1.0
+```
+
+**Rules** (enforced at validation/registration):
+
+- A base `model` **cannot** use `model:` inputs; a `composite`/`super_composite` **cannot** read 990 field keys directly (only `model:`, `factor:`, and numeric literals) and must reference at least one child.
+- A `composite` may reference only base `model`s; a `super_composite` may reference only `composite`s. Referenced models must already be registered and be **computed** (a composite weights derived scores, not graded ones), so a `composite`/`super_composite` cannot itself be `manual`.
+- **Register children before parents** (base → composite → super-composite). The engine evaluates models in that dependency order, so each layer's `model:` inputs are ready; cyclic references are rejected.
+
+`openreturn score --rebuild` scores every kind in one pass; `POST /scores/calculate` for a composite computes its children on the fly for that filing. `GET /scores/kinds` lists the available kinds. See [`models/`](../../models/) for a worked MinistryWatch-style stack (four ratio models → a Financial composite → an Overall Score super-composite).
+
 ## Manual (Graded) Models
 
 A manual model's factors have no formula or inputs. Instead each factor declares a `scale` that says how the grader's entered value maps to `[0, 1]`, and `formula_description` carries the **guidance** shown to the grader:
@@ -249,6 +295,7 @@ Historical formulas take exactly 1 input — a field key (not `factor:<name>`). 
 | Syntax | Example | Resolves to |
 |--------|---------|-------------|
 | `factor:<name>` | `factor:Expense Ratio` | Raw computed value of a previously evaluated factor |
+| `model:<version>` | `model:10` | Final `total_score` of another model for the same filing — **composite / super-composite only** (see [Model Kinds](#model-kinds-composites)) |
 | numeric literal | `"0"`, `"1.0"`, `"-0.5"` | The literal float value |
 
 Numeric literals are useful for `clamp` bounds: `inputs = ["cy_rev", "0", "1000000"]`.

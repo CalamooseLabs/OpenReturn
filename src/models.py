@@ -9,16 +9,23 @@ except ImportError:  # pragma: no cover
     sys.exit(1)
 
 from database import OpenReturnDB
-from scoring.engine import _PATHS as _VALID_INPUTS, FORMULA_TYPES, FORMULA_INPUT_COUNTS, _FACTOR_PREFIX
+from scoring.engine import (_PATHS as _VALID_INPUTS, FORMULA_TYPES,
+                            FORMULA_INPUT_COUNTS, _FACTOR_PREFIX, _MODEL_PREFIX)
 from scoring.graph import find_cycle
 
-_MODEL_KEYS  = {'version', 'description', 'type', 'mode'}
+_MODEL_KEYS  = {'version', 'description', 'type', 'mode', 'kind'}
 _FACTOR_KEYS = {'name', 'weight', 'formula_type', 'inputs', 'direction',
                 'benchmark_lo', 'benchmark_hi', 'formula_description', 'scale'}
 _FACTOR_REQUIRED = {'name', 'weight', 'formula_type', 'inputs', 'direction',
                     'benchmark_lo', 'benchmark_hi'}
 
 _MODES = ('computed', 'manual')
+# How a model is composed. 'model' (default) reads 990 fields; 'composite' weights
+# base models' scores; 'super_composite' weights composites' scores. The latter two
+# reference children via model:<version> inputs (see _MODEL_PREFIX).
+_KINDS = ('model', 'composite', 'super_composite')
+# What each composing kind is allowed to reference.
+_CHILD_KIND = {'composite': 'model', 'super_composite': 'composite'}
 _MANUAL_SCALES = ('benchmark', 'normalized', 'percent')
 # A manual (graded) factor: a person supplies a value + comment via the grading
 # API. No formula/inputs; `scale` says how the value maps to [0,1].
@@ -117,6 +124,16 @@ def validate_toml(data: dict) -> list[str]:
     if 'type' in model and not isinstance(model['type'], str):
         issues.append(f"ERROR: [model].type must be a string, got: {model['type']!r}")
 
+    kind = model.get('kind', 'model')
+    if kind not in _KINDS:
+        issues.append(f"ERROR: [model].kind must be one of {list(_KINDS)}, got: {kind!r}")
+        kind = 'model'  # fall back so the input checks below have a sane value
+    # A composite/super-composite aggregates other models' computed totals; it has
+    # no person-graded values, so it cannot be manual.
+    if mode == 'manual' and kind != 'model':
+        issues.append(f"ERROR: a '{kind}' model cannot be manual — composites weight "
+                      f"other models' computed scores")
+
     # [[factor]] list
     factors = data.get('factor', [])
     if not isinstance(factors, list):
@@ -128,6 +145,7 @@ def validate_toml(data: dict) -> list[str]:
 
     seen_names: set[str] = set()
     weights: list[float] = []
+    model_ref_count = 0  # model:<v> references across all factors (composites)
 
     # Manual (graded) models validate their factors differently and have no
     # formulas/inputs/dependency graph — handle them and return early.
@@ -196,22 +214,46 @@ def validate_toml(data: dict) -> list[str]:
                             issues.append(
                                 f"ERROR: {prefix}: references unknown factor '{ref}'"
                             )
+                    elif isinstance(inp, str) and inp.startswith(_MODEL_PREFIX):
+                        # model:<version> — composing another model's final score.
+                        if kind == 'model':
+                            issues.append(
+                                f"ERROR: {prefix}: a base 'model' cannot reference other "
+                                f"models ('{inp}'); set [model].kind = 'composite' or "
+                                f"'super_composite'")
+                        ref = inp[len(_MODEL_PREFIX):]
+                        # Canonical positive integer, no leading zeros (model:01).
+                        if not ref.isdigit() or int(ref) <= 0 or ref != str(int(ref)):
+                            issues.append(
+                                f"ERROR: {prefix}: 'model:' reference must be a positive "
+                                f"integer version, got: '{inp}'")
+                        else:
+                            model_ref_count += 1
                     elif isinstance(inp, str):
                         try:
                             float(inp)
                         except ValueError:
-                            if inp not in _VALID_INPUTS:
+                            if kind != 'model':
+                                issues.append(
+                                    f"ERROR: {prefix}: a '{kind}' factor takes only "
+                                    f"'model:<version>', 'factor:<name>', or numeric inputs — "
+                                    f"not the 990 field key '{inp}'")
+                            elif inp not in _VALID_INPUTS:
                                 issues.append(
                                     f"ERROR: {prefix}: unknown input key '{inp}'. "
                                     f"Must be one of: {sorted(_VALID_INPUTS)}, a numeric literal, "
                                     f"or 'factor:<name>'"
                                 )
-                    elif inp not in _VALID_INPUTS:
+                    elif isinstance(inp, (int, float)):
+                        # A numeric literal must be a *quoted* string — inputs are
+                        # stored/looked up as strings (the engine calls .startswith
+                        # on each key), so a bare TOML number can't be resolved.
                         issues.append(
-                            f"ERROR: {prefix}: unknown input key '{inp}'. "
-                            f"Must be one of: {sorted(_VALID_INPUTS)}, a numeric literal, "
-                            f"or 'factor:<name>'"
-                        )
+                            f"ERROR: {prefix}: numeric literal {inp!r} must be a quoted "
+                            f'string, e.g. "{inp}"')
+                    else:
+                        issues.append(
+                            f"ERROR: {prefix}: input must be a string, got: {inp!r}")
                 if formula_type and formula_type in FORMULA_INPUT_COUNTS:
                     expected = FORMULA_INPUT_COUNTS[formula_type]
                     if expected is None:
@@ -241,6 +283,12 @@ def validate_toml(data: dict) -> list[str]:
                 issues.append(
                     f"ERROR: {prefix}: benchmark_lo ({lo}) must be less than benchmark_hi ({hi})"
                 )
+
+    # A composite/super-composite must actually compose something.
+    if kind in _CHILD_KIND and model_ref_count == 0:
+        issues.append(
+            f"ERROR: a '{kind}' model must reference at least one child via "
+            f"'model:<version>' (it weights other models' scores)")
 
     # Check for circular factor:X dependencies
     dep_graph: dict[str, set[str]] = {}
@@ -294,12 +342,50 @@ def cmd_register(args) -> None:
     description = data['model'].get('description')
     mode = data['model'].get('mode', 'computed')
     model_type = data['model'].get('type')
+    kind = data['model'].get('kind', 'model')
 
     if model_type is not None:
         valid_types = {t['code'] for t in db.scores.list_model_types()}
         if model_type not in valid_types:
             print(f"ERROR: unknown model type '{model_type}'. Known types: "
                   f"{sorted(valid_types)}", file=sys.stderr)
+            db.close()
+            sys.exit(1)
+
+    # (kind is already constrained to _KINDS by validate_toml, which matches the
+    # seeded model_kind table — no separate DB existence check needed here.)
+
+    # A composite/super-composite must reference models that already exist, are
+    # the right kind (composite → base models; super → composites), and are
+    # computed (their totals are derived, not graded). validate_toml already
+    # confirmed the model:<v> tokens are well-formed; this checks them against the
+    # DB, which it could not see.
+    if kind in _CHILD_KIND:
+        want_kind = _CHILD_KIND[kind]
+        refs = sorted({
+            int(inp[len(_MODEL_PREFIX):])
+            for factor in data['factor']
+            for inp in (factor.get('inputs') or [])
+            if isinstance(inp, str) and inp.startswith(_MODEL_PREFIX)
+            and inp[len(_MODEL_PREFIX):].isdigit()
+        })
+        ref_errors = []
+        for ref in refs:
+            child = db.scores.get_model(ref)
+            if child is None:
+                ref_errors.append(f"references model version {ref}, which is not registered")
+            elif not db.scores.get_factors(ref):
+                ref_errors.append(f"references model version {ref}, which has no factors "
+                                  f"(its score would always be 0)")
+            elif child.get('scoring_mode') == 'manual':
+                ref_errors.append(f"references manual model version {ref}; only computed "
+                                  f"models can be composed")
+            elif child.get('model_kind', 'model') != want_kind:
+                ref_errors.append(f"is a '{kind}' but references version {ref}, which is a "
+                                  f"'{child.get('model_kind', 'model')}' (expected '{want_kind}')")
+        if ref_errors:
+            for e in ref_errors:
+                print(f"ERROR: model {e}.", file=sys.stderr)
             db.close()
             sys.exit(1)
 
@@ -316,9 +402,9 @@ def cmd_register(args) -> None:
         sys.exit(1)
 
     db.cursor.execute(
-        "INSERT INTO score_model (version, description, model_type, scoring_mode) "
-        "VALUES (?, ?, ?, ?)",
-        (version, description, model_type, mode)
+        "INSERT INTO score_model (version, description, model_type, scoring_mode, model_kind) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (version, description, model_type, mode, kind)
     )
     model_id = db.cursor.lastrowid
 
@@ -364,8 +450,8 @@ def cmd_register(args) -> None:
             )
 
     db.connection.commit()
-    kind = f"{mode} {model_type or ''}".strip()
-    print(f"Registered {kind} model version {version} with {n_factors} factors.")
+    label = f"{mode} {model_type or ''} {kind}".replace('  ', ' ').strip()
+    print(f"Registered {label} model version {version} with {n_factors} factors.")
     db.close()
 
 
@@ -377,7 +463,9 @@ def cmd_list(args) -> None:
         print("No models registered.")
         return
     for m in models:
-        tags = f"[{m['model_type'] or '?'}/{m['scoring_mode']}]"
+        kind = m.get('model_kind', 'model')
+        kind_tag = "" if kind == 'model' else f"/{kind}"
+        tags = f"[{m['model_type'] or '?'}/{m['scoring_mode']}{kind_tag}]"
         desc = f" — {m['description']}" if m['description'] else ""
         print(f"  v{m['version']} {tags}{desc}  (created {m['created_at']})")
 

@@ -13,6 +13,23 @@ INSERT OR IGNORE INTO model_type (code, name, description) VALUES
   ('whole_person',        'Whole-Person',        'Holistic organizational and staff well-being'),
   ('christ_centeredness', 'Christ-Centeredness',  'Mission and faith alignment');
 
+-- How a model is composed (orthogonal to model_type/scoring_mode). Seeded here in
+-- setup (INSERT OR IGNORE) for the same reason as model_type — the rows must exist
+-- on every startup, and populate only runs on a fresh DB.
+--   'model'           — factors are formulas over 990 fields (the original kind).
+--   'composite'       — factors weight other *models'* final scores (model:<v>).
+--   'super_composite' — factors weight *composites'* final scores (model:<v>).
+CREATE TABLE IF NOT EXISTS model_kind (
+  code        TEXT PRIMARY KEY,
+  name        TEXT NOT NULL,
+  description TEXT
+);
+
+INSERT OR IGNORE INTO model_kind (code, name, description) VALUES
+  ('model',           'Model',           'Factors are formulas over 990 field data'),
+  ('composite',       'Composite',       'Factors weight the final scores of base models'),
+  ('super_composite', 'Super Composite', 'Factors weight the final scores of composites');
+
 CREATE TABLE IF NOT EXISTS score_model (
   model_id INTEGER PRIMARY KEY AUTOINCREMENT,
   version INTEGER NOT NULL UNIQUE,
@@ -22,6 +39,10 @@ CREATE TABLE IF NOT EXISTS score_model (
   -- person (a value + comment supplied via the grading API). A model is wholly
   -- one or the other.
   scoring_mode TEXT NOT NULL DEFAULT 'computed',
+  -- 'model' (base), 'composite', or 'super_composite' — see model_kind above. A
+  -- composite/super_composite scores by weighting other models' totals (its
+  -- factors take model:<version> inputs); a base model reads 990 fields.
+  model_kind TEXT NOT NULL DEFAULT 'model' REFERENCES model_kind (code),
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 

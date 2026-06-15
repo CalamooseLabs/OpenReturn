@@ -89,7 +89,8 @@ class TestScoreRouterRegistration(unittest.TestCase):
 
     def test_no_unexpected_get_routes(self):
         expected = {"/scores/factors", "/scores", "/scores/filing", "/scores/detail",
-                    "/scores/lookup", "/scores/compare", "/scores/debug", "/scores/types"}
+                    "/scores/lookup", "/scores/compare", "/scores/debug", "/scores/types",
+                    "/scores/kinds"}
         self.assertEqual(set(self.router.routes["GET"].keys()), expected)
 
     def test_no_unexpected_post_routes(self):

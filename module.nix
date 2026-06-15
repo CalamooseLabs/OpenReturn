@@ -32,6 +32,7 @@ let
           "description = \"${model.description}\"\n"
       + lib.optionalString (model.type != null) "type = \"${model.type}\"\n"
       + lib.optionalString (model.mode != "computed") "mode = \"${model.mode}\"\n"
+      + lib.optionalString (model.kind != "model") "kind = \"${model.kind}\"\n"
       + lib.concatMapStrings mkFactor model.factors
     );
 
@@ -192,6 +193,20 @@ in {
               data. `manual`: factors are graded by a person (a value + comment
               supplied via the grading API); set each factor's `scale` instead of
               `formula_type`/`inputs`.
+            '';
+          };
+
+          kind = lib.mkOption {
+            type = lib.types.enum [ "model" "composite" "super_composite" ];
+            default = "model";
+            example = "composite";
+            description = ''
+              How the model is composed. `model` (default): factors are formulas
+              over 990 fields. `composite`: factors weight other base models' final
+              scores. `super_composite`: factors weight composites' final scores.
+              For `composite`/`super_composite`, each factor's `inputs` reference a
+              child by `model:<version>`; register the children first. A
+              `composite`/`super_composite` cannot be `manual`.
             '';
           };
 

@@ -1,0 +1,46 @@
+# Investing Ratios  (base model — part of MinistryWatch "Asset Utilization")
+#
+# How productively the ministry uses its assets and investments rather than letting
+# them sit idle. Derived from the ratios on
+# https://db.ministrywatch.com/ministry.php?ein=364348917 (Administer Justice).
+# Weights are illustrative and adjustable in production.
+#
+# NOTE: MinistryWatch penalizes idle asset accumulation — higher turnover and
+# active investment use rate better. MinistryWatch ranks these peer-relative; the
+# benchmarks below are an absolute approximation.
+
+[model]
+version     = 13
+type        = "financial"
+kind        = "model"
+description = "Investing ratios — asset turnover and investment utilization"
+
+[[factor]]
+name                = "Total Asset Turnover"
+weight              = 0.40
+formula_type        = "ratio"
+inputs              = ["cy_rev", "assets"]
+direction           = "higher"
+benchmark_lo        = 0.20
+benchmark_hi        = 1.00
+formula_description = "Total revenue ÷ total assets — how actively assets are put to work"
+
+[[factor]]
+name                = "Return on Investments"
+weight              = 0.30
+formula_type        = "ratio"
+inputs              = ["invest_inc", "invest_val"]
+direction           = "higher"
+benchmark_lo        = 0.00
+benchmark_hi        = 0.10
+formula_description = "Investment income ÷ investments held — yield on the investment portfolio"
+
+[[factor]]
+name                = "Degree of Long-Term Investment"
+weight              = 0.30
+formula_type        = "ratio"
+inputs              = ["invest_val", "assets"]
+direction           = "higher"
+benchmark_lo        = 0.00
+benchmark_hi        = 0.75
+formula_description = "Other investments ÷ total assets — share of assets deployed as investments"

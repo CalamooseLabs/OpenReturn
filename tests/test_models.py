@@ -460,10 +460,12 @@ class TestValidateTomlInputs(unittest.TestCase):
         self.assertTrue(any('circular' in e.lower() for e in _errors(data)))
 
     def test_non_string_non_path_input_is_error(self):
-        # A bare integer in inputs (not a string numeric literal) hits the non-string branch
+        # A bare integer in inputs (not a string numeric literal) is an error: inputs
+        # must be quoted strings (the engine resolves keys via str methods).
         f = _valid_factor(formula_type='ratio', inputs=[99999, 'total_exp'])
         data = {'model': _valid_model(), 'factor': [f]}
-        self.assertTrue(any('unknown input key' in e for e in _errors(data)))
+        errs = _errors(data)
+        self.assertTrue(any('must be a quoted string' in e for e in errs), errs)
 
     def test_numeric_literal_input_accepted(self):
         f = _valid_factor(formula_type='clamp', inputs=['cy_rev', '0', '1'])

@@ -1,0 +1,89 @@
+# Operating Ratios  (base model — MinistryWatch "Resource Allocation" dimension)
+#
+# How a ministry's money is spent: program vs. management vs. fundraising, and
+# whether it operates at a surplus. Derived from the ratios shown on
+# https://db.ministrywatch.com/ministry.php?ein=364348917 (Administer Justice).
+# Each MinistryWatch ratio is one weighted factor; the model's total is the
+# weighted, benchmark-normalized blend. Weights are illustrative and adjustable.
+#
+# NOTE: MinistryWatch scores these RELATIVELY (percentile rank within ~22 peer
+# groups → 1–5 stars). OpenReturn scores one filing against the fixed benchmark
+# ranges below — an absolute approximation of MinistryWatch's peer-relative method.
+
+[model]
+version     = 10
+type        = "financial"
+kind        = "model"
+description = "Operating ratios (Resource Allocation) — program/admin/fundraising mix and surplus"
+
+[[factor]]
+name                = "Program Expense Ratio"
+weight              = 0.30
+formula_type        = "ratio"
+inputs              = ["prog", "total_exp"]
+direction           = "higher"
+benchmark_lo        = 0.65
+benchmark_hi        = 0.90
+formula_description = "Program service expenses ÷ total functional expenses (higher = more to mission)"
+
+[[factor]]
+name                = "Management & General Ratio"
+weight              = 0.20
+formula_type        = "ratio"
+inputs              = ["admin", "total_exp"]
+direction           = "lower"
+benchmark_lo        = 0.05
+benchmark_hi        = 0.25
+formula_description = "Management & general expenses ÷ total expenses (lower = leaner overhead)"
+
+[[factor]]
+name                = "Fundraising Expense Ratio"
+weight              = 0.15
+formula_type        = "ratio"
+inputs              = ["fund", "total_exp"]
+direction           = "lower"
+benchmark_lo        = 0.05
+benchmark_hi        = 0.30
+formula_description = "Fundraising expenses ÷ total expenses (lower = less spent to raise funds)"
+
+[[factor]]
+name                = "Spending Ratio"
+weight              = 0.15
+formula_type        = "ratio"
+inputs              = ["cy_exp", "cy_rev"]
+direction           = "lower"
+benchmark_lo        = 0.90
+benchmark_hi        = 1.15
+formula_description = "Total expenses ÷ total revenue (≤100% = lived within its means)"
+
+# Intermediate: current-year surplus/deficit in dollars (weight 0 → excluded from
+# the total, consumed by Savings Ratio below).
+[[factor]]
+name                = "Net Surplus"
+weight              = 0.0
+formula_type        = "difference"
+inputs              = ["cy_rev", "cy_exp"]
+direction           = "higher"
+benchmark_lo        = 0.0
+benchmark_hi        = 1.0
+formula_description = "Total revenue − total expenses (raw surplus/deficit, $)"
+
+[[factor]]
+name                = "Savings Ratio"
+weight              = 0.10
+formula_type        = "ratio"
+inputs              = ["factor:Net Surplus", "cy_rev"]
+direction           = "higher"
+benchmark_lo        = -0.05
+benchmark_hi        = 0.10
+formula_description = "(Revenue − expenses) ÷ revenue — surplus margin (positive = building reserves)"
+
+[[factor]]
+name                = "Program Output Ratio"
+weight              = 0.10
+formula_type        = "ratio"
+inputs              = ["prog", "cy_rev"]
+direction           = "higher"
+benchmark_lo        = 0.65
+benchmark_hi        = 0.90
+formula_description = "Program service expenses ÷ total revenue (how much of income reaches programs)"

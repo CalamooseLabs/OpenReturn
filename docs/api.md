@@ -483,6 +483,7 @@ Fetch a score including per-factor breakdown.
   "scored_at": "2025-06-01 14:00:00",
   "model_type": "financial",
   "scoring_mode": "computed",
+  "model_kind": "model",
   "factors": [
     {
       "factor_id": 1,
@@ -497,7 +498,7 @@ Fetch a score including per-factor breakdown.
 }
 ```
 
-For a **manual** model, `scoring_mode` is `"manual"`, each factor's `manual_scale` is set, and `comment` holds the grader's note (see [`POST /scores/grade`](#post-scoresgrade)).
+For a **manual** model, `scoring_mode` is `"manual"`, each factor's `manual_scale` is set, and `comment` holds the grader's note (see [`POST /scores/grade`](#post-scoresgrade)). `model_kind` is `model` (base), `composite`, or `super_composite`; for a composite each factor's `raw_value` is a child model's score and the factor name names the child (see [Scoring Models → Model Kinds](scoring/models.md#model-kinds-composites)).
 
 ---
 
@@ -643,7 +644,10 @@ Trace a scoring-model evaluation against a filing, factor by factor — the form
 | `field` | `xml_path`, `value`, `raw_value`, `present`, `source` (+ `series` for historical formulas) | A Form 990 field key; `source` traces it to form/part/section/line. `present` is `false` when the filing has no value for it (`value` is then `null`). |
 | `literal` | `value` | A numeric literal from the model (e.g. a `clamp` bound). |
 | `factor` | `references`, `value` | A `factor:<name>` reference; `value` is that factor's raw computed value. |
-| `unknown` | `note` | The key is not a known field, literal, or factor reference. |
+| `model` | `references`, `value` | A `model:<version>` reference (composite / super-composite); `value` is that child model's `total_score` for this filing. |
+| `unknown` | `note` | The key is not a known field, literal, factor, or model reference. |
+
+For a composite/super-composite the top-level `model_kind` is `composite`/`super_composite`; each factor's variables are `model` references to the children being blended.
 
 When a formula can't be computed (a required input is missing, or a denominator is zero), `formula.computable` is `false`, `formula.note` explains why, `raw_value` is `null`, and `normalized`/`weighted_value` are `0.0` — the walkthrough still shows the substituted formula (with `None` where the value is missing) so you can see exactly which input was unavailable.
 
@@ -666,6 +670,7 @@ Return the factor definitions for a scoring model version.
   "model_version": 1,
   "model_type": "financial",
   "scoring_mode": "computed",
+  "model_kind": "model",
   "factors": [
     {
       "factor_id": 1,
@@ -683,7 +688,7 @@ Return the factor definitions for a scoring model version.
 }
 ```
 
-For a **manual** model, `scoring_mode` is `"manual"` and each factor carries a non-null `manual_scale` (`benchmark` / `normalized` / `percent`) instead of a formula; `formula_description` is the grader's guidance. See [Scoring Models → Manual Models](scoring/models.md#manual-graded-models).
+For a **manual** model, `scoring_mode` is `"manual"` and each factor carries a non-null `manual_scale` (`benchmark` / `normalized` / `percent`) instead of a formula; `formula_description` is the grader's guidance. See [Scoring Models → Manual Models](scoring/models.md#manual-graded-models). `model_kind` is `model`/`composite`/`super_composite`; a composite's factor `inputs` are `model:<version>` references to its child models.
 
 ---
 
@@ -703,6 +708,26 @@ List the available model categories (the seeded `model_type` codes).
   ]
 }
 ```
+
+---
+
+### `GET /scores/kinds`
+
+List the available model **kinds** (the seeded `model_kind` codes) — how a model is composed.
+
+**Response**
+
+```json
+{
+  "kinds": [
+    { "code": "composite", "name": "Composite", "description": "Factors weight the final scores of base models" },
+    { "code": "model", "name": "Model", "description": "Factors are formulas over 990 field data" },
+    { "code": "super_composite", "name": "Super Composite", "description": "Factors weight the final scores of composites" }
+  ]
+}
+```
+
+See [Scoring Models → Model Kinds](scoring/models.md#model-kinds-composites) for how composites and super-composites are defined and scored.
 
 ---
 

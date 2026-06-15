@@ -1484,6 +1484,50 @@
         }
       }
     },
+    "/scores/kinds": {
+      "get": {
+        "tags": [
+          "Scores"
+        ],
+        "summary": "Available model kinds (model / composite / super_composite)",
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kinds": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/ModelKind"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
     "/scores/debug": {
       "get": {
         "tags": [
@@ -2142,6 +2186,14 @@
               "manual"
             ]
           },
+          "model_kind": {
+            "type": "string",
+            "enum": [
+              "model",
+              "composite",
+              "super_composite"
+            ]
+          },
           "factors": {
             "type": "array",
             "items": {
@@ -2237,6 +2289,14 @@
               "manual"
             ]
           },
+          "model_kind": {
+            "type": "string",
+            "enum": [
+              "model",
+              "composite",
+              "super_composite"
+            ]
+          },
           "factors": {
             "type": "array",
             "items": {
@@ -2250,6 +2310,29 @@
         "properties": {
           "code": {
             "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ModelKind": {
+        "type": "object",
+        "description": "A model composition kind (model / composite / super_composite).",
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "model",
+              "composite",
+              "super_composite"
+            ]
           },
           "name": {
             "type": "string"
@@ -2309,6 +2392,14 @@
             "type": [
               "string",
               "null"
+            ]
+          },
+          "model_kind": {
+            "type": "string",
+            "enum": [
+              "model",
+              "composite",
+              "super_composite"
             ]
           },
           "scoring_mode": {

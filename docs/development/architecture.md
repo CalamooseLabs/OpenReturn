@@ -104,6 +104,7 @@ erDiagram
     int version UK
     string model_type FK
     string scoring_mode
+    string model_kind FK
   }
   SCORE_FACTOR {
     int factor_id PK
@@ -145,7 +146,7 @@ Extends `Database` in *owner* mode (`sql_dir=None`): it opens the single connect
 
 The shared cursor matters: a second cursor mid-statement on the same connection makes a `commit()` on another raise *"SQL statements in progress"* during bulk ingest — so every concern uses the one cursor (the base `Database` accepts `cursor=`).
 
-Schema setup uses `CREATE TABLE IF NOT EXISTS`, so it re-runs harmlessly on every startup. Each subclass's `populate/` is guarded by a `populate_guard` table (Schema=`form`, Organization=`state`, Score=`score_model`) so seed inserts run only on a fresh DB. The `Schema` seed is split by form — `00_reference` (forms, parts, data_type, core structure), then `10_form_990`…`50_return_header` — loaded in sorted order; FK enforcement is on, so file order matters (`50_return_header` depends on part 14 from `10_form_990`). Legacy databases are upgraded in the owning subclass's `__init__`: `ApiKeyDatabase._migrate_columns` (the `rate_limit` ALTER) and `ScoreDatabase._migrate_columns` (the model-type / manual-scoring ALTERs + financial backfill).
+Schema setup uses `CREATE TABLE IF NOT EXISTS`, so it re-runs harmlessly on every startup. Each subclass's `populate/` is guarded by a `populate_guard` table (Schema=`form`, Organization=`state`, Score=`score_model`) so seed inserts run only on a fresh DB. The `Schema` seed is split by form — `00_reference` (forms, parts, data_type, core structure), then `10_form_990`…`50_return_header` — loaded in sorted order; FK enforcement is on, so file order matters (`50_return_header` depends on part 14 from `10_form_990`). Legacy databases are upgraded in the owning subclass's `__init__`: `ApiKeyDatabase._migrate_columns` (the `rate_limit` ALTER) and `ScoreDatabase._migrate_columns` (the model-type / manual-scoring / `model_kind` ALTERs + financial/base-model backfill).
 
 Connection lifecycle — `commit`/`close`/`begin_bulk_load`/`end_bulk_load` — stays on the base `Database`. The shared `_field_meta` cache is built once on the coordinator (from `db.meta`); the API-key validation cache lives on `db.keys`. A subclass reaches a sibling via `self._db` when a query spans concerns (e.g. `db.filings.get_filing_data_by_ein_year` joins through `db.reported_data`).
 
@@ -162,7 +163,7 @@ Connection lifecycle — `commit`/`close`/`begin_bulk_load`/`end_bulk_load` — 
 
 **Standalone concerns** (`db.keys`, `db.ingest`, `db.migrations`) have no FKs to the rest, but still share the one connection. The 990 data graph (`db.meta`'s form schema + `db.orgs`/`db.filings`/`db.reported_data`) and `db.scores` are FK-linked and JOIN across each other — which is why a single file/connection is required (separate databases would break joins/FKs/transactions).
 
-**Scoring** (`db.scores`, `src/database/Score/score.py`): a model declares a `model_type` (seeded category) and a `scoring_mode` — **computed** (formula factors) or **manual** (graded by a person via `POST /scores/grade`, with a `manual_scale` + `comment`). `ScoringEngine.calculate` rejects manual models; `grade()` normalizes per `manual_scale` and recomputes the total. The purge helpers (`delete_filings_by_zip`/`delete_all_filings`) live on `db.scores` because they also count scores for the removal summary; the deletes themselves are just `DELETE FROM filing` — both `organization_score` and `reported_data` reference the integer `filing.filing_id` with `ON DELETE CASCADE`.
+**Scoring** (`db.scores`, `src/database/Score/score.py`): a model declares a `model_type` (seeded category), a `scoring_mode` — **computed** (formula factors) or **manual** (graded by a person via `POST /scores/grade`, with a `manual_scale` + `comment`) — and a `model_kind` — **model** (base, reads 990 fields), **composite** (weights base models' scores), or **super_composite** (weights composites' scores). Composites/super-composites reference children via `model:<version>` inputs and are scored in dependency order (see the Scoring Engine section). `ScoringEngine.calculate` rejects manual models; `grade()` normalizes per `manual_scale` and recomputes the total. The purge helpers (`delete_filings_by_zip`/`delete_all_filings`) live on `db.scores` because they also count scores for the removal summary; the deletes themselves are just `DELETE FROM filing` — both `organization_score` and `reported_data` reference the integer `filing.filing_id` with `ON DELETE CASCADE`.
 
 **Filing keys**: `filing` has an integer `filing_id` PRIMARY KEY (rowid) and a separate `uuid UNIQUE`. **`uuid` is the public/API identifier** (filing responses and lookups use it). All filing children — `reported_data`, `organization_score`, and the graph tables (`party_appearance`/edges) — reference the integer `filing_id` (an 8-byte int rather than a 36-char uuid on ~190M rows roughly halves the DB and speeds inserts/index rebuild); the public uuid is resolved at the API boundary. `store_reported_data`/`get_reported_data` take the public uuid and resolve it internally; the bulk ingest path assigns integer ids directly.
 
@@ -285,9 +286,11 @@ sequenceDiagram
 
 `_topo_sort(factors)` — Kahn-style DFS that raises `ValueError` on circular or missing `factor:<name>` references.
 
-`_resolve_input(key, vals, computed)` — resolves a single input key in priority order: `factor:<name>` → numeric literal string → field key shorthand → `None`.
+`_resolve_input(key, vals, computed, model_totals)` — resolves a single input key in priority order: `factor:<name>` → `model:<version>` → numeric literal string → field key shorthand → `None`.
 
-See [Scoring Models](../scoring/models.md) for the full list of formula types and input keys.
+**Model kinds — composites.** A model has a `model_kind`: `model` (base, reads 990 fields), `composite` (factors weight base models' totals), or `super_composite` (factors weight composites' totals). A composite/super-composite factor takes `model:<version>` inputs that resolve to another model's `total_score` *for the same filing*, looked up in a per-filing `model_totals` map. `_score_model_for_filing(factors, vals, historical, model_totals)` is the shared per-(model, filing) primitive behind both paths; `_model_refs()` extracts a model's `model:` dependencies and `_order_versions()` topologically orders prepared models (base → composite → super-composite) so each layer's inputs are ready. The batch `score_org` accumulates a per-filing `{version: total}` as it scores in that order; `calculate()` computes a composite's dependency chain on the fly via `_compute_dependency_totals()`, so it is self-contained regardless of batch state. Cross-model kind/existence/cycle rules are enforced at registration (`models.cmd_register`) and validation (`models.validate_toml`).
+
+See [Scoring Models](../scoring/models.md) for the full list of formula types, input keys, and the model kinds.
 
 ---
 

@@ -11,12 +11,25 @@ CREATE TABLE IF NOT EXISTS organization_type (code TEXT PRIMARY KEY, description
 -- the state-search dropdown is drawn from). No state FK here: a malformed code
 -- in a single filing must not fail an address insert (and orphan the org link)
 -- during a multi-million-row bulk ingest.
+-- Shared address store. The PK `uuid` is a deterministic OWNER key, not a
+-- content hash: 'org:<ein>'-style for an org filer address (one per org) and
+-- 'ap:<filing_id>:<group>:<occ>' for a party appearance (graph layer). Owner-keyed
+-- (not content-deduped) so INSERT OR IGNORE re-ingest is idempotent without a
+-- write-hot content index or false-merge hazard. US rows use street/city/
+-- state_code/zipcode; FOREIGN rows use province/country_code/foreign_postal.
+-- Legacy filer-address rows are keyed by the bare EIN (see upsert_organization /
+-- the bulk flush) — still unique, still idempotent.
 CREATE TABLE IF NOT EXISTS address (
   uuid CHARACTER(36) PRIMARY KEY,
   street TEXT,
   city TEXT,
   state_code CHARACTER(2),
-  zipcode TEXT
+  zipcode TEXT,
+  address_kind TEXT,
+  street2 TEXT,
+  province TEXT,
+  country_code TEXT,
+  foreign_postal TEXT
 );
 
 CREATE TABLE IF NOT EXISTS organization (

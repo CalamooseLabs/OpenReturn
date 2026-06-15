@@ -39,10 +39,24 @@ class SchemaDatabase(Database):
       "part":    {"number": r[10], "name":  r[11]},
     } for r in rows}
 
+  # Lookup-only indexes dropped before a bulk load and rebuilt once at the end.
+  # The graph tables' UNIQUE(filing_id, group_code, occurrence_index) constraints
+  # are NOT listed here — they are table constraints that must stay live during
+  # the load to enforce re-ingest idempotency.
   _INGEST_INDEXES = [
     ("idx_reported_data_filing", "reported_data (filing_id)"),
     ("idx_reported_data_field",  "reported_data (field_id)"),
     ("idx_filing_org",           "filing (organization_id)"),
+    ("idx_appearance_filing",    "party_appearance (filing_id)"),
+    ("idx_appearance_ein",       "party_appearance (appearance_ein)"),
+    ("idx_appearance_resolved",  "party_appearance (resolved_party_id)"),
+    ("idx_appearance_person",    "party_appearance (person_name)"),
+    ("idx_appearance_business",  "party_appearance (business_name)"),
+    ("idx_person_role_appearance", "person_role (appearance_id)"),
+    ("idx_grant_edge_appearance",  "grant_edge (appearance_id)"),
+    ("idx_grant_edge_ein",         "grant_edge (recipient_ein)"),
+    ("idx_related_org_appearance", "related_org (appearance_id)"),
+    ("idx_related_org_ein",        "related_org (related_ein)"),
   ]
 
   def drop_ingest_indexes(self) -> None:

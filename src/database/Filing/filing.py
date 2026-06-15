@@ -3,6 +3,19 @@ import uuid
 from database.base import Database
 
 
+def object_id_from_filename(name: str | None) -> str | None:
+  """Derive the IRS object id from a TEOS public XML filename.
+
+  TEOS members are named ``<object_id>_public.xml`` where the object id is the
+  18-digit IRS dissemination key (a stable per-return identifier / provenance
+  key). Returns None for any non-conforming name (so the column stays NULL rather
+  than storing junk)."""
+  if not name:
+    return None
+  stem = name.rsplit('/', 1)[-1].removesuffix('.xml').removesuffix('_public')
+  return stem if stem.isdigit() else None
+
+
 class FilingDatabase(Database):
   """Filing lookups, creation, and the combined filing+reported-data fetch.
 
@@ -54,10 +67,10 @@ class FilingDatabase(Database):
     filing_id = str(uuid.uuid4())
     self.cursor.execute(
       """
-      INSERT OR IGNORE INTO filing (uuid, year, organization_id, form_code, xml_filename, zip_filename)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT OR IGNORE INTO filing (uuid, year, organization_id, form_code, object_id, xml_filename, zip_filename)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
       """,
-      (filing_id, year, ein, form_code, xml_filename, zip_filename)
+      (filing_id, year, ein, form_code, object_id_from_filename(xml_filename), xml_filename, zip_filename)
     )
     if self.cursor.rowcount == 0:
       row = self.cursor.execute(

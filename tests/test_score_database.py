@@ -329,7 +329,7 @@ class TestCreateScore(ScoreDbTestCase):
         score_id = self.db.scores.create_score(self.filing_alpha)
         ein = self.db.cursor.execute(
             "SELECT f.organization_id FROM organization_score os "
-            "JOIN filing f ON f.uuid = os.filing_id WHERE os.score_id = ?",
+            "JOIN filing f ON f.filing_id = os.filing_id WHERE os.score_id = ?",
             (score_id,)
         ).fetchone()[0]
         self.assertEqual(ein, self.EIN_ALPHA)
@@ -373,11 +373,11 @@ class TestCreateScore(ScoreDbTestCase):
         id2 = self.db.scores.create_score(self.filing_beta)
         ein1 = self.db.cursor.execute(
             "SELECT f.organization_id FROM organization_score os "
-            "JOIN filing f ON f.uuid = os.filing_id WHERE os.score_id = ?", (id1,)
+            "JOIN filing f ON f.filing_id = os.filing_id WHERE os.score_id = ?", (id1,)
         ).fetchone()[0]
         ein2 = self.db.cursor.execute(
             "SELECT f.organization_id FROM organization_score os "
-            "JOIN filing f ON f.uuid = os.filing_id WHERE os.score_id = ?", (id2,)
+            "JOIN filing f ON f.filing_id = os.filing_id WHERE os.score_id = ?", (id2,)
         ).fetchone()[0]
         self.assertEqual(ein1, self.EIN_ALPHA)
         self.assertEqual(ein2, self.EIN_BETA)
@@ -615,7 +615,7 @@ class TestFinalizeScore(ScoreDbTestCase):
         self.db.scores.finalize_score(self.score_id, 0.70)
         ein = self.db.cursor.execute(
             "SELECT f.organization_id FROM organization_score os "
-            "JOIN filing f ON f.uuid = os.filing_id WHERE os.score_id = ?",
+            "JOIN filing f ON f.filing_id = os.filing_id WHERE os.score_id = ?",
             (self.score_id,),
         ).fetchone()[0]
         self.assertEqual(ein, self.EIN_ALPHA)

@@ -199,7 +199,8 @@ class TestBatchScoringTimeSpan(unittest.TestCase):
         self.eng.rebuild(model_versions=[7])
         self.eng.rebuild(model_versions=[7])   # second run must not raise / duplicate
         n = self.db.cursor.execute(
-            "SELECT COUNT(*) FROM organization_score WHERE filing_id='u1'").fetchone()[0]
+            "SELECT COUNT(*) FROM organization_score os JOIN filing f "
+            "ON f.filing_id = os.filing_id WHERE f.uuid='u1'").fetchone()[0]
         self.assertEqual(n, 1)
 
     def test_manual_model_not_scored(self):

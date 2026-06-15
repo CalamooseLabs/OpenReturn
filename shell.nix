@@ -25,38 +25,56 @@
   runserver = pkgs.writeShellScriptBin "runserver" ''
     python3 src/cli.py serve "''${@}"
   '';
+  build-wiki = pkgs.writeShellScriptBin "build-wiki" ''
+    # Build the wiki pages from docs/ without cloning/pushing (preview/validate).
+    # Defaults --out to ./wiki-build/ when not given; forwards any extra args.
+    root="$(git rev-parse --show-toplevel)"
+    case " $* " in
+      *" --out "*) python3 "$root/tools/build_wiki.py" "''${@}" ;;
+      *)           python3 "$root/tools/build_wiki.py" --out "$root/wiki-build" "''${@}" ;;
+    esac
+  '';
   publish-wiki = pkgs.writeShellScriptBin "publish-wiki" ''
     set -euo pipefail
     root="$(git rev-parse --show-toplevel)"
     src="$root/docs"
-    # Wiki repo URL: defaults to <origin>.wiki.git; override with arg 1.
-    remote="''${1:-$(git -C "$root" remote get-url origin | sed -E 's#\.git$#.wiki.git#')}"
-
-    if [ ! -d "$src" ] || ! ls "$src"/*.md >/dev/null 2>&1; then
-      echo "publish-wiki: no wiki pages found in $src" >&2
-      exit 1
+    builder="$root/tools/build_wiki.py"
+    # Wiki repo URL: arg 1 overrides; otherwise <origin> with any trailing slash
+    # and a single .git stripped, then .wiki.git appended — correct whether or
+    # not origin carried the .git suffix (a naive s/\.git$/…/ would no-op on a
+    # .git-less origin and target the MAIN repo).
+    if [ -n "''${1:-}" ]; then
+      remote="$1"
+    else
+      origin="$(git -C "$root" remote get-url origin)"
+      remote="$(printf '%s' "$origin" | sed -E 's#/+$##; s#\.git$##').wiki.git"
+      if [ "$remote" = "$origin" ]; then
+        echo "publish-wiki: refusing to run — derived wiki URL equals origin ($origin)" >&2
+        exit 1
+      fi
     fi
 
-    # Pre-flight: every [[link]] must resolve to a page file.
-    # (GitHub wikis use Gollum: in [[text|page]] the target is the text AFTER the pipe.)
-    echo "Checking wiki link integrity..."
-    missing=0
-    for target in $({ grep -rhoE '\[\[[^]]+\]\]' "$src"/*.md || true; } \
-        | sed -E 's/\[\[//; s/\]\]//; s/^[^|]*\|//; s/ /-/g' | sort -u); do
-      if [ ! -f "$src/$target.md" ]; then
-        echo "  BROKEN: [[$target]] -> $target.md not found" >&2
-        missing=1
-      fi
-    done
-    [ "$missing" -eq 0 ] || { echo "publish-wiki: aborting — fix the broken links above." >&2; exit 1; }
-    echo "  links OK ($(ls "$src"/*.md | wc -l) pages)"
+    if [ ! -f "$builder" ]; then
+      echo "publish-wiki: builder not found at $builder" >&2
+      exit 1
+    fi
+    if [ ! -d "$src" ] || ! ls "$src"/*.md >/dev/null 2>&1; then
+      echo "publish-wiki: no docs pages found in $src" >&2
+      exit 1
+    fi
 
     clone="$(mktemp -d)"
     trap 'rm -rf "$clone"' EXIT
     echo "Cloning $remote ..."
     git clone --quiet "$remote" "$clone"
+
+    # Rebuild the flat wiki from docs/: flatten nested pages, rewrite relative
+    # links to wiki slugs, regenerate _Sidebar.md/_Footer.md, and validate every
+    # internal link + anchor (a broken one aborts here via set -e).
+    echo "Building wiki pages from docs/ ..."
     rm -f "$clone"/*.md
-    cp "$src"/*.md "$clone"/
+    python3 "$builder" --out "$clone"
+
     cd "$clone"
     git add -A
     if git diff --cached --quiet; then
@@ -65,7 +83,7 @@
     fi
     echo "Publishing changes:"
     git diff --cached --stat
-    git commit -q -m "Sync wiki from wiki/"
+    git commit -q -m "Sync wiki from docs/"
     git push
     echo "Published wiki to $remote"
   '';
@@ -127,6 +145,7 @@ in
       gcommit
       runtests
       runserver
+      build-wiki
       publish-wiki
     ];
   }

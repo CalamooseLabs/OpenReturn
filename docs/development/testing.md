@@ -57,6 +57,8 @@ The project maintains **100% statement coverage**. PRs that reduce coverage shou
 | `tests/test_server_coverage.py` | `src/server/server.py` (request handling, formats, errors) |
 | `tests/test_serve_instance.py` | `src/main.py` `cmd_serve` (single-instance guard, server.pid) |
 | `tests/test_ingest_schedule.py` | `src/ingest.py` `--schedule` / `--restart-server` helpers |
+| `tests/test_build_wiki.py` | `tools/build_wiki.py` (docs/ → GitHub wiki transform: slugify, link rewrite/validate, H1 strip, sidebar/footer) |
+| `tests/test_graph_layer.py` | `src/parser/groups.py` (repeating-group extraction) + `src/database/Appearance/appearance.py` (store/resolve/read of people/grant/related-org edges) + `src/ingest.py` bulk-graph flush (`buffer_graph`/`_flush_graph`/`_resolve_appearance_ids`) + `src/resolve.py` (`openreturn resolve`) + `ScoreDatabase._migrate_filing_key` (legacy score-key migration) + `OrganizationDatabase._migrate_schema` (address foreign-column ALTER) |
 
 ## Notes on Parallel Ingest Coverage
 

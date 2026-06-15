@@ -12,6 +12,7 @@ ingest.log
 ingest.pid
 server.log
 server.pid
+wiki-build
 GIT_COMMIT_MSG
 CLAUDE.md
 .coverage

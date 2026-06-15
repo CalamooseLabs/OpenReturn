@@ -44,9 +44,13 @@ CREATE TABLE IF NOT EXISTS score_factor (
   UNIQUE (model_id, name)
 );
 
+-- filing_id is the INTEGER filing.filing_id (rowid), consistent with
+-- reported_data — not the 36-char uuid. ON DELETE CASCADE means a filing delete
+-- removes its scores automatically (no manual delete-scores-first ordering). The
+-- public uuid is recovered by joining filing for API responses.
 CREATE TABLE IF NOT EXISTS organization_score (
   score_id INTEGER PRIMARY KEY AUTOINCREMENT,
-  filing_id CHARACTER(36) NOT NULL REFERENCES filing (uuid),
+  filing_id INTEGER NOT NULL REFERENCES filing (filing_id) ON DELETE CASCADE,
   model_id INTEGER NOT NULL REFERENCES score_model (model_id),
   total_score REAL,
   scored_at DATETIME DEFAULT CURRENT_TIMESTAMP,

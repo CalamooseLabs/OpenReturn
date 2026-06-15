@@ -34,7 +34,7 @@ def _seed(db, filings):
         if with_score:
             db.cursor.execute(
                 "INSERT INTO organization_score (filing_id, model_id, total_score) VALUES (?,?, 9.0)",
-                (uu, model_id))
+                (fid, model_id))
         db.cursor.execute(
             "INSERT INTO ingested_zip (source, filename, filings_stored) VALUES (?,?, 1)",
             (f"http://h/{zf}", zf))

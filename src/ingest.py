@@ -20,6 +20,7 @@ import daemon
 import sources
 from console import _B, _R, _DIM, _CYN, _GRN, _RED, _YLW, _CLR
 from database import OpenReturnDB
+from database.Filing.filing import object_id_from_filename
 from router.Upload import UploadRouter
 from router.Upload.upload import _worker_init, _parse_xml_batch
 from unzipper import MemberReader
@@ -32,7 +33,129 @@ _INSERT_REPORTED_DATA = (
     "INSERT OR IGNORE INTO reported_data (filing_id, field_id, raw_value) VALUES (?, ?, ?)"
 )
 
+# Graph-layer inserts (see database/Appearance). The parallel path buffers
+# appearances + edges keyed by the client filing pre_id, remaps that to the actual
+# filing_id on flush (same id_remap as reported_data), inserts appearances (SQLite
+# assigns appearance_id), then resolves each edge's appearance_id by the
+# (filing_id, group_code, occurrence_index) natural key. All INSERT OR IGNORE, so
+# re-ingest is a no-op.
+_INSERT_GRAPH_ADDRESS = (
+    "INSERT OR IGNORE INTO address (uuid, address_kind, street, street2, city, "
+    "state_code, zipcode, province, country_code, foreign_postal) "
+    "VALUES (?,?,?,?,?,?,?,?,?,?)"
+)
+_INSERT_APPEARANCE = (
+    "INSERT OR IGNORE INTO party_appearance (filing_id, group_code, occurrence_index, "
+    "party_kind, person_name, business_name, appearance_ein, address_uuid) "
+    "VALUES (?,?,?,?,?,?,?,?)"
+)
+_INSERT_PERSON_ROLE = (
+    "INSERT OR IGNORE INTO person_role (filing_id, appearance_id, group_code, "
+    "occurrence_index, title, avg_hours_org, avg_hours_related, is_officer, "
+    "is_director_trustee, is_key_employee, is_highest_comp, is_former, "
+    "reportable_comp_org, reportable_comp_related, other_comp) "
+    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+)
+_INSERT_GRANT_EDGE = (
+    "INSERT OR IGNORE INTO grant_edge (filing_id, appearance_id, group_code, "
+    "occurrence_index, grant_kind, recipient_ein, cash_amount, noncash_amount, "
+    "purpose_txt, irc_section, recipient_relationship, recipient_foundation_status) "
+    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+)
+_INSERT_RELATED_ORG = (
+    "INSERT OR IGNORE INTO related_org (filing_id, appearance_id, group_code, "
+    "occurrence_index, relation_kind, related_ein, primary_activities, legal_domicile, "
+    "ownership_pct, control_ind) VALUES (?,?,?,?,?,?,?,?,?,?)"
+)
+
 _DATA_ROWS_PER_FLUSH = 500_000  # flush + WAL checkpoint every ~500 k data rows mid-ZIP
+
+
+def new_graph_buffer() -> dict:
+    """A fresh per-ZIP graph buffer: appearances + one list per edge table."""
+    return {"app": [], "role": [], "grant": [], "rel": []}
+
+
+def buffer_graph(pg: dict, pre_id: int, groups: list[dict]) -> None:
+    """Append a parsed filing's extracted repeating-group records to the graph
+    buffer, tagged with the client filing pre_id (remapped to the real filing_id
+    on flush). Mirrors database.Appearance column order."""
+    for rec in groups:
+        # The appearance's address dict is carried as the last tuple element and
+        # turned into a shared `address` row (keyed deterministically) at flush,
+        # once pre_id has been remapped to the real filing_id.
+        pg["app"].append((
+            pre_id, rec["group_code"], rec["occurrence_index"], rec["party_kind"],
+            rec.get("person_name"), rec.get("business_name"), rec.get("ein"),
+            rec.get("address")))
+        e = rec.get("edge", {})
+        key = (pre_id, rec["group_code"], rec["occurrence_index"])
+        if rec["kind"] == "person_role":
+            pg["role"].append((*key, e.get("title"), e.get("avg_hours_org"),
+                e.get("avg_hours_related"), e.get("is_officer"), e.get("is_director_trustee"),
+                e.get("is_key_employee"), e.get("is_highest_comp"), e.get("is_former"),
+                e.get("reportable_comp_org"), e.get("reportable_comp_related"), e.get("other_comp")))
+        elif rec["kind"] == "grant":
+            pg["grant"].append((*key, e.get("tag"), rec.get("ein"), e.get("cash_amount"),
+                e.get("noncash_amount"), e.get("purpose_txt"), e.get("irc_section"),
+                e.get("recipient_relationship"), e.get("recipient_foundation_status")))
+        elif rec["kind"] == "related_org":
+            pg["rel"].append((*key, e.get("tag"), rec.get("ein"), e.get("primary_activities"),
+                e.get("legal_domicile"), e.get("ownership_pct"), e.get("control_ind")))
+
+
+def _resolve_appearance_ids(db, keys) -> dict:
+    """Map each (filing_id, group_code, occurrence_index) to its actual
+    appearance_id after the appearances are inserted (handles both freshly
+    inserted and pre-existing rows), so edges link correctly. Mirrors
+    ``_resolve_ids``'s temp-table-join pattern."""
+    db.cursor.execute(
+        "CREATE TEMP TABLE IF NOT EXISTS _ap_resolve (filing_id INT, group_code TEXT, occ INT)")
+    db.cursor.execute("DELETE FROM _ap_resolve")
+    db.cursor.executemany("INSERT INTO _ap_resolve VALUES (?,?,?)", list(keys))
+    rows = db.cursor.execute(
+        "SELECT pa.filing_id, pa.group_code, pa.occurrence_index, pa.appearance_id "
+        "FROM party_appearance pa JOIN _ap_resolve k "
+        "ON k.filing_id = pa.filing_id AND k.group_code = pa.group_code "
+        "AND k.occ = pa.occurrence_index").fetchall()
+    return {(f, g, o): aid for f, g, o, aid in rows}
+
+
+def _flush_graph(db, pg: dict, id_remap: dict) -> None:
+    """Insert one batch of graph rows. Remaps client filing pre_ids to the actual
+    filing_id (duplicate-filing collisions), inserts appearances, then resolves
+    each edge's appearance_id by natural key before inserting the edge tables."""
+    if id_remap:
+        for k in ("app", "role", "grant", "rel"):
+            if pg[k]:
+                pg[k][:] = [(id_remap.get(r[0], r[0]), *r[1:]) for r in pg[k]]
+    if pg["app"]:
+        # Split each app row into a shared address row (deterministic owner key)
+        # and the appearance row referencing it.
+        addresses, appearances = [], []
+        for fid, gc, occ, kind, person, business, ein, addr in pg["app"]:
+            addr_uuid = None
+            if addr:
+                addr_uuid = f"ap:{fid}:{gc}:{occ}"
+                addresses.append((
+                    addr_uuid, addr.get("address_kind"), addr.get("street"),
+                    addr.get("street2"), addr.get("city"), addr.get("state_code"),
+                    addr.get("zipcode"), addr.get("province"),
+                    addr.get("country_code"), addr.get("foreign_postal")))
+            appearances.append((fid, gc, occ, kind, person, business, ein, addr_uuid))
+        if addresses:
+            db.cursor.executemany(_INSERT_GRAPH_ADDRESS, addresses)
+        db.cursor.executemany(_INSERT_APPEARANCE, appearances)
+    edges = pg["role"] + pg["grant"] + pg["rel"]
+    if not edges:
+        return
+    ap = _resolve_appearance_ids(db, {(r[0], r[1], r[2]) for r in edges})
+    for key, stmt in (("role", _INSERT_PERSON_ROLE), ("grant", _INSERT_GRANT_EDGE),
+                      ("rel", _INSERT_RELATED_ORG)):
+        if pg[key]:
+            db.cursor.executemany(stmt, [
+                (r[0], ap[(r[0], r[1], r[2])], r[1], r[2], *r[3:])
+                for r in pg[key] if (r[0], r[1], r[2]) in ap])
 
 
 def _bar(done: int, total: int, width: int = 35) -> str:
@@ -80,7 +203,7 @@ def _resolve_ids(db, filing_key_to_id: dict) -> dict:
 
 
 def _flush_zip(db, pending_orgs, pending_addresses, pending_filings, pending_data, id_remap,
-               prof: dict | None = None) -> None:
+               prof: dict | None = None, pg: dict | None = None) -> None:
     """Flush one batch. ``id_remap`` is a per-ZIP {pre_id: actual_id} dict that
     persists across flushes: we resolve only THIS batch's just-inserted filing
     keys (not the whole accumulated set) and merge any collisions into id_remap,
@@ -105,8 +228,8 @@ def _flush_zip(db, pending_orgs, pending_addresses, pending_filings, pending_dat
     if pending_filings:
         db.cursor.executemany(
             "INSERT OR IGNORE INTO filing "
-            "(filing_id, uuid, year, organization_id, form_code, xml_filename, zip_filename) "
-            "VALUES (?,?,?,?,?,?,?)",
+            "(filing_id, uuid, year, organization_id, form_code, object_id, xml_filename, zip_filename) "
+            "VALUES (?,?,?,?,?,?,?,?)",
             pending_filings
         )
         _t = time.monotonic()
@@ -124,6 +247,8 @@ def _flush_zip(db, pending_orgs, pending_addresses, pending_filings, pending_dat
         db.cursor.executemany(_INSERT_REPORTED_DATA, pending_data)
         if prof is not None:
             prof['flush_insert'] += time.monotonic() - _t
+    if pg is not None:
+        _flush_graph(db, pg, id_remap)
     _t = time.monotonic()
     db.commit()
     if prof is not None:
@@ -245,6 +370,7 @@ def _process_zip_par(db, pool, ctx: _Ctx, zip_idx: int, zip_path: Path,
     filing_key_to_id: dict[tuple, int] = {}
     id_remap:         dict[int, int] = {}
     pending_data:     list[tuple] = []
+    pg = new_graph_buffer()
     zip_read0 = ctx.prof['read']
 
     # Read each XML in this process and hand the bytes to workers (workers do
@@ -310,6 +436,7 @@ def _process_zip_par(db, pool, ctx: _Ctx, zip_idx: int, zip_path: Path,
                                     filing_key_to_id[key] = pre_id
                                     pending_filings.append((
                                         pre_id, str(uuid.uuid4()), year, ein, form_code,
+                                        object_id_from_filename(parsed['file']),
                                         parsed['file'], parsed['zip_filename'],
                                     ))
 
@@ -318,6 +445,7 @@ def _process_zip_par(db, pool, ctx: _Ctx, zip_idx: int, zip_path: Path,
                                     (pre_id, fid, v)
                                     for fid, v in parsed['values'].items()
                                 )
+                                buffer_graph(pg, pre_id, parsed.get('groups', []))
                                 status = 'stored'
                             except Exception:
                                 status = 'error'
@@ -334,16 +462,18 @@ def _process_zip_par(db, pool, ctx: _Ctx, zip_idx: int, zip_path: Path,
 
                     if len(pending_data) >= _DATA_ROWS_PER_FLUSH:
                         _flush_zip(db, pending_orgs, pending_addresses, pending_filings,
-                                   pending_data, id_remap, ctx.prof)
+                                   pending_data, id_remap, ctx.prof, pg)
                         pending_orgs.clear()
                         pending_addresses.clear()
                         pending_filings.clear()
                         pending_data.clear()
+                        for _lst in pg.values():
+                            _lst.clear()
     except zipfile.BadZipFile:
         print(f"\r  {_RED}corrupt ZIP — skipping remaining files{_R}{_CLR}")
         ctx.totals['error'] += 1
 
-    _flush_zip(db, pending_orgs, pending_addresses, pending_filings, pending_data, id_remap, ctx.prof)
+    _flush_zip(db, pending_orgs, pending_addresses, pending_filings, pending_data, id_remap, ctx.prof, pg)
     _tc = time.monotonic()
     db.cursor.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     ctx.prof['checkpoint'] += time.monotonic() - _tc

@@ -42,6 +42,35 @@ class ScoreDatabase(Database):
     except Exception:  # pragma: no cover — column guaranteed present above
       pass
     self.connection.commit()
+    self._migrate_filing_key()
+
+  def _migrate_filing_key(self) -> None:
+    """Rebuild a legacy ``organization_score`` whose ``filing_id`` is the 36-char
+    filing uuid into the integer ``filing.filing_id`` (with ON DELETE CASCADE),
+    converting the values via a join on ``filing.uuid``. Fresh DBs already have
+    the integer column (from sql/setup) and skip this. Mirrors the table-rebuild
+    pattern in OrganizationDatabase._migrate_schema."""
+    info = self.cursor.execute("PRAGMA table_info(organization_score)").fetchall()
+    col = next((c for c in info if c[1] == 'filing_id'), None)
+    if col is None or 'INT' in (col[2] or '').upper():
+      return  # already integer (fresh DB) or table absent
+    self.cursor.execute(
+      "CREATE TABLE organization_score_new ("
+      "score_id INTEGER PRIMARY KEY AUTOINCREMENT, "
+      "filing_id INTEGER NOT NULL REFERENCES filing (filing_id) ON DELETE CASCADE, "
+      "model_id INTEGER NOT NULL REFERENCES score_model (model_id), "
+      "total_score REAL, scored_at DATETIME DEFAULT CURRENT_TIMESTAMP, "
+      "UNIQUE (filing_id, model_id))")
+    # Convert uuid → integer filing_id; scores whose filing is gone are dropped.
+    self.cursor.execute(
+      "INSERT INTO organization_score_new (score_id, filing_id, model_id, total_score, scored_at) "
+      "SELECT os.score_id, f.filing_id, os.model_id, os.total_score, os.scored_at "
+      "FROM organization_score os JOIN filing f ON f.uuid = os.filing_id")
+    self.cursor.execute("DROP TABLE organization_score")
+    self.cursor.execute("ALTER TABLE organization_score_new RENAME TO organization_score")
+    self.cursor.execute("CREATE INDEX IF NOT EXISTS idx_org_score_filing ON organization_score (filing_id)")
+    self.cursor.execute("CREATE INDEX IF NOT EXISTS idx_org_score_model ON organization_score (model_id)")
+    self.connection.commit()
 
   def get_model_id(self, version: int = 1) -> int:
     row = self.cursor.execute(
@@ -139,11 +168,13 @@ class ScoreDatabase(Database):
       qmarks = ",".join("?" * len(model_ids))
       self.cursor.execute(
         f"DELETE FROM organization_score WHERE model_id IN ({qmarks}) "
-        f"AND filing_id IN (SELECT uuid FROM filing WHERE organization_id = ?)",
+        f"AND filing_id IN (SELECT filing_id FROM filing WHERE organization_id = ?)",
         (*model_ids, ein))
     for filing_uuid, model_id, total, factors in results:
+      # results carry the public uuid; resolve to the integer filing_id.
       self.cursor.execute(
-        "INSERT INTO organization_score (filing_id, model_id, total_score) VALUES (?, ?, ?)",
+        "INSERT INTO organization_score (filing_id, model_id, total_score) "
+        "VALUES ((SELECT filing_id FROM filing WHERE uuid = ?), ?, ?)",
         (filing_uuid, model_id, total))
       score_id = self.cursor.lastrowid
       if factors:
@@ -182,9 +213,12 @@ class ScoreDatabase(Database):
     return row[0] if row else 0.0
 
   def create_score(self, filing_id: str, model_version: int = 1) -> int:
+    """``filing_id`` is the public filing uuid; resolved to the integer
+    filing.filing_id that organization_score stores."""
     model_id = self.get_model_id(model_version)
     self.cursor.execute(
-      "INSERT INTO organization_score (filing_id, model_id) VALUES (?, ?)",
+      "INSERT INTO organization_score (filing_id, model_id) "
+      "VALUES ((SELECT filing_id FROM filing WHERE uuid = ?), ?)",
       (filing_id, model_id)
     )
     self.connection.commit()
@@ -215,7 +249,7 @@ class ScoreDatabase(Database):
       SELECT os.score_id, sm.version, f.uuid, f.year, os.total_score, os.scored_at
       FROM organization_score os
       JOIN score_model sm ON sm.model_id = os.model_id
-      JOIN filing f ON f.uuid = os.filing_id
+      JOIN filing f ON f.filing_id = os.filing_id
       WHERE f.organization_id = ?
       ORDER BY f.year DESC, os.scored_at DESC
       """,
@@ -234,7 +268,7 @@ class ScoreDatabase(Database):
       SELECT os.score_id, sm.version, os.total_score, os.scored_at
       FROM organization_score os
       JOIN score_model sm ON sm.model_id = os.model_id
-      JOIN filing f ON f.uuid = os.filing_id
+      JOIN filing f ON f.filing_id = os.filing_id
       WHERE f.organization_id = ? AND f.year = ?
       ORDER BY sm.version
       """,
@@ -246,8 +280,11 @@ class ScoreDatabase(Database):
     ]
 
   def get_score_by_filing(self, filing_id: str) -> dict | None:
+    """``filing_id`` is the public filing uuid; resolved to the integer key."""
     row = self.cursor.execute(
-      "SELECT score_id FROM organization_score WHERE filing_id = ? ORDER BY scored_at DESC LIMIT 1",
+      "SELECT score_id FROM organization_score "
+      "WHERE filing_id = (SELECT filing_id FROM filing WHERE uuid = ?) "
+      "ORDER BY scored_at DESC LIMIT 1",
       (filing_id,)
     ).fetchone()
     if not row:
@@ -260,7 +297,7 @@ class ScoreDatabase(Database):
       """
       SELECT os.score_id
       FROM organization_score os
-      JOIN filing f ON f.uuid = os.filing_id
+      JOIN filing f ON f.filing_id = os.filing_id
       JOIN score_model sm ON sm.model_id = os.model_id
       WHERE f.organization_id = ? AND f.year = ? AND sm.version = ?
       ORDER BY os.scored_at DESC LIMIT 1
@@ -274,7 +311,7 @@ class ScoreDatabase(Database):
       """
       SELECT os.score_id
       FROM organization_score os
-      JOIN filing f ON f.uuid = os.filing_id
+      JOIN filing f ON f.filing_id = os.filing_id
       WHERE f.organization_id = ? AND f.year = ?
       ORDER BY os.scored_at DESC LIMIT 1
       """,
@@ -286,10 +323,9 @@ class ScoreDatabase(Database):
 
   # ── ingest data management (purge) ──────────────────────────────────────
   # These delete stored filing data and live here (rather than on the filing
-  # concern) because removing a filing must also remove its scores:
-  # organization_score.filing_id references filing.uuid with NO ON DELETE
-  # CASCADE, so the scores are deleted first; reported_data DOES cascade off
-  # filing.filing_id, so it goes automatically when the filing rows are deleted.
+  # concern) because they also count/remove scores. Both organization_score and
+  # reported_data now reference filing.filing_id with ON DELETE CASCADE, so
+  # deleting the filing rows removes both automatically — no manual ordering.
 
   _PURGE_WHERE = "zip_filename IS NOT NULL AND zip_filename LIKE ? ESCAPE '\\'"
 
@@ -316,15 +352,13 @@ class ScoreDatabase(Database):
       f"(SELECT filing_id FROM filing WHERE {where})", params).fetchone()[0]
     s = self.cursor.execute(
       f"SELECT COUNT(*) FROM organization_score WHERE filing_id IN "
-      f"(SELECT uuid FROM filing WHERE {where})", params).fetchone()[0]
+      f"(SELECT filing_id FROM filing WHERE {where})", params).fetchone()[0]
     return {"filings": f, "values": v, "scores": s}
 
   def _purge(self, where: str, params: tuple) -> dict:
     counts = self._purge_counts(where, params)
-    self.cursor.execute(
-      f"DELETE FROM organization_score WHERE filing_id IN "
-      f"(SELECT uuid FROM filing WHERE {where})", params)
-    self.cursor.execute(f"DELETE FROM filing WHERE {where}", params)  # reported_data cascades
+    # reported_data AND organization_score both cascade off filing.filing_id.
+    self.cursor.execute(f"DELETE FROM filing WHERE {where}", params)
     self.connection.commit()
     return counts
 
@@ -345,7 +379,7 @@ class ScoreDatabase(Database):
              os.total_score, os.scored_at, sm.model_type, sm.scoring_mode
       FROM organization_score os
       JOIN score_model sm ON sm.model_id = os.model_id
-      JOIN filing f ON f.uuid = os.filing_id
+      JOIN filing f ON f.filing_id = os.filing_id
       WHERE os.score_id = ?
       """,
       (score_id,)

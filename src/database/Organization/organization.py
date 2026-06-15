@@ -28,10 +28,16 @@ class OrganizationDatabase(Database):
     self._migrate_schema()
     self._ensure_search_index()
 
+  # Foreign-address columns added to the shared address table (the appearance
+  # graph layer + foreign filer addresses need them; US rows leave them NULL).
+  _ADDRESS_EXTRA_COLS = ('address_kind', 'street2', 'province', 'country_code', 'foreign_postal')
+
   def _migrate_schema(self) -> None:
     """Relax a legacy strict ``address`` table (NOT NULL columns + a state FK)
-    to the nullable, FK-free schema partial addresses need. The address table
-    has never been populated, so recreating it is safe."""
+    to the nullable, FK-free schema partial addresses need, and add the
+    foreign-address columns to legacy tables that predate them. Additive: the
+    ``uuid`` PK and existing US columns are untouched, so org joins / the bulk
+    flush keep working unchanged."""
     info = self.cursor.execute("PRAGMA table_info(address)").fetchall()
     # table_info cols: (cid, name, type, notnull, dflt_value, pk)
     strict = any(c[1] in ('street', 'city', 'state_code', 'zipcode') and c[3] == 1 for c in info)
@@ -39,7 +45,12 @@ class OrganizationDatabase(Database):
       self.cursor.execute("DROP TABLE address")
       self.cursor.execute(
         "CREATE TABLE address (uuid CHARACTER(36) PRIMARY KEY, street TEXT, "
-        "city TEXT, state_code CHARACTER(2), zipcode TEXT)")
+        "city TEXT, state_code CHARACTER(2), zipcode TEXT, address_kind TEXT, "
+        "street2 TEXT, province TEXT, country_code TEXT, foreign_postal TEXT)")
+    cols = {c[1] for c in self.cursor.execute("PRAGMA table_info(address)").fetchall()}
+    for col in self._ADDRESS_EXTRA_COLS:
+      if col not in cols:
+        self.cursor.execute(f"ALTER TABLE address ADD COLUMN {col} TEXT")
     self.cursor.execute("CREATE INDEX IF NOT EXISTS idx_address_state ON address (state_code)")
     self.cursor.execute("CREATE INDEX IF NOT EXISTS idx_address_city ON address (city)")
     self.connection.commit()
@@ -195,24 +206,27 @@ class OrganizationDatabase(Database):
             "organizations": [self._row(r) for r in rows]}
 
   def list_states(self) -> list[dict]:
-    """Distinct states present in stored addresses, named from the `state`
-    reference list — the source for the state-search dropdown."""
+    """Distinct states present in ORG FILER addresses, named from the `state`
+    reference list — the source for the state-search dropdown. Joined through
+    organization so the shared address table's appearance (grantee) addresses
+    don't leak into the filer-location dropdown."""
     rows = self.cursor.execute(
-      "SELECT a.state_code, s.name FROM (SELECT DISTINCT state_code FROM address "
-      "WHERE state_code IS NOT NULL) a LEFT JOIN state s ON s.code = a.state_code "
-      "ORDER BY a.state_code").fetchall()
+      "SELECT a.state_code, s.name FROM (SELECT DISTINCT a.state_code FROM address a "
+      "JOIN organization o ON o.business_address_id = a.uuid WHERE a.state_code IS NOT NULL) a "
+      "LEFT JOIN state s ON s.code = a.state_code ORDER BY a.state_code").fetchall()
     return [{"code": r[0], "name": r[1]} for r in rows]
 
   def list_cities(self, state: str | None = None) -> list[str]:
-    """Distinct cities present in stored addresses (optionally within one state)
-    — the source for the city-search dropdown."""
+    """Distinct cities present in ORG FILER addresses (optionally within one
+    state) — the source for the city-search dropdown. Joined through organization
+    so appearance addresses in the shared table don't leak in."""
+    base = ("SELECT DISTINCT a.city FROM address a "
+            "JOIN organization o ON o.business_address_id = a.uuid WHERE a.city IS NOT NULL")
     if state:
       rows = self.cursor.execute(
-        "SELECT DISTINCT city FROM address WHERE city IS NOT NULL AND state_code = ? "
-        "ORDER BY city", (state.strip().upper(),)).fetchall()
+        base + " AND a.state_code = ? ORDER BY a.city", (state.strip().upper(),)).fetchall()
     else:
-      rows = self.cursor.execute(
-        "SELECT DISTINCT city FROM address WHERE city IS NOT NULL ORDER BY city").fetchall()
+      rows = self.cursor.execute(base + " ORDER BY a.city").fetchall()
     return [r[0] for r in rows]
 
   def get_organization(self, ein: str) -> dict | None:

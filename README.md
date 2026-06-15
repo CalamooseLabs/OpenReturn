@@ -24,4 +24,6 @@ A machine-readable **OpenAPI 3.1** spec is committed at [`openapi.json`](openapi
 | [Testing](docs/development/testing.md) | Running tests, coverage |
 | [Architecture](docs/development/architecture.md) | Class design, internals, non-obvious details |
 
-The docs include mermaid diagrams (architecture, database schema, ingest/scoring workflows) that render on GitHub. To populate the repository's **Wiki** from these docs (the wiki is a separate `…​.wiki.git` repo), the dev shell provides `publish-wiki <repo>.wiki.git`, which copies the docs pages into the wiki and pushes. `docs/` stays the single source of truth — don't hand-edit the wiki.
+The docs render on GitHub as-is, including the mermaid diagrams (architecture, database schema, ingest/scoring workflows). They are also published to the project's **[Wiki](https://github.com/CalamooseLabs/OpenReturn/wiki)** (a separate `…​.wiki.git` repo). `docs/` stays the single source of truth — don't hand-edit the wiki.
+
+The dev-shell command `publish-wiki [<repo>.wiki.git]` runs `tools/build_wiki.py`, which transforms the repo-friendly docs into a wiki: it flattens the nested pages into the wiki's flat namespace, rewrites the relative `.md` links to wiki page slugs, drops the redundant per-page title (the wiki shows the filename as the title), generates `_Sidebar.md`/`_Footer.md` navigation, validates every internal link and anchor, and pushes.

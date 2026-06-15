@@ -1,5 +1,9 @@
 # OpenReturn Documentation
 
+**OpenReturn** is an IRS Form 990 parser and JSON REST API. It ingests Form 990 XML filings (990, 990-EZ, 990-N, 990-PF, 990-T), extracts field values via XPath into SQLite, and serves organizations, filings, and financial-health scores over HTTP.
+
+New here? Install with **[Installation & Setup](install.md)**, load data with **[Ingest & Upload](ingest.md)**, then explore the **[API Reference](api.md)**. The machine-readable [OpenAPI 3.1 spec](../openapi.json) is the source of truth for integrators.
+
 | Doc | Contents |
 |-----|----------|
 | [Installation & Setup](install.md) | Dev environment, running locally, building, ingest CLI |

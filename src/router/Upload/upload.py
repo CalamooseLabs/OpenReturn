@@ -10,6 +10,7 @@ from pathlib import Path
 from router import Router
 from database import OpenReturnDB
 from parser.IRS990 import IRS990Parser
+from parser.groups import extract_groups
 from unzipper import MemberReader
 
 # ---------------------------------------------------------------------------
@@ -119,6 +120,7 @@ def _parse_xml_task(task: tuple) -> dict:
       "year":         int(year),
       "form_code":    form_code,
       "values":       values,
+      "groups":       extract_groups(root),
     }
   except Exception as exc:
     return {"file": filename, "zip_filename": zip_filename,
@@ -185,6 +187,7 @@ class UploadRouter(Router):
                                       xml_filename=filename, zip_filename=zip_filename)
 
     self.db.reported_data.store_reported_data(filing_id, values)
+    self.db.appearances.store_filing_graph(filing_id, extract_groups(parser.root))
 
     return {
       "file": filename,

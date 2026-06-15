@@ -578,7 +578,7 @@ class TestFlushZip(unittest.TestCase):
 
     def test_inserts_filing(self):
         pending_orgs = [("111111111", "Alpha", None)]
-        pending_filings = [(1, str(uuid.uuid4()), 2023, "111111111", "990", "f.xml", "z.zip")]
+        pending_filings = [(1, str(uuid.uuid4()), 2023, "111111111", "990", None, "f.xml", "z.zip")]
         ingest_mod._flush_zip(self.db, pending_orgs, [], pending_filings, [], {})
         row = self.db.cursor.execute(
             "SELECT uuid FROM filing WHERE organization_id = ?", ("111111111",)
@@ -588,7 +588,7 @@ class TestFlushZip(unittest.TestCase):
     def test_inserts_reported_data(self):
         pre_id = 1
         pending_orgs = [("111111111", "Alpha", None)]
-        pending_filings = [(pre_id, str(uuid.uuid4()), 2023, "111111111", "990", "f.xml", "z.zip")]
+        pending_filings = [(pre_id, str(uuid.uuid4()), 2023, "111111111", "990", None, "f.xml", "z.zip")]
         pending_data = [(pre_id, self.field_id, "testval")]
         ingest_mod._flush_zip(self.db, pending_orgs, [], pending_filings, pending_data, {})
         count = self.db.cursor.execute(
@@ -605,7 +605,7 @@ class TestFlushZip(unittest.TestCase):
         ).fetchone()[0]
         pre_id = 999999
         pending_orgs = [("111111111", "Alpha", None)]
-        pending_filings = [(pre_id, str(uuid.uuid4()), 2023, "111111111", "990", "f.xml", "z.zip")]
+        pending_filings = [(pre_id, str(uuid.uuid4()), 2023, "111111111", "990", None, "f.xml", "z.zip")]
         pending_data = [(pre_id, self.field_id, "value")]
         ingest_mod._flush_zip(self.db, pending_orgs, [], pending_filings, pending_data, {})
         count = self.db.cursor.execute(
@@ -627,7 +627,7 @@ class TestFlushZip(unittest.TestCase):
         # Flush 1: filing collides → remap recorded in id_remap.
         ingest_mod._flush_zip(
             self.db, [("111111111", "Alpha", None)], [],
-            [(pre_id, str(uuid.uuid4()), 2023, "111111111", "990", "f.xml", "z.zip")],
+            [(pre_id, str(uuid.uuid4()), 2023, "111111111", "990", None, "f.xml", "z.zip")],
             [(pre_id, self.field_id, "v1")], id_remap,
         )
         # Flush 2: no new filing, but more data for the same pre_id.

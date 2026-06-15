@@ -51,7 +51,7 @@ graph TD
 
 ### Schema (entity-relationship)
 
-The 990 form structure (`form → part → section → line → field`) is reference data; `organization`, `filing`, and `reported_data` are the ingested data; the `score_*` tables hold scoring models and results. `reported_data.filing_id` references the integer `filing.filing_id`, while `organization_score.filing_id` references the public `filing.uuid`.
+The 990 form structure (`form → part → section → line → field`) is reference data; `organization`, `filing`, and `reported_data` are the ingested data; the `score_*` tables hold scoring models and results. Both `reported_data.filing_id` and `organization_score.filing_id` reference the integer `filing.filing_id` (with `ON DELETE CASCADE`); the public `filing.uuid` is the external/API identifier only.
 
 ```mermaid
 erDiagram
@@ -65,7 +65,7 @@ erDiagram
   FORM ||--o{ FILING : "form_code"
   MODEL_TYPE ||--o{ SCORE_MODEL : categorizes
   SCORE_MODEL ||--o{ SCORE_FACTOR : defines
-  FILING ||--o{ ORGANIZATION_SCORE : "scored (uuid)"
+  FILING ||--o{ ORGANIZATION_SCORE : "scored"
   SCORE_MODEL ||--o{ ORGANIZATION_SCORE : under
   ORGANIZATION_SCORE ||--o{ ORGANIZATION_SCORE_FACTOR : "breaks down"
   SCORE_FACTOR ||--o{ ORGANIZATION_SCORE_FACTOR : results
@@ -115,7 +115,7 @@ erDiagram
   }
   ORGANIZATION_SCORE {
     int score_id PK
-    string filing_id FK
+    int filing_id FK
     int model_id FK
     real total_score
   }
@@ -162,9 +162,9 @@ Connection lifecycle — `commit`/`close`/`begin_bulk_load`/`end_bulk_load` — 
 
 **Standalone concerns** (`db.keys`, `db.ingest`, `db.migrations`) have no FKs to the rest, but still share the one connection. The 990 data graph (`db.meta`'s form schema + `db.orgs`/`db.filings`/`db.reported_data`) and `db.scores` are FK-linked and JOIN across each other — which is why a single file/connection is required (separate databases would break joins/FKs/transactions).
 
-**Scoring** (`db.scores`, `src/database/Score/score.py`): a model declares a `model_type` (seeded category) and a `scoring_mode` — **computed** (formula factors) or **manual** (graded by a person via `POST /scores/grade`, with a `manual_scale` + `comment`). `ScoringEngine.calculate` rejects manual models; `grade()` normalizes per `manual_scale` and recomputes the total. The purge helpers (`delete_filings_by_zip`/`delete_all_filings`) live on `db.scores` because deleting a filing must first delete its scores (`organization_score.filing_id → filing.uuid` has no cascade; `reported_data` does cascade).
+**Scoring** (`db.scores`, `src/database/Score/score.py`): a model declares a `model_type` (seeded category) and a `scoring_mode` — **computed** (formula factors) or **manual** (graded by a person via `POST /scores/grade`, with a `manual_scale` + `comment`). `ScoringEngine.calculate` rejects manual models; `grade()` normalizes per `manual_scale` and recomputes the total. The purge helpers (`delete_filings_by_zip`/`delete_all_filings`) live on `db.scores` because they also count scores for the removal summary; the deletes themselves are just `DELETE FROM filing` — both `organization_score` and `reported_data` reference the integer `filing.filing_id` with `ON DELETE CASCADE`.
 
-**Filing keys**: `filing` has an integer `filing_id` PRIMARY KEY (rowid) and a separate `uuid UNIQUE`. **`uuid` is the public/API identifier** (filing responses, lookups, and `organization_score.filing_id` all use it). The large `reported_data` table references the integer `filing_id` — an 8-byte int rather than a 36-char uuid on ~190M rows roughly halves the DB and speeds inserts/index rebuild. `store_reported_data`/`get_reported_data` take the public uuid and resolve it internally; the bulk ingest path assigns integer ids directly.
+**Filing keys**: `filing` has an integer `filing_id` PRIMARY KEY (rowid) and a separate `uuid UNIQUE`. **`uuid` is the public/API identifier** (filing responses and lookups use it). All filing children — `reported_data`, `organization_score`, and the graph tables (`party_appearance`/edges) — reference the integer `filing_id` (an 8-byte int rather than a 36-char uuid on ~190M rows roughly halves the DB and speeds inserts/index rebuild); the public uuid is resolved at the API boundary. `store_reported_data`/`get_reported_data` take the public uuid and resolve it internally; the bulk ingest path assigns integer ids directly.
 
 ---
 
@@ -325,4 +325,4 @@ All commands are dispatched through `src/cli.py` (the unified `openreturn` binar
 
 `cmd_init` opens the database (triggering the `sql/populate/` files on first run via `populate_guard="form"`), prints form/field counts, and closes. `cmd_migrate` discovers `.sql` files in `src/database/Migration/sql/migrations/`, compares against the `migration` tracking table, and applies anything pending in filename order. `cmd_reset` deletes the DB files after a typed confirmation, refusing while a background ingest holds the database open.
 
-`cmd_ingest` also fronts ingested-archive management: `--ingested` lists the `ingested_zip` table; `--forget PATTERN`/`--forget-all` remove tracking records only (re-ingestable); `--purge PATTERN`/`--purge-all` delete stored filing data (filings → `reported_data` cascade, plus scores deleted first since `organization_score` has no cascade). `--background` double-forks via `src/daemon.py` (PID file + log file), and `--stop` sets a cooperative stop flag (SIGTERM) so the ingest loop breaks at an archive boundary and still runs the normal index-rebuild/checkpoint finalize. `--schedule WHEN` waits until a parsed time before ingesting (relative `+30m` / clock `HH:MM` / absolute `YYYY-MM-DD HH:MM`), interruptible by `--stop`. `--restart-server` stops the single-instance server (recorded in `server.pid` by `cmd_serve`) before the run and relaunches it detached afterward; it is skipped when the server is systemd-managed. `cmd_serve` itself refuses to start a second instance while `server.pid` is live and handles SIGTERM as a clean shutdown (removing the PID file), so an external stop or `systemctl stop` is graceful. `status.py` opens the DB with a raw read connection (never running setup/populate), so it reports a clean snapshot even when an ingest holds the exclusive lock (shown as *locked*).
+`cmd_ingest` also fronts ingested-archive management: `--ingested` lists the `ingested_zip` table; `--forget PATTERN`/`--forget-all` remove tracking records only (re-ingestable); `--purge PATTERN`/`--purge-all` delete stored filing data (`DELETE FROM filing`; `reported_data`, `organization_score`, and the graph tables all cascade off `filing.filing_id`). `--background` double-forks via `src/daemon.py` (PID file + log file), and `--stop` sets a cooperative stop flag (SIGTERM) so the ingest loop breaks at an archive boundary and still runs the normal index-rebuild/checkpoint finalize. `--schedule WHEN` waits until a parsed time before ingesting (relative `+30m` / clock `HH:MM` / absolute `YYYY-MM-DD HH:MM`), interruptible by `--stop`. `--restart-server` stops the single-instance server (recorded in `server.pid` by `cmd_serve`) before the run and relaunches it detached afterward; it is skipped when the server is systemd-managed. `cmd_serve` itself refuses to start a second instance while `server.pid` is live and handles SIGTERM as a clean shutdown (removing the PID file), so an external stop or `systemctl stop` is graceful. `status.py` opens the DB with a raw read connection (never running setup/populate), so it reports a clean snapshot even when an ingest holds the exclusive lock (shown as *locked*).

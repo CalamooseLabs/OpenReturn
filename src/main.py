@@ -39,6 +39,11 @@ _USER_TABLES: dict[str, list[str]] = {
   'reported_data':            ['value_id', 'filing_id', 'field_id', 'raw_value'],
   'organization_score':       ['score_id', 'filing_id', 'model_id', 'total_score', 'scored_at'],
   'organization_score_factor':['value_id', 'score_id', 'factor_id', 'raw_value', 'weighted_value'],
+  'party_appearance':         ['appearance_id', 'filing_id', 'group_code', 'party_kind', 'person_name', 'business_name'],
+  'person_role':              ['role_id', 'filing_id', 'appearance_id', 'title', 'reportable_comp_org'],
+  'grant_edge':               ['grant_id', 'filing_id', 'appearance_id', 'grant_kind', 'recipient_ein', 'cash_amount'],
+  'related_org':              ['related_id', 'filing_id', 'appearance_id', 'relation_kind', 'related_ein'],
+  'party':                    ['party_id', 'party_type', 'canonical_name', 'ein'],
 }
 
 

@@ -150,6 +150,12 @@ def main() -> int:
     score_p.add_argument('--version', type=int, action='append', metavar='V',
                          help='Limit to specific model version(s); repeatable (default: all computed)')
 
+    resolve_p = sub.add_parser('resolve',
+                               help='Cluster graph appearances into canonical party nodes')
+    resolve_p.add_argument('--db', default=None, help='Path to OpenReturn.db (defaults to ./OpenReturn.db)')
+    resolve_p.add_argument('--version', type=int, default=1, metavar='V',
+                           help='Resolver version to stamp on created party nodes (default: 1)')
+
     args = parser.parse_args()
 
     if args.command == 'init':
@@ -194,6 +200,10 @@ def main() -> int:
     if args.command == 'score':
         from scores import cmd_score
         return cmd_score(args)
+
+    if args.command == 'resolve':
+        from resolve import cmd_resolve
+        return cmd_resolve(args)
 
 
 if __name__ == '__main__':  # pragma: no cover

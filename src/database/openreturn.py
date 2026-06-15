@@ -1,5 +1,6 @@
 from database.base import Database
 from database.ApiKey import ApiKeyDatabase
+from database.Appearance import AppearanceDatabase
 from database.Filing import FilingDatabase
 from database.Ingest import IngestDatabase
 from database.Migration import MigrationDatabase
@@ -48,6 +49,7 @@ class OpenReturnDB(Database):
         self.ingest        = IngestDatabase(self)        # ingested_zip (standalone)
         self.migrations    = MigrationDatabase(self)     # migration tracking
         self.scores        = ScoreDatabase(self)         # score_* → filing
+        self.appearances   = AppearanceDatabase(self)    # graph: people/grants/related → filing
 
         # Shared field-metadata cache: built once here, read by reported_data.
         self._field_meta: dict[int, dict] = self.meta._build_field_meta_cache()

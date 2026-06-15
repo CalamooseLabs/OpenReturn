@@ -122,6 +122,13 @@ class TestCliDispatch(unittest.TestCase):
         self.assertEqual(result, 0)
         mock_serve.assert_called_once()
 
+    def test_resolve_dispatches_to_cmd_resolve(self):
+        mock_resolve = MagicMock(return_value=0)
+        with patch('resolve.cmd_resolve', mock_resolve), patch('cli._load_env'):
+            result = self._run(['resolve', '--version', '2'])
+        self.assertEqual(result, 0)
+        mock_resolve.assert_called_once()
+
     def test_serve_passes_host_and_port(self):
         captured = {}
 

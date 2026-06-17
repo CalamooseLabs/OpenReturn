@@ -250,10 +250,11 @@ class TestRequireDb(unittest.TestCase):
 
 class TestCmdCreate(unittest.TestCase):
 
-    def _make_args(self, name="Test Key", rate_limit=-1):
+    def _make_args(self, name="Test Key", rate_limit=-1, role="service"):
         args = MagicMock()
         args.name = name
         args.rate_limit = rate_limit
+        args.role = role
         return args
 
     def test_prints_key_info_and_returns_zero(self):
@@ -264,7 +265,7 @@ class TestCmdCreate(unittest.TestCase):
             with contextlib.redirect_stdout(buf):
                 result = keys_mod.cmd_create(self._make_args())
         self.assertEqual(result, 0)
-        mock_db.keys.create_api_key.assert_called_once_with("Test Key", rate_limit=-1)
+        mock_db.keys.create_api_key.assert_called_once_with("Test Key", rate_limit=-1, role="service")
         mock_db.close.assert_called_once()
 
     def test_output_contains_created(self):

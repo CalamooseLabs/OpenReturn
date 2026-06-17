@@ -97,7 +97,8 @@ class TestIngestScoringHook(unittest.TestCase):
             org = db.orgs.get_organization("123456789")
             self.assertIsNotNone(org)
             self.assertEqual(org["address"], {"street": "1 Main St", "city": "Austin",
-                                              "state": "TX", "zip": "78701"})
+                                              "state": "TX", "zip": "78701",
+                                              "county_fips": None, "county_name": None})
             # normalized: the data lives in the address table, linked by EIN
             n = db.cursor.execute("SELECT COUNT(*) FROM address WHERE uuid = '123456789'").fetchone()[0]
             self.assertEqual(n, 1)

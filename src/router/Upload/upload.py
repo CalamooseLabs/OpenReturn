@@ -269,11 +269,11 @@ class UploadRouter(Router):
     return results
 
   def _register_routes(self):
-    @self.get('')
+    @self.get('', permission='upload:write')
     def upload_form(query_params: dict[str, list[str]], body: Any, headers: HTTPMessage):
       return self.render_template('upload.html', prefix=self.prefix)
 
-    @self.post('')
+    @self.post('', permission='upload:write')
     def handle_upload(query_params: dict[str, list[str]], body: Any, headers: HTTPMessage):
       if not isinstance(body, bytes):
         return {"error": "Invalid upload"}
@@ -327,3 +327,49 @@ class UploadRouter(Router):
           return {"error": "Invalid ZIP file"}
 
       return {"error": "No ZIP file found in upload"}
+
+    @self.post('/pdf', permission='upload:write')
+    def handle_pdf_upload(query_params: dict[str, list[str]], body: Any, headers: HTTPMessage):
+      """OCR a 990 PDF into confidence-scored financial observations. Query params
+      ein and year identify the org-year (a PDF doesn't reliably self-identify).
+      Body: multipart/form-data with the PDF file."""
+      import ocr as ocr_mod
+      if not ocr_mod.ocr_available():
+        return {"error": "OCR engine unavailable on this server (tesseract/pdftoppm)"}
+      ein = self._qp(query_params, 'ein')
+      year, yerr = self._qp_int_or_error(query_params, 'year', field='year')
+      if not ein or year is None:
+        return yerr or {"error": "ein and year query params are required"}
+      if not isinstance(body, bytes):
+        return {"error": "Invalid upload"}
+      content_type = headers.get('Content-Type', '')
+      if 'boundary=' not in content_type:
+        return {"error": "Expected multipart/form-data with a boundary"}
+      boundary = content_type.split('boundary=')[1].encode()
+      for part in body.split(b'--' + boundary):
+        if b'filename=' not in part or b'.pdf' not in part.lower():
+          continue
+        header_end = part.find(b'\r\n\r\n')
+        if header_end == -1:
+          continue
+        filename = next((ln.split('filename=')[-1].strip().strip('"')
+                         for ln in part[:header_end].decode('utf-8', 'replace').splitlines()
+                         if 'filename=' in ln), 'upload.pdf')
+        pdf_data = part[header_end + 4:]
+        if pdf_data.endswith(b'\r\n'):
+          pdf_data = pdf_data[:-2]
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=True) as tmp:
+          tmp.write(pdf_data)
+          tmp.flush()
+          try:
+            result = ocr_mod.ocr_pdf(tmp.name)
+          except Exception as e:
+            return {"error": f"OCR failed: {e}"}
+        self.db.orgs.upsert_organization(ein, ein)
+        out = ocr_mod.record_ocr(self.db, ein, year, result, filename=filename,
+                                 actor=self._principal(headers))
+        return {"status": "complete", "ein": ein, "year": year, "filename": filename,
+                "pages": result["pages"], "recorded": out["recorded"],
+                "concepts": result["concepts"]}
+      return {"error": "No PDF file found in upload"}

@@ -142,6 +142,9 @@ in
       pkgs.sql-formatter
       pkgs.ruff
       pkgs.claude-code
+      # OCR binaries for `openreturn ocr` / POST /upload/pdf (990 PDF → observations).
+      pkgs.tesseract
+      pkgs.poppler_utils
       gcommit
       runtests
       runserver

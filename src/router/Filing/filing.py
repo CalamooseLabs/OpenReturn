@@ -76,14 +76,14 @@ class FilingRouter(Router):
 
   def _register_routes(self):
 
-    @self.get('')
+    @self.get('', permission='filing:read')
     def list_filings(query_params: dict, body: Any, headers: HTTPMessage):
       ein = self._qp(query_params, 'ein')
       if not ein:
         return {"error": "missing query param: ein"}
       return {"filings": self.db.filings.list_filings(ein)}
 
-    @self.get('/detail')
+    @self.get('/detail', permission='filing:read')
     def get_filing(query_params: dict, body: Any, headers: HTTPMessage):
       filing_id = self._qp(query_params, 'filing_id')
       if not filing_id:
@@ -93,7 +93,7 @@ class FilingRouter(Router):
         return {"error": f"filing not found: {filing_id}"}
       return filing
 
-    @self.post('')
+    @self.post('', permission='filing:write')
     def create_filing(query_params: dict, body: Any, headers: HTTPMessage):
       data, err = self._require_fields(body, 'ein', 'year', 'form_code')
       if err:
@@ -105,7 +105,7 @@ class FilingRouter(Router):
         return {"error": str(e)}
       return {"filing_id": filing_id}
 
-    @self.get('/data')
+    @self.get('/data', permission='filing:read')
     def get_reported_data(query_params: dict, body: Any, headers: HTTPMessage):
       filing_id = self._qp(query_params, 'filing_id')
       if not filing_id:
@@ -125,7 +125,7 @@ class FilingRouter(Router):
       }
       return _render(result, fmt)
 
-    @self.post('/data')
+    @self.post('/data', permission='filing:write')
     def store_reported_data(query_params: dict, body: Any, headers: HTTPMessage):
       data, err = self._require_fields(body, 'filing_id', 'values')
       if err:
@@ -140,7 +140,7 @@ class FilingRouter(Router):
         return {"error": str(e)}
       return {"filing_id": data['filing_id'], "fields_stored": len(values)}
 
-    @self.get('/lookup')
+    @self.get('/lookup', permission='filing:read')
     def lookup_filing_by_ein_year(query_params: dict, body: Any, headers: HTTPMessage):
       ein  = self._qp(query_params, 'ein')
       year = self._qp(query_params, 'year')

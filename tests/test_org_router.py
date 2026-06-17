@@ -2,7 +2,7 @@ import os
 import sys
 import sqlite3
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, ANY
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
@@ -77,14 +77,17 @@ class TestOrgRouterRegistration(unittest.TestCase):
             "/organizations",
             "/organizations/detail",
             "/organizations/full",
+            "/organizations/grants",
             "/organizations/search",
             "/organizations/states",
             "/organizations/cities",
+            "/organizations/sectors",
+            "/organizations/counties",
         }
         self.assertEqual(set(self.router.routes["GET"].keys()), expected)
 
     def test_no_unexpected_post_routes(self):
-        expected = {"/organizations", "/organizations/favorite"}
+        expected = {"/organizations", "/organizations/edit", "/organizations/favorite"}
         self.assertEqual(set(self.router.routes["POST"].keys()), expected)
 
 
@@ -114,15 +117,18 @@ class TestListOrganizations(unittest.TestCase):
 
     def test_calls_list_organizations(self):
         self._call()
-        self.db.orgs.list_organizations.assert_called_once_with(search=None, limit=50, offset=0, favorites_only=False)
+        self.db.orgs.list_organizations.assert_called_once_with(
+            search=None, limit=50, offset=0, favorites_only=False, org_type=None, grantmaker=None, sector=None)
 
     def test_favorite_param_filters(self):
         self._call(favorite="true")
-        self.db.orgs.list_organizations.assert_called_once_with(search=None, limit=50, offset=0, favorites_only=True)
+        self.db.orgs.list_organizations.assert_called_once_with(
+            search=None, limit=50, offset=0, favorites_only=True, org_type=None, grantmaker=None, sector=None)
 
     def test_favorite_param_falsey_does_not_filter(self):
         self._call(favorite="0")
-        self.db.orgs.list_organizations.assert_called_once_with(search=None, limit=50, offset=0, favorites_only=False)
+        self.db.orgs.list_organizations.assert_called_once_with(
+            search=None, limit=50, offset=0, favorites_only=False, org_type=None, grantmaker=None, sector=None)
 
     def test_empty_list_when_no_orgs(self):
         result = self._call()
@@ -204,74 +210,93 @@ class TestGetOrganization(unittest.TestCase):
 # POST /organizations
 # ---------------------------------------------------------------------------
 
-class TestUpsertOrganization(unittest.TestCase):
+class TestCreateOrganization(unittest.TestCase):
 
     def setUp(self):
         self.router, self.db = _make_router()
-        self.db.orgs.get_organization.return_value = ORG_ALPHA
+        self.db.orgs.create_org.return_value = ORG_ALPHA
 
     def _call(self, body=None):
         return _call(self.router, "POST", "/organizations", body=body)
 
-    def test_valid_body_calls_upsert(self):
+    def test_valid_body_calls_create(self):
         self._call({"ein": "111111111", "name": "Alpha Org"})
-        self.db.orgs.upsert_organization.assert_called_once_with("111111111", "Alpha Org")
+        self.db.orgs.create_org.assert_called_once()
+        args, kwargs = self.db.orgs.create_org.call_args
+        self.assertEqual(args, ("111111111", "Alpha Org"))
+        # optional fields default to None; actor is the resolved principal (None in prod
+        # for an unauthenticated/dev request — a MagicMock here, so not asserted)
+        for k in ("website", "main_email", "physical_address", "mailing_address"):
+            self.assertIsNone(kwargs[k])
+
+    def test_rich_body_forwards_fields(self):
+        self._call({"ein": "111111111", "name": "Alpha Org", "website": "x.org",
+                    "main_email": "a@x.org", "address": {"city": "Elgin"},
+                    "mailing_address": {"city": "PO Box"}})
+        _, kwargs = self.db.orgs.create_org.call_args
+        self.assertEqual(kwargs["website"], "x.org")
+        self.assertEqual(kwargs["main_email"], "a@x.org")
+        self.assertEqual(kwargs["physical_address"], {"city": "Elgin"})
+        self.assertEqual(kwargs["mailing_address"], {"city": "PO Box"})
 
     def test_valid_body_returns_org(self):
-        result = self._call({"ein": "111111111", "name": "Alpha Org"})
-        self.assertEqual(result, ORG_ALPHA)
-
-    def test_calls_get_organization_after_upsert(self):
-        self._call({"ein": "111111111", "name": "Alpha Org"})
-        self.db.orgs.get_organization.assert_called_once_with("111111111")
+        self.assertEqual(self._call({"ein": "111111111", "name": "Alpha Org"}), ORG_ALPHA)
 
     def test_missing_ein_returns_error(self):
-        result = self._call({"name": "Alpha Org"})
-        self.assertIn("error", result)
-
-    def test_missing_ein_error_names_field(self):
-        result = self._call({"name": "Alpha Org"})
-        self.assertIn("ein", result["error"])
+        self.assertIn("ein", self._call({"name": "Alpha Org"})["error"])
 
     def test_missing_name_returns_error(self):
-        result = self._call({"ein": "111111111"})
-        self.assertIn("error", result)
-
-    def test_missing_name_error_names_field(self):
-        result = self._call({"ein": "111111111"})
-        self.assertIn("name", result["error"])
+        self.assertIn("name", self._call({"ein": "111111111"})["error"])
 
     def test_string_body_returns_error(self):
-        result = self._call("not a dict")
-        self.assertIn("error", result)
+        self.assertIn("error", self._call("not a dict"))
 
     def test_none_body_returns_error(self):
-        result = self._call(None)
-        self.assertIn("error", result)
+        self.assertIn("error", self._call(None))
 
     def test_list_body_returns_error(self):
-        result = self._call([{"ein": "111111111"}])
-        self.assertIn("error", result)
+        self.assertIn("error", self._call([{"ein": "111111111"}]))
 
-    def test_integrity_error_returns_error(self):
-        self.db.orgs.upsert_organization.side_effect = sqlite3.IntegrityError("constraint")
-        result = self._call({"ein": "111111111", "name": "Alpha Org"})
-        self.assertIn("error", result)
+    def test_value_error_returns_error(self):
+        self.db.orgs.create_org.side_effect = ValueError("EIN must be 9 digits")
+        self.assertIn("error", self._call({"ein": "bad", "name": "Alpha Org"}))
 
     def test_integrity_error_does_not_raise(self):
-        self.db.orgs.upsert_organization.side_effect = sqlite3.IntegrityError("constraint")
-        self._call({"ein": "111111111", "name": "Alpha Org"})  # must not raise
+        self.db.orgs.create_org.side_effect = sqlite3.IntegrityError("constraint")
+        self.assertIn("error", self._call({"ein": "111111111", "name": "Alpha Org"}))
 
-    def test_successful_upsert_commits(self):
-        # Durability: the write is committed (the repo method does not commit
-        # itself, so the handler must, or the row is rolled back on close()).
-        self._call({"ein": "111111111", "name": "Alpha Org"})
-        self.db.commit.assert_called_once()
 
-    def test_integrity_error_does_not_commit(self):
-        self.db.orgs.upsert_organization.side_effect = sqlite3.IntegrityError("constraint")
-        self._call({"ein": "111111111", "name": "Alpha Org"})
-        self.db.commit.assert_not_called()
+class TestEditOrganization(unittest.TestCase):
+
+    def setUp(self):
+        self.router, self.db = _make_router()
+        self.db.orgs.update_org.return_value = ORG_ALPHA
+
+    def _call(self, body=None):
+        return _call(self.router, "POST", "/organizations/edit", body=body)
+
+    def test_edit_forwards_present_fields_only(self):
+        self._call({"ein": "111111111", "name": "New", "website": "w"})
+        args, kwargs = self.db.orgs.update_org.call_args
+        self.assertEqual(args[0], "111111111")
+        self.assertEqual(args[1], {"name": "New", "website": "w"})
+
+    def test_address_aliases_to_physical(self):
+        self._call({"ein": "111111111", "address": {"city": "Elgin"}})
+        _, _ = self.db.orgs.update_org.call_args
+        self.assertEqual(self.db.orgs.update_org.call_args[0][1],
+                         {"physical_address": {"city": "Elgin"}})
+
+    def test_missing_ein_returns_error(self):
+        self.assertIn("error", self._call({"name": "x"}))
+
+    def test_not_found_returns_error(self):
+        self.db.orgs.update_org.return_value = None
+        self.assertIn("error", self._call({"ein": "111111111", "name": "x"}))
+
+    def test_value_error_returns_error(self):
+        self.db.orgs.update_org.side_effect = ValueError("EIN must be 9 digits")
+        self.assertIn("error", self._call({"ein": "bad", "name": "x"}))
 
 
 # ---------------------------------------------------------------------------
@@ -411,11 +436,11 @@ class TestSetFavorite(unittest.TestCase):
 
     def test_valid_body_calls_set_favorite(self):
         self._call({"ein": "111111111", "is_favorite": True})
-        self.db.orgs.set_favorite.assert_called_once_with("111111111", True)
+        self.db.orgs.set_favorite.assert_called_once_with("111111111", True, actor=ANY)
 
     def test_unfavorite_passes_false(self):
         self._call({"ein": "111111111", "is_favorite": False})
-        self.db.orgs.set_favorite.assert_called_once_with("111111111", False)
+        self.db.orgs.set_favorite.assert_called_once_with("111111111", False, actor=ANY)
 
     def test_returns_updated_org(self):
         result = self._call({"ein": "111111111", "is_favorite": True})
@@ -427,15 +452,15 @@ class TestSetFavorite(unittest.TestCase):
 
     def test_string_true_coerced(self):
         self._call({"ein": "111111111", "is_favorite": "true"})
-        self.db.orgs.set_favorite.assert_called_once_with("111111111", True)
+        self.db.orgs.set_favorite.assert_called_once_with("111111111", True, actor=ANY)
 
     def test_string_false_coerced(self):
         self._call({"ein": "111111111", "is_favorite": "false"})
-        self.db.orgs.set_favorite.assert_called_once_with("111111111", False)
+        self.db.orgs.set_favorite.assert_called_once_with("111111111", False, actor=ANY)
 
     def test_int_one_coerced(self):
         self._call({"ein": "111111111", "is_favorite": 1})
-        self.db.orgs.set_favorite.assert_called_once_with("111111111", True)
+        self.db.orgs.set_favorite.assert_called_once_with("111111111", True, actor=ANY)
 
     def test_not_found_returns_error(self):
         self.db.orgs.set_favorite.return_value = False

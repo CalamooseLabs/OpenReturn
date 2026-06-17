@@ -60,7 +60,11 @@ NAV: list[tuple[str, list[tuple[str, str, str]]]] = [
     ]),
     ('HTTP API', [
         ('api.md',                      'API-Reference',     'API Reference'),
+        ('frontend.md',                 'Frontend-Guide',    'Frontend Integration'),
+        ('access-control.md',           'Access-Control',    'Access Control'),
         ('api-keys.md',                 'API-Keys',          'API Keys'),
+        ('financials.md',               'Financial-Data',    'Financial Data'),
+        ('foundations.md',              'Foundations',       'Foundations & Grants'),
         ('scoring/models.md',           'Scoring-Models',    'Scoring Models'),
     ]),
     ('Deployment', [

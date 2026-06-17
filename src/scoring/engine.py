@@ -77,9 +77,85 @@ _HISTORICAL_TYPES = frozenset({
     'cagr', 'historical_std_dev', 'coefficient_of_variation',
 })
 
-# The fields any scoring formula can read — the only reported_data the batch
-# loader needs to fetch per org.
-_SCORING_PATHS = frozenset(_PATHS.values())
+# The canonical financial concepts any scoring formula can read — the concept
+# codes ARE the model input keys (== the _PATHS keys). Scoring reads the *chosen*
+# (canonical) observation per (org, year, concept) from db.financials, which
+# unifies 990, audited, OCR, and manual sources. _PATHS itself is retained for the
+# 990→observation derivation and the debug source trace, not the scoring read.
+_SCORING_CONCEPTS = frozenset(_PATHS.keys())
+
+# Missing-data fallback strategies for a factor input when a year lacks its value.
+# 'none' = no fill (the historical behavior); 'value:<x>' fills a constant.
+_VALUE_PREFIX = 'value:'
+MISSING_STRATEGIES = frozenset({'none', 'newest', 'oldest', 'closest_older', 'closest_newer'})
+
+
+def valid_strategy(s) -> bool:
+    """True for a known missing-data strategy token (incl. a parseable 'value:<x>')."""
+    if s in MISSING_STRATEGIES:
+        return True
+    if isinstance(s, str) and s.startswith(_VALUE_PREFIX):
+        try:
+            float(s[len(_VALUE_PREFIX):])
+            return True
+        except ValueError:
+            return False
+    return False
+
+
+def parse_inputs(inputs, model_default=None):
+    """Split a factor's ``inputs`` (a JSON string or a list) into
+    ``(keys, policies)``: ``keys[i]`` is the plain input string (concept code /
+    ``model:<v>`` / ``factor:<name>`` / numeric literal) and ``policies[i]`` is the
+    resolved missing-data strategy (an entry-level ``missing=`` override, else the
+    model-level default, else ``'none'``). An ``inputs`` entry is either a bare
+    string (no per-input policy) or a table ``{"key": ..., "missing": ...}``. Every
+    legacy string-only consumer can call ``parse_inputs(...)[0]`` and keep operating
+    on plain strings unchanged."""
+    if isinstance(inputs, str):
+        inputs = json.loads(inputs)
+    default = model_default or 'none'
+    keys, policies = [], []
+    for entry in inputs:
+        if isinstance(entry, dict):
+            keys.append(entry.get('key'))
+            policies.append(entry.get('missing') or default)
+        else:
+            keys.append(entry)
+            policies.append(default)
+    return keys, policies
+
+
+def _pick_donor_year(series: dict, target_year: int, policy: str):
+    """Choose the donor year from ``series`` ({year: value}) for a missing
+    ``target_year`` per ``policy``: newest / oldest / closest_older / closest_newer
+    (absolute-nearest, ties → older / newer respectively). Returns None for an
+    empty series."""
+    years = list(series)
+    if not years:
+        return None
+    if policy == 'newest':
+        return max(years)
+    if policy == 'oldest':
+        return min(years)
+    older_first = policy != 'closest_newer'  # closest_older (and any default) → older
+    return min(years, key=lambda y: (abs(y - target_year), y if older_first else -y))
+
+
+class _FillCtx:
+    """Per-model missing-data fill context for one target year. ``factor_imputed`` /
+    ``factor_source_year`` are scratch written by ``_compute_factor`` and read back
+    by ``_score_model_for_filing`` immediately after each factor."""
+    __slots__ = ('concept_series', 'model_series', 'target_year', 'model_default',
+                 'factor_imputed', 'factor_source_year')
+
+    def __init__(self, concept_series, model_series, target_year, model_default):
+        self.concept_series = concept_series
+        self.model_series = model_series
+        self.target_year = target_year
+        self.model_default = model_default
+        self.factor_imputed = False
+        self.factor_source_year = None
 
 
 def _fmt_num(v) -> str:
@@ -107,7 +183,12 @@ class ScoringEngine:
         if filing is None:
             raise ValueError(f"No filing found for EIN {ein} year {year}")
 
-        vals = self._load_values(filing['fields'])
+        # Ensure this org's 990 values are mirrored into the canonical layer
+        # (idempotent), then read the chosen concept values from there.
+        self.db.financials.derive_from_990(ein)
+        # Read the chosen (canonical) financial concepts for this org-year — the
+        # unified value across 990/audited/OCR/manual sources — not raw 990 fields.
+        vals = self.db.financials.get_year_canonical_values(ein, year)
         factors = self.db.scores.get_factors(model_version)
         if not factors:
             raise ValueError(f"Score model version {model_version} has no factors")
@@ -127,17 +208,44 @@ class ScoringEngine:
         needs_history = is_composite or any(
             f['formula_type'] in _HISTORICAL_TYPES for f in sorted_factors)
         historical: dict[str, list[float]] = \
-            self.db.reported_data.get_historical_values(ein) if needs_history else {}
-        model_totals = (self._compute_dependency_totals(model_version, vals, historical)
-                        if is_composite else {})
+            self.db.financials.get_historical_values(ein) if needs_history else {}
 
-        total, factor_list = self._score_model_for_filing(
-            sorted_factors, vals, historical, model_totals)
-        factor_results = {fid: (raw, weighted) for fid, raw, weighted in factor_list}
+        # Apply missing-data fallbacks when the target model — or any model in its
+        # dependency chain — declares a policy, so an incomplete year is filled
+        # exactly as the batch path would (no calculate()/rebuild drift). When
+        # nothing has a policy this is the unchanged, byte-identical code path.
+        target_default = model.get('missing_data') if model else None
+        target_has = (isinstance(target_default, str) and target_default not in ('', 'none')) or any(
+            p != 'none' for f in sorted_factors for p in parse_inputs(f['inputs'])[1])
+        needs_fill = target_has or (is_composite and any(
+            self._model_has_policy(v)[0] for v in self._dependency_order(model_version)))
+        if needs_fill:
+            s = self._build_org_series(ein)
+            vals = s['year_vals'].get(year, vals)
+            concept_series = s['concept_series']
+            if needs_history:
+                historical = s['historical']
+            model_totals = (self._compute_dependency_totals(
+                model_version, vals, historical,
+                concept_series=concept_series, target_year=year) if is_composite else {})
+            target_fill = _FillCtx(concept_series, {}, year, target_default) if target_has else None
+            total, factor_list = self._score_model_for_filing(
+                sorted_factors, vals, historical, model_totals, fill=target_fill)
+        else:
+            model_totals = (self._compute_dependency_totals(model_version, vals, historical)
+                            if is_composite else {})
+            total, factor_list = self._score_model_for_filing(
+                sorted_factors, vals, historical, model_totals)
+
+        # Per-factor (raw, weighted) as before; the score-level `imputed` flag marks
+        # whether any input was filled. (Per-factor donor years are recorded by the
+        # batch path / history, not this single-score on-demand path.)
+        score_imputed = any(len(fr) > 3 and fr[3] for fr in factor_list)
+        factor_results = {fr[0]: (fr[1], fr[2]) for fr in factor_list}
 
         score_id = self.db.scores.create_score(filing['filing_id'], model_version)
         self.db.scores.store_factor_values(score_id, factor_results)
-        self.db.scores.finalize_score(score_id, total)
+        self.db.scores.finalize_score(score_id, total, imputed=score_imputed)
 
         return self.db.scores.get_score(score_id)
 
@@ -178,6 +286,9 @@ class ScoringEngine:
             if not factors:
                 continue
             sorted_factors = self._topo_sort(factors)
+            model_default = m.get('missing_data')
+            has_policy = bool(model_default and model_default != 'none') or any(
+                p != 'none' for f in sorted_factors for p in parse_inputs(f['inputs'])[1])
             prepared_by_version[m['version']] = {
                 "version":       m['version'],
                 "model_id":      m['model_id'],
@@ -185,38 +296,93 @@ class ScoringEngine:
                 "factors":       sorted_factors,
                 "needs_history": any(f['formula_type'] in _HISTORICAL_TYPES for f in sorted_factors),
                 "deps":          self._model_refs(sorted_factors),
+                "missing_data":  model_default,
+                "has_policy":    has_policy,
             }
         return [prepared_by_version[v] for v in self._order_versions(prepared_by_version)]
 
+    def _build_org_series(self, ein: str, scoring_concepts=_SCORING_CONCEPTS) -> dict:
+        """Load an org's per-year canonical concept values + flat real historical,
+        and derive the {concept: {year: value}} series the fill logic indexes.
+        ``year_to_fid`` maps each real year to its representative integer filing_id
+        (filings are ordered real-before-FIN, so the first per year wins); the
+        score row stores that integer directly."""
+        filings, vals_by_fid, historical = \
+            self.db.financials.get_org_scoring_data(ein, scoring_concepts)
+        year_to_fid: dict[int, int] = {}
+        year_vals: dict[int, dict[str, float]] = {}
+        for fil in filings:
+            y = fil['year']
+            year_to_fid.setdefault(y, fil['filing_id'])
+            year_vals.setdefault(y, vals_by_fid.get(fil['filing_id'], {}))
+        concept_series: dict[str, dict[int, float]] = {}
+        for y, vals in year_vals.items():
+            for c, v in vals.items():
+                concept_series.setdefault(c, {})[y] = v
+        return {"filings": filings, "vals_by_fid": vals_by_fid, "historical": historical,
+                "year_vals": year_vals, "year_to_fid": year_to_fid,
+                "concept_series": concept_series, "real_years": sorted(year_vals)}
+
     def score_org(self, ein: str, prepared_models: list[dict],
-                  scoring_paths=_SCORING_PATHS) -> int:
-        """(Re)compute and store every prepared model's score for every filing of
-        one org, in a single bulk replace (no commit — the caller batches). The
-        org's values + history load once and are reused across its years/models.
-        Composites read base-model totals for the same filing, so models run in
-        dependency order while a per-filing {version: total} map accumulates.
-        Returns the number of scores written."""
+                  scoring_concepts=_SCORING_CONCEPTS) -> int:
+        """(Re)compute and store every prepared model's score for one org in a
+        single bulk replace (no commit — the caller batches). Returns the number of
+        scores written.
+
+        Two scoring shapes share a per-year ``model_series`` ({version: {year:
+        total}}) so composites/super-composites read child totals by year:
+
+        * **No missing-data policy** (every existing model): scored exactly as
+          before — one row per real *filing* (so a multi-filing year keeps its rows),
+          byte-identical totals. The equality invariant rests on this branch.
+        * **Has a policy**: scored once per year across ``[earliest .. latest]`` of
+          the org's real data, imputing missing inputs per their strategy; a fully
+          missing interior year gets a synthetic FIN anchor. Imputed rows/factors
+          are flagged with the donor year."""
         if not prepared_models:
             return 0
-        filings, vals_by_uuid, historical = \
-            self.db.reported_data.get_org_scoring_data(ein, scoring_paths)
-        if not filings:
+        # NOTE: 990 values are mirrored into the canonical layer by the caller in
+        # BULK (rebuild() runs db.financials.derive_bulk once up front) — a set-based
+        # pass that replaced the old per-org derive_from_990 here, which profiling
+        # showed was ~98% of rebuild time. The single-filing calculate()/debug()
+        # paths still self-derive per org.
+        s = self._build_org_series(ein, scoring_concepts)
+        if not s['real_years']:
             return 0
-        # Per-filing {version: total}; a composite's model:<v> inputs find their
-        # child totals here because prepared_models is dependency-ordered.
-        totals_by_filing: dict[str, dict[int, float | None]] = {
-            fil['filing_id']: {} for fil in filings}
+        min_y, max_y = s['real_years'][0], s['real_years'][-1]
+        model_series: dict[int, dict[int, float | None]] = {}
+        # {version: {years that were imputed}} — so a composite/super-composite that
+        # reads an imputed child total (a present-but-filled value) is itself flagged
+        # imputed, propagating the estimate up the chain.
+        imputed_years: dict[int, set] = {}
         results = []
         for m in prepared_models:
-            hist = historical if m['needs_history'] else {}
-            for fil in filings:
-                fid = fil['filing_id']
-                vals = vals_by_uuid.get(fid, {})
-                model_totals = totals_by_filing[fid]
-                total, factor_results = self._score_model_for_filing(
-                    m['factors'], vals, hist, model_totals)
-                model_totals[m['version']] = total
-                results.append((fid, m['model_id'], total, factor_results))
+            hist = s['historical'] if m['needs_history'] else {}
+            ms = model_series.setdefault(m['version'], {})
+            if not m['has_policy']:
+                # Exact pre-feature path: one row per real filing.
+                for fil in s['filings']:
+                    fid, year = fil['filing_id'], fil['year']
+                    model_totals = {v: model_series.get(v, {}).get(year) for v in m['deps']}
+                    total, factor_results = self._score_model_for_filing(
+                        m['factors'], s['vals_by_fid'].get(fid, {}), hist, model_totals)
+                    ms[year] = total
+                    results.append((fid, m['model_id'], total, factor_results))
+            else:
+                # Fill path: one row per year in the org's data span.
+                for year in range(min_y, max_y + 1):
+                    model_totals = {v: model_series.get(v, {}).get(year) for v in m['deps']}
+                    fill = _FillCtx(s['concept_series'], model_series, year, m['missing_data'])
+                    total, factor_results = self._score_model_for_filing(
+                        m['factors'], s['year_vals'].get(year, {}), hist, model_totals, fill=fill)
+                    ms[year] = total
+                    imputed = any(fr[3] for fr in factor_results) or \
+                        any(year in imputed_years.get(v, ()) for v in m['deps'])
+                    if imputed:
+                        imputed_years.setdefault(m['version'], set()).add(year)
+                    fid = s['year_to_fid'].get(year) or \
+                        self.db.financials.ensure_year_anchor_filing_id(ein, year)
+                    results.append((fid, m['model_id'], total, factor_results, imputed))
         self.db.scores.replace_org_scores(ein, [m['model_id'] for m in prepared_models], results)
         return len(results)
 
@@ -232,7 +398,15 @@ class ScoringEngine:
         prepared = self._prepare_models(model_versions)
         if not prepared:
             return {"orgs": 0, "scores": 0, "models": 0}
-        eins = self.db.scores.all_eins() if eins is None else list(eins)
+        full = eins is None
+        eins = self.db.scores.all_eins() if full else list(eins)
+        # Mirror 990 → canonical financials before the scoring loop (replaces the old
+        # per-org derive inside score_org). A full corpus or a large touched-set (a big
+        # ingest) derives the WHOLE corpus in sequential filing-id batches — random
+        # per-org IO is far slower at scale, and deriving extra orgs is idempotent. A
+        # small set (score --org, a tiny ingest) scopes by org.
+        self.db.financials.derive_bulk(None if (full or len(eins) > 2000) else eins,
+                                       commit=False)
         total = len(eins)
         scores = 0
         for i, ein in enumerate(eins, 1):
@@ -258,7 +432,7 @@ class ScoringEngine:
             if name in visited:
                 return
             in_stack.add(name)
-            for inp in json.loads(name_to_factor[name]['inputs']):
+            for inp in parse_inputs(name_to_factor[name]['inputs'])[0]:
                 if inp.startswith(_FACTOR_PREFIX):
                     dep = inp[len(_FACTOR_PREFIX):]
                     if dep not in name_to_factor:
@@ -284,7 +458,7 @@ class ScoringEngine:
         other models a composite/super-composite depends on."""
         refs: set[int] = set()
         for f in factors:
-            for inp in json.loads(f['inputs']):
+            for inp in parse_inputs(f['inputs'])[0]:
                 if isinstance(inp, str) and inp.startswith(_MODEL_PREFIX):
                     try:
                         refs.add(int(inp[len(_MODEL_PREFIX):]))
@@ -294,21 +468,28 @@ class ScoringEngine:
 
     def _score_model_for_filing(self, factors: list[dict], vals: dict[str, float],
                                 historical: dict[str, list[float]],
-                                model_totals: dict[int, float | None]):
-        """Evaluate one model's (topo-sorted) factors against a single filing.
-        Returns ``(total_score, [(factor_id, raw, weighted), ...])``. ``model_totals``
-        is the ``{version: total}`` of already-scored models for this filing (for
-        ``model:<version>`` inputs); pass ``{}`` for a base model. This is the shared
-        per-(model, filing) primitive behind both calculate() and the batch path."""
+                                model_totals: dict[int, float | None], *, fill=None):
+        """Evaluate one model's (topo-sorted) factors against a single filing/year.
+        Returns ``(total_score, factor_results)``. Without ``fill`` each factor
+        result is ``(factor_id, raw, weighted)`` (the historical behavior); with a
+        ``_FillCtx`` it is ``(factor_id, raw, weighted, imputed, source_year)`` and
+        missing inputs are filled from other years per their policy. ``model_totals``
+        is the ``{version: total}`` of already-scored models for this year (for
+        ``model:<version>`` inputs); pass ``{}`` for a base model. Shared primitive
+        behind both calculate() and the batch path."""
         computed: dict[str, float | None] = {}
-        factor_results: list[tuple[int, float | None, float]] = []
+        factor_results: list = []
         total = 0.0
         for f in factors:
-            raw = self._compute_factor(f, vals, computed, historical, model_totals)
+            raw = self._compute_factor(f, vals, computed, historical, model_totals, fill=fill)
             computed[f['name']] = raw
             weighted = self._normalize(f, raw) * f['weight']
             total += weighted
-            factor_results.append((f['factor_id'], raw, weighted))
+            if fill is None:
+                factor_results.append((f['factor_id'], raw, weighted))
+            else:
+                factor_results.append((f['factor_id'], raw, weighted,
+                                       fill.factor_imputed, fill.factor_source_year))
         return total, factor_results
 
     @staticmethod
@@ -379,14 +560,35 @@ class ScoringEngine:
         visit(target_version, True)
         return order
 
+    def _model_has_policy(self, version: int):
+        """``(has_policy, model_default)`` for a model version: whether any factor
+        input (or the model-level default) carries a non-``none`` missing-data
+        strategy, and the model-level default itself."""
+        model = self.db.scores.get_model(version)
+        default = (model or {}).get('missing_data')
+        if isinstance(default, str) and default and default != 'none':
+            return True, default
+        factors = self.db.scores.get_factors(version)
+        has = any(p != 'none' for f in factors for p in parse_inputs(f['inputs'])[1])
+        return has, default
+
     def _compute_dependency_totals(self, target_version: int, vals: dict[str, float],
-                                   historical: dict[str, list[float]]) -> dict[int, float | None]:
-        """Score every model ``target_version`` depends on for a single filing,
-        returning ``{version: total}`` — the model_totals a composite's factors read."""
+                                   historical: dict[str, list[float]], *,
+                                   concept_series=None, target_year=None) -> dict[int, float | None]:
+        """Score every model ``target_version`` depends on for a single year,
+        returning ``{version: total}`` — the model_totals a composite's factors read.
+        When ``concept_series`` is given, each child with a missing-data policy fills
+        its own missing inputs for ``target_year`` (so calculate() matches the batch
+        path for an incomplete year); otherwise children score from real values only."""
         totals: dict[int, float | None] = {}
         for v in self._dependency_order(target_version):
             factors = self._topo_sort(self.db.scores.get_factors(v))
-            total, _ = self._score_model_for_filing(factors, vals, historical, totals)
+            fill = None
+            if concept_series is not None:
+                has, default = self._model_has_policy(v)
+                if has:
+                    fill = _FillCtx(concept_series, {}, target_year, default)
+            total, _ = self._score_model_for_filing(factors, vals, historical, totals, fill=fill)
             totals[v] = total
         return totals
 
@@ -417,24 +619,60 @@ class ScoringEngine:
             return float(key)
         except (ValueError, TypeError):
             pass
-        path = _PATHS.get(key)
-        return vals.get(path) if path else None
+        # vals is keyed by canonical concept code (== the model input key).
+        return vals.get(key)
+
+    def _resolve_input_filled(self, key, policy, vals, computed, model_totals, fill):
+        """Resolve one input, applying its missing-data ``policy`` when the real
+        value for the target year is absent. Returns ``(value, source_year,
+        imputed)`` — ``source_year`` is the donor year (None for a constant fill or
+        no fill). Only concept and ``model:<v>`` inputs are series-fillable; a
+        ``factor:`` ref or numeric literal is never filled (it resolves in-year)."""
+        real = self._resolve_input(key, vals, computed, model_totals)
+        if real is not None or policy == 'none':
+            return real, None, False
+        if isinstance(policy, str) and policy.startswith(_VALUE_PREFIX):
+            try:
+                return float(policy[len(_VALUE_PREFIX):]), None, True
+            except ValueError:
+                return None, None, False
+        series = None
+        if isinstance(key, str) and key.startswith(_MODEL_PREFIX):
+            try:
+                series = fill.model_series.get(int(key[len(_MODEL_PREFIX):]))
+            except (ValueError, TypeError):
+                series = None
+        elif isinstance(key, str) and not key.startswith(_FACTOR_PREFIX):
+            series = fill.concept_series.get(key)
+        if not series:
+            return None, None, False
+        # series is non-empty here, so _pick_donor_year always returns a year.
+        donor = _pick_donor_year(series, fill.target_year, policy)
+        return series[donor], donor, True
 
     def _compute_factor(self, factor: dict, vals: dict[str, float],
                         computed: dict[str, float | None] | None = None,
                         historical: dict[str, list[float]] | None = None,
-                        model_totals: dict[int, float | None] | None = None) -> float | None:
+                        model_totals: dict[int, float | None] | None = None,
+                        *, fill: '_FillCtx | None' = None) -> float | None:
         if computed is None:
             computed = {}
         if historical is None:
             historical = {}
         formula_type = factor['formula_type']
-        keys = json.loads(factor['inputs'])
+        keys, policies = parse_inputs(factor['inputs'],
+                                      fill.model_default if fill is not None else None)
+        if fill is not None:
+            # Reset per-factor scratch BEFORE the historical short-circuit so a
+            # historical factor (which never fills) clears a prior factor's flag.
+            fill.factor_imputed = False
+            fill.factor_source_year = None
 
         # --- Historical formulas ---
         if formula_type in _HISTORICAL_TYPES:
-            path = _PATHS.get(keys[0]) if keys else None
-            hist = historical.get(path, []) if path else []
+            # historical is keyed by concept code (the model input key).
+            concept = keys[0] if keys else None
+            hist = historical.get(concept, []) if concept else []
             if not hist:
                 return None
             if formula_type == 'running_average':
@@ -459,7 +697,17 @@ class ScoringEngine:
                 std_dev = math.sqrt(sum((x - mean) ** 2 for x in hist) / len(hist))
                 return std_dev / abs(mean)
 
-        inputs = [self._resolve_input(k, vals, computed, model_totals) for k in keys]
+        if fill is None:
+            inputs = [self._resolve_input(k, vals, computed, model_totals) for k in keys]
+        else:
+            inputs = []
+            for k, pol in zip(keys, policies):
+                v, sy, imp = self._resolve_input_filled(k, pol, vals, computed, model_totals, fill)
+                inputs.append(v)
+                if imp:
+                    fill.factor_imputed = True
+                    if sy is not None and fill.factor_source_year is None:
+                        fill.factor_source_year = sy
 
         # --- Fixed 2-input ---
         if formula_type == 'ratio':
@@ -558,10 +806,16 @@ class ScoringEngine:
         if filing is None:
             raise ValueError(f"No filing found for EIN {ein} year {year}")
 
+        self.db.financials.derive_from_990(ein)   # idempotent; keeps the trace accurate
         fields = filing['fields']
-        vals = self._load_values(fields)
         raw_by_path = {f['xml_path']: f.get('value')
                        for f in fields if f.get('xml_path')}
+        # Scoring reads the chosen (canonical) concept values; provenance carries
+        # the source/confidence/conflict for each concept so the trace shows where
+        # the chosen value came from.
+        vals = self.db.financials.get_year_canonical_values(ein, year)
+        provenance = {f['concept_code']: f
+                      for f in self.db.financials.get_org_financials(ein, year)['facts']}
 
         factors = self.db.scores.get_factors(model_version)
         if not factors:
@@ -574,9 +828,30 @@ class ScoringEngine:
         is_composite = (model or {}).get('model_kind', 'model') in ('composite', 'super_composite')
         needs_history = is_composite or any(
             f['formula_type'] in _HISTORICAL_TYPES for f in sorted_factors)
-        historical = self.db.reported_data.get_historical_values(ein) if needs_history else {}
-        model_totals = (self._compute_dependency_totals(model_version, vals, historical)
-                        if is_composite else {})
+        historical = self.db.financials.get_historical_values(ein) if needs_history else {}
+
+        # Mirror calculate()/score_org: when the model (or its chain) declares a
+        # missing-data policy, fill the trace's inputs from other years so the
+        # walkthrough matches the stored, filled score.
+        target_default = model.get('missing_data') if model else None
+        target_has = (isinstance(target_default, str) and target_default not in ('', 'none')) or any(
+            p != 'none' for f in sorted_factors for p in parse_inputs(f['inputs'])[1])
+        needs_fill = target_has or (is_composite and any(
+            self._model_has_policy(v)[0] for v in self._dependency_order(model_version)))
+        fill = None
+        if needs_fill:
+            series = self._build_org_series(ein)
+            vals = series['year_vals'].get(year, vals)
+            if needs_history:
+                historical = series['historical']
+            model_totals = (self._compute_dependency_totals(
+                model_version, vals, historical,
+                concept_series=series['concept_series'], target_year=year) if is_composite else {})
+            if target_has:
+                fill = _FillCtx(series['concept_series'], {}, year, target_default)
+        else:
+            model_totals = (self._compute_dependency_totals(model_version, vals, historical)
+                            if is_composite else {})
 
         source_cache: dict[str, dict | None] = {}
 
@@ -589,14 +864,18 @@ class ScoringEngine:
         traces: list[dict] = []
         total = 0.0
         for f in sorted_factors:
-            raw = self._compute_factor(f, vals, computed, historical, model_totals)
+            raw = self._compute_factor(f, vals, computed, historical, model_totals, fill=fill)
             computed[f['name']] = raw
             normalized = self._normalize(f, raw)
             weighted = normalized * f['weight']
             total += weighted
-            traces.append(self._debug_factor(
+            trace = self._debug_factor(
                 f, vals, raw_by_path, computed, historical, model_totals, source_for,
-                raw, normalized, weighted))
+                raw, normalized, weighted, provenance)
+            if fill is not None:
+                trace['imputed'] = fill.factor_imputed
+                trace['source_year'] = fill.factor_source_year
+            traces.append(trace)
 
         return {
             "ein": ein,
@@ -613,14 +892,15 @@ class ScoringEngine:
         }
 
     def _debug_factor(self, factor: dict, vals, raw_by_path, computed, historical,
-                      model_totals, source_for, raw, normalized, weighted) -> dict:
+                      model_totals, source_for, raw, normalized, weighted,
+                      provenance=None) -> dict:
         ftype = factor['formula_type']
-        keys = json.loads(factor['inputs'])
+        keys = parse_inputs(factor['inputs'])[0]
         is_hist = ftype in _HISTORICAL_TYPES
 
         variables = [
             self._describe_variable(k, vals, raw_by_path, computed, historical,
-                                    model_totals, source_for, is_hist)
+                                    model_totals, source_for, is_hist, provenance)
             for k in keys
         ]
 
@@ -640,7 +920,7 @@ class ScoringEngine:
         }
 
     def _describe_variable(self, key: str, vals, raw_by_path, computed, historical,
-                           model_totals, source_for, is_hist: bool) -> dict:
+                           model_totals, source_for, is_hist: bool, provenance=None) -> dict:
         if key.startswith(_FACTOR_PREFIX):
             name = key[len(_FACTOR_PREFIX):]
             return {"key": key, "kind": "factor", "references": name,
@@ -657,21 +937,27 @@ class ScoringEngine:
             return {"key": key, "kind": "literal", "value": float(key)}
         except (ValueError, TypeError):
             pass
+        # A canonical financial concept. Show the chosen value + its provenance
+        # (source / confidence / whether sources disagree), and — for 990-derived
+        # concepts — the originating form/part/line via the xml_path.
         path = _PATHS.get(key)
-        if path is None:
-            return {"key": key, "kind": "unknown", "value": None,
-                    "note": "not a known field key, numeric literal, factor, or model reference"}
+        prov = (provenance or {}).get(key) or {}
+        chosen = next((o for o in prov.get("observations", []) if o.get("is_canonical")), {})
         var = {
-            "key":       key,
-            "kind":      "field",
-            "xml_path":  path,
-            "value":     vals.get(path),
-            "raw_value": raw_by_path.get(path),
-            "present":   path in vals,
-            "source":    source_for(path),
+            "key":         key,
+            "kind":        "concept",
+            "concept":     key,
+            "xml_path":    path,
+            "value":       vals.get(key),
+            "raw_value":   raw_by_path.get(path) if path else None,
+            "present":     key in vals,
+            "source":      source_for(path) if path else None,
+            "canonical_source": chosen.get("source_code"),
+            "confidence":  chosen.get("confidence"),
+            "conflict":    prov.get("conflict", False),
         }
         if is_hist:
-            var["series"] = historical.get(path, [])
+            var["series"] = historical.get(key, [])
         return var
 
     def _render_formula(self, ftype: str, keys: list, variables: list, raw) -> dict:

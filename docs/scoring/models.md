@@ -43,6 +43,27 @@ running average becomes a 4-year one across the board. A recompute replaces the
 org's existing scores for the targeted models (manual scores are left untouched).
 Manual models are skipped (they are graded, not computed).
 
+## Ranking (leaderboards)
+
+Because scores are stored, organizations can be **ranked** by any model's
+`total_score` — for any base model, composite, or super-composite alike (they all
+write `total_score`). Ranking is **query-time**: there are no stored ranks to keep
+fresh, just two endpoints over the existing scores.
+
+- **`GET /scores/leaderboard?model=&year=&…`** — a ranked, paginated page
+  (`RANK()` window; ties share a rank), globally or within a **subset**: sector,
+  region (`state` / `city` / `county`), `type`, `grantmaker`, or the members of an
+  org `list`. Ranks each org's **latest scored** year (or a fixed `?year=` for
+  cross-org comparability).
+- **`GET /scores/ranking?ein=&model=`** — one org's standing across dimensions at
+  once: global plus its **own** sector / state / city / county, each as
+  `{rank, of, percentile, total_score}`.
+
+The per-org rank is a `1 + COUNT(scores greater within the same subset)` primitive,
+so it equals that org's position in the same-subset leaderboard (a test-asserted
+invariant) without materializing the whole board. See
+[the API reference](../api.md#get-scoresleaderboard) for the full parameter list.
+
 ## CLI
 
 Run from the directory where `OpenReturn.db` lives:
@@ -55,7 +76,30 @@ openreturn models list                             # list all registered version
 openreturn score --rebuild                         # (re)compute all computed-model scores
 openreturn score --org 123456789                   # just one organization
 openreturn score --version 2                        # just model version 2
+
+openreturn templates list                          # browse the prefill catalog
+openreturn templates show 20-financial-composite   # a template's TOML (edit, then register)
 ```
+
+## Templates & the model builder
+
+The app ships a read-only **catalog of model templates** — guides that *prefill* a
+model rather than active models. You can't "enable" a template; you **create a model
+from it** (edited as you like). The catalog (`src/templates/*.toml`) includes a
+worked MinistryWatch financial stack.
+
+- **Frontend / HTTP**: `GET /templates` lists the catalog; `GET /templates/detail?code=`
+  returns the full `{model, factor}` definition to prefill a builder; then
+  **`POST /admin/models`** (`user:admin`) creates the model from the (possibly edited)
+  definition — `dry_run` validates without writing, `skip_existing` no-ops a duplicate
+  version. `GET /admin/models` lists what's registered (so a composite can see its
+  candidate children). Both reads need `score:read`.
+- **CLI**: `openreturn templates list` / `show <code>`; pipe a template into
+  `openreturn models register`.
+
+A composite/super-composite template references its children by `model:<version>`, so
+create the base models first (the catalog filenames sort in dependency order). Both
+the HTTP and CLI create paths run the same validation as `register_model` (see below).
 
 ## TOML Format
 
@@ -91,7 +135,7 @@ benchmark_hi = 0.15
 | `name` | yes | Unique label (used in `factor:<name>` references) |
 | `weight` | yes | Contribution to total score; must be ≥ 0. Set to `0` for intermediate factors. |
 | `formula_type` | yes | One of the types listed below |
-| `inputs` | yes | Ordered list of input keys (field keys, numeric literals, or `factor:<name>`) |
+| `inputs` | yes | Ordered list of input keys (field keys, numeric literals, or `factor:<name>`). An entry may also be a table `{ key = …, missing = … }` to give that input a [missing-data fallback](#missing-data-fallbacks-completing-a-multi-year-history). |
 | `direction` | yes | `"higher"` or `"lower"` — which end of the benchmark range scores best |
 | `benchmark_lo` | yes | Lower bound for normalization |
 | `benchmark_hi` | yes | Upper bound for normalization; must be > `benchmark_lo` |
@@ -171,7 +215,7 @@ benchmark_hi = 1.0
 - A `composite` may reference only base `model`s; a `super_composite` may reference only `composite`s. Referenced models must already be registered and be **computed** (a composite weights derived scores, not graded ones), so a `composite`/`super_composite` cannot itself be `manual`.
 - **Register children before parents** (base → composite → super-composite). The engine evaluates models in that dependency order, so each layer's `model:` inputs are ready; cyclic references are rejected.
 
-`openreturn score --rebuild` scores every kind in one pass; `POST /scores/calculate` for a composite computes its children on the fly for that filing. `GET /scores/kinds` lists the available kinds. See [`models/`](../../models/) for a worked MinistryWatch-style stack (four ratio models → a Financial composite → an Overall Score super-composite).
+`openreturn score --rebuild` scores every kind in one pass; `POST /scores/calculate` for a composite computes its children on the fly for that filing. `GET /scores/kinds` lists the available kinds. The bundled [template catalog](../../src/templates/) (`GET /templates`, `openreturn templates list`) ships a worked MinistryWatch-style stack (four ratio models → a Financial composite → an Overall Score super-composite) as **prefill guides** — see [Templates & the model builder](#templates--the-model-builder).
 
 ## Manual (Graded) Models
 
@@ -266,9 +310,14 @@ Historical formulas take exactly 1 input — a field key (not `factor:<name>`). 
 
 ## Input Keys
 
-### IRS Form 990 field keys
+### Financial concept keys
 
-| Key | Form 990 field |
+Each key below is a **canonical financial concept**: scoring reads the *chosen*
+value for that concept for the org-year (across 990, audited, OCR, and manual
+sources — see [Financial Data](../financials.md)), not the 990 field directly. The
+"Form 990 field" column is the source a 990 filing's value is **derived** from.
+
+| Key | Form 990 field (990 derivation source) |
 |-----|----------------|
 | `prog` | Program services expenses |
 | `admin` | Management & general expenses |
@@ -299,6 +348,61 @@ Historical formulas take exactly 1 input — a field key (not `factor:<name>`). 
 | numeric literal | `"0"`, `"1.0"`, `"-0.5"` | The literal float value |
 
 Numeric literals are useful for `clamp` bounds: `inputs = ["cy_rev", "0", "1000000"]`.
+
+## Missing-data fallbacks (completing a multi-year history)
+
+By default a year with no data (or a year missing a particular concept) simply has
+no score — leaving gaps in an org's history. A factor input can opt into a
+**fallback** so a missing value is filled from another year, giving a complete
+MinistryWatch-style multi-year picture. An input is then a table instead of a bare
+string:
+
+```toml
+[[factor]]
+name         = "Program Expense"
+formula_type = "ratio"
+# total_exp falls back to the closest later year; prog stays strict (no fill).
+inputs       = [{ key = "prog" }, { key = "total_exp", missing = "closest_newer" }]
+```
+
+A model-level default applies to every input that doesn't set its own `missing`:
+
+```toml
+[model]
+version      = 20
+missing_data = "newest"     # default fallback for all inputs in this model
+```
+
+| Strategy | Fills a missing year's value with… |
+|----------|-------------------------------------|
+| `none` (default) | nothing — the value stays missing (the historical behavior) |
+| `newest` | the most recent year that has a value |
+| `oldest` | the earliest year that has a value |
+| `closest_older` | the nearest year by distance; ties → the **older** year |
+| `closest_newer` | the nearest year by distance; ties → the **newer** year |
+| `value:<x>` | a constant (e.g. `value:0`) |
+
+Rules and scope:
+
+- Fallbacks apply at **both levels** — a base model's concept inputs and a
+  composite/super-composite's `model:<version>` inputs are filled the same way
+  (a composite imputes a child's missing year from the child's other years; an
+  imputed child propagates the **imputed** flag up the chain).
+- The history runs from the org's **earliest data year through its latest** — gaps
+  inside that span (and a present-but-incomplete latest year) are filled; years
+  **before** the earliest data are never fabricated.
+- Filled scores are flagged: `organization_score.imputed` and, per factor,
+  `imputed` + the donor `source_year` (surfaced by `GET /scores/history`,
+  `GET /scores`, `GET /scores/detail`, and the debug trace).
+- **Historical formulas read real years only** — an imputed point never enters a
+  CAGR / standard-deviation / running-average series, so those statistics aren't
+  distorted by estimates.
+- A `factor:<name>` reference and numeric literals are never filled.
+
+`openreturn score --rebuild` produces the filled history; `POST /scores/calculate`
+fills an incomplete year on demand (it still needs a filing to exist for the year —
+fully-synthesized years come from the rebuild). `GET /scores/history?ein=&version=`
+returns the year-by-year series.
 
 ## Normalization
 

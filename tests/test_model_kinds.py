@@ -406,29 +406,20 @@ class TestKindRoutes(unittest.TestCase):
         self.assertEqual(out['model_kind'], 'composite')
 
 
-# ── shipped models/*.toml ──────────────────────────────────────────────────────
+# ── bundled template catalog (src/templates/*.toml) ─────────────────────────────
 
-try:
-    import tomllib
-except ImportError:  # pragma: no cover
-    tomllib = None
-
-_MODELS_DIR = os.path.join(os.path.dirname(__file__), '..', 'models')
+import templates as templates_mod
 
 
-@unittest.skipIf(tomllib is None, "tomllib (Python 3.11+) required")
 class TestShippedModelTomls(unittest.TestCase):
-    """The MinistryWatch-derived TOMLs in models/ must validate cleanly and form a
-    coherent base → composite → super_composite hierarchy."""
+    """The MinistryWatch-derived templates in the catalog must validate cleanly and
+    form a coherent base → composite → super_composite hierarchy."""
 
     def setUp(self):
         self.models = {}
-        for fn in sorted(os.listdir(_MODELS_DIR)):
-            if not fn.endswith('.toml'):
-                continue
-            with open(os.path.join(_MODELS_DIR, fn), 'rb') as fh:
-                data = tomllib.load(fh)
-            self.models[data['model']['version']] = (fn, data)
+        for code in templates_mod.template_codes():
+            data = templates_mod.get_template(code)
+            self.models[data['model']['version']] = (code, data)
 
     def _refs(self, data):
         out = set()
@@ -439,7 +430,7 @@ class TestShippedModelTomls(unittest.TestCase):
         return out
 
     def test_all_validate(self):
-        self.assertTrue(self.models, "expected TOML models in models/")
+        self.assertTrue(self.models, "expected templates in the catalog")
         for version, (fn, data) in self.models.items():
             errs = _errors(models_cli.validate_toml(data))
             self.assertEqual(errs, [], f"{fn}: {errs}")

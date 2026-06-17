@@ -12,8 +12,19 @@ from scoring.engine import (ScoringEngine, _PATHS, FORMULA_TYPES, FORMULA_INPUT_
 
 
 def _build_vals(**kwargs):
-    """Build a vals dict from shorthand keys using _PATHS."""
-    return {_PATHS[k]: v for k, v in kwargs.items()}
+    """Build a vals dict keyed by concept code (the scoring engine now resolves
+    field-key inputs against canonical concept codes, not xml_paths)."""
+    return {k: v for k, v in kwargs.items()}
+
+
+def _fin_mock(db, vals=None, historical=None):
+    """Configure a MagicMock db's financials loaders for calculate()/debug() —
+    scoring now reads canonical concept values from db.financials, not 990 fields."""
+    db.financials.get_year_canonical_values.return_value = vals or {}
+    db.financials.get_historical_values.return_value = historical or {}
+    db.financials.derive_from_990.return_value = 0
+    db.financials.get_org_financials.return_value = {"facts": []}
+    return db
 
 
 def _factor(formula_type: str, inputs: list[str], direction: str = 'higher',
@@ -714,7 +725,8 @@ class TestComputeFactorClamp(unittest.TestCase):
 class TestComputeFactorHistorical(unittest.TestCase):
     def setUp(self):
         self.engine = ScoringEngine(db=None)
-        self.hist = {_PATHS['cy_rev']: [800.0, 1000.0, 1200.0]}
+        # historical is keyed by concept code (the model input key), not xml_path
+        self.hist = {'cy_rev': [800.0, 1000.0, 1200.0]}
 
     def _f(self, formula_type):
         return _factor(formula_type, ['cy_rev'])
@@ -741,11 +753,11 @@ class TestComputeFactorHistorical(unittest.TestCase):
 
     def test_empty_historical_for_key_returns_none(self):
         result = self.engine._compute_factor(
-            self._f('running_average'), {}, historical={_PATHS['cy_rev']: []})
+            self._f('running_average'), {}, historical={'cy_rev': []})
         self.assertIsNone(result)
 
     def test_single_year_running_average(self):
-        hist = {_PATHS['cy_rev']: [1500.0]}
+        hist = {'cy_rev': [1500.0]}
         result = self.engine._compute_factor(self._f('running_average'), {}, historical=hist)
         self.assertAlmostEqual(result, 1500.0)
 
@@ -756,19 +768,19 @@ class TestComputeFactorHistorical(unittest.TestCase):
         self.assertAlmostEqual(result, expected)
 
     def test_cagr_single_value_returns_none(self):
-        hist = {_PATHS['cy_rev']: [1000.0]}
+        hist = {'cy_rev': [1000.0]}
         self.assertIsNone(self.engine._compute_factor(self._f('cagr'), {}, historical=hist))
 
     def test_cagr_zero_start_returns_none(self):
-        hist = {_PATHS['cy_rev']: [0.0, 1200.0]}
+        hist = {'cy_rev': [0.0, 1200.0]}
         self.assertIsNone(self.engine._compute_factor(self._f('cagr'), {}, historical=hist))
 
     def test_cagr_negative_start_returns_none(self):
-        hist = {_PATHS['cy_rev']: [-100.0, 1200.0]}
+        hist = {'cy_rev': [-100.0, 1200.0]}
         self.assertIsNone(self.engine._compute_factor(self._f('cagr'), {}, historical=hist))
 
     def test_cagr_negative_end_returns_none(self):
-        hist = {_PATHS['cy_rev']: [800.0, -200.0]}
+        hist = {'cy_rev': [800.0, -200.0]}
         self.assertIsNone(self.engine._compute_factor(self._f('cagr'), {}, historical=hist))
 
     def test_historical_std_dev_normal(self):
@@ -779,7 +791,7 @@ class TestComputeFactorHistorical(unittest.TestCase):
         self.assertAlmostEqual(result, expected)
 
     def test_historical_std_dev_single_value_is_zero(self):
-        hist = {_PATHS['cy_rev']: [1000.0]}
+        hist = {'cy_rev': [1000.0]}
         result = self.engine._compute_factor(self._f('historical_std_dev'), {}, historical=hist)
         self.assertAlmostEqual(result, 0.0)
 
@@ -790,7 +802,7 @@ class TestComputeFactorHistorical(unittest.TestCase):
         self.assertAlmostEqual(result, std_dev / abs(mean))
 
     def test_coefficient_of_variation_zero_mean_returns_none(self):
-        hist = {_PATHS['cy_rev']: [-500.0, 500.0]}
+        hist = {'cy_rev': [-500.0, 500.0]}
         self.assertIsNone(
             self.engine._compute_factor(self._f('coefficient_of_variation'), {}, historical=hist))
 
@@ -870,6 +882,7 @@ class TestCalculate(unittest.TestCase):
         db.scores.get_factors.return_value = factors
         db.scores.create_score.return_value = 99
         db.scores.get_score.return_value = expected_score
+        _fin_mock(db, {c: 1000.0 for c in _PATHS})
 
         engine = ScoringEngine(db=db)
         result = engine.calculate('12-3456789', 2023, model_version=1)
@@ -896,6 +909,7 @@ class TestCalculate(unittest.TestCase):
         db.scores.get_factors.return_value = factors
         db.scores.create_score.return_value = 1
         db.scores.get_score.return_value = {}
+        _fin_mock(db, {c: 1000.0 for c in _PATHS})
 
         ScoringEngine(db=db).calculate('00-0000000', 2022)
 
@@ -914,6 +928,7 @@ class TestCalculate(unittest.TestCase):
         db.scores.get_factors.return_value = factors
         db.scores.create_score.return_value = 5
         db.scores.get_score.return_value = {}
+        _fin_mock(db, {})   # no canonical values → factor raw None → 0.0
 
         ScoringEngine(db=db).calculate('00-0000001', 2021)
 
@@ -1053,6 +1068,7 @@ class TestCalculateFactorRefs(unittest.TestCase):
         db.scores.get_factors.return_value = factors
         db.scores.create_score.return_value = 1
         db.scores.get_score.return_value = {}
+        _fin_mock(db, {c: 1000.0 for c in _PATHS})
         ScoringEngine(db=db).calculate('000000000', 2023)
         _, total = db.scores.finalize_score.call_args[0]
         # Intermediate weight=0 contributes nothing; Final weight=1.0 normalized
@@ -1080,6 +1096,7 @@ class TestCalculateFactorRefs(unittest.TestCase):
         db.scores.get_factors.return_value = factors
         db.scores.create_score.return_value = 1
         db.scores.get_score.return_value = {}
+        _fin_mock(db, {'prog': 1000.0, 'total_exp': 2000.0})
         ScoringEngine(db=db).calculate('000000000', 2023)
         stored = db.scores.store_factor_values.call_args[0][1]
         upstream_raw, _ = stored[1]
@@ -1100,26 +1117,24 @@ class TestCalculateHistorical(unittest.TestCase):
         db.scores.get_factors.return_value = factors
         db.scores.create_score.return_value = 1
         db.scores.get_score.return_value = {}
-        db.reported_data.get_historical_values.return_value = hist or {}
+        _fin_mock(db, {}, hist or {})   # historical keyed by concept code
         return db
 
     def test_historical_formula_triggers_fetch(self):
         factors = [_full_factor(1, 'Avg Rev', 'running_average', ['cy_rev'], 'higher', 0.0, 2000.0, 1.0)]
-        hist = {_PATHS['cy_rev']: [800.0, 1000.0, 1200.0]}
-        db = self._make_db(factors, hist)
+        db = self._make_db(factors, {'cy_rev': [800.0, 1000.0, 1200.0]})
         ScoringEngine(db=db).calculate('000000001', 2023)
-        db.reported_data.get_historical_values.assert_called_once_with('000000001')
+        db.financials.get_historical_values.assert_called_once_with('000000001')
 
     def test_no_historical_formula_skips_fetch(self):
         factors = [_full_factor(1, 'Ratio', 'ratio', ['prog', 'total_exp'], 'higher', 0.0, 1.0, 1.0)]
         db = self._make_db(factors)
         ScoringEngine(db=db).calculate('000000001', 2023)
-        db.reported_data.get_historical_values.assert_not_called()
+        db.financials.get_historical_values.assert_not_called()
 
     def test_running_average_stored_correctly(self):
         factors = [_full_factor(1, 'Avg Rev', 'running_average', ['cy_rev'], 'higher', 0.0, 2000.0, 1.0)]
-        hist = {_PATHS['cy_rev']: [800.0, 1000.0, 1200.0]}
-        db = self._make_db(factors, hist)
+        db = self._make_db(factors, {'cy_rev': [800.0, 1000.0, 1200.0]})
         ScoringEngine(db=db).calculate('000000001', 2023)
         stored = db.scores.store_factor_values.call_args[0][1]
         raw, _ = stored[1]
@@ -1127,8 +1142,7 @@ class TestCalculateHistorical(unittest.TestCase):
 
     def test_cumulative_sum_stored_correctly(self):
         factors = [_full_factor(1, 'Total Rev', 'cumulative_sum', ['cy_rev'], 'higher', 0.0, 5000.0, 1.0)]
-        hist = {_PATHS['cy_rev']: [1000.0, 1500.0, 2000.0]}
-        db = self._make_db(factors, hist)
+        db = self._make_db(factors, {'cy_rev': [1000.0, 1500.0, 2000.0]})
         ScoringEngine(db=db).calculate('000000001', 2023)
         stored = db.scores.store_factor_values.call_args[0][1]
         raw, _ = stored[1]

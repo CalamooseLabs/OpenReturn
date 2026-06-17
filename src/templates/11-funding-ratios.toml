@@ -15,6 +15,7 @@
 version     = 11
 type        = "financial"
 kind        = "model"
+missing_data = "closest_newer"   # fill a year's missing inputs from the nearest year
 description = "Funding ratios (Fund Acquisition) — fundraising efficiency and donation reliance"
 
 [[factor]]

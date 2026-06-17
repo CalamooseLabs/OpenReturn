@@ -1,19 +1,30 @@
 # API Keys
 
-When the server is started with `--auth` (or `services.openreturn.auth = true` in NixOS), all routes require a valid API key.
+When the server is started with `--auth` (or `services.openreturn.auth = true` in NixOS), all routes require authentication. API keys authenticate **programs** (e.g. the frontend); **users** log in for a session key instead (see [Access Control](access-control.md)).
+
+## Roles
+
+Each key is bound to a **role** that grants its permissions (`--role`, default `service` — a restricted read-only role). Use a richer role only when a program genuinely needs to write:
+
+```bash
+openreturn keys create "Dashboard"                 # service (restricted read-only)
+openreturn keys create "import-bot" --role editor  # can write
+```
+
+`openreturn users roles` lists the available roles and their permissions. See [Access Control](access-control.md) for the role/permission model.
 
 ## Managing Keys
 
 Keys are managed with the `openreturn keys` subcommand, run from the directory where `OpenReturn.db` lives:
 
 ```bash
-# Create a key (unlimited by default)
+# Create a key (unlimited rate, service role, by default)
 openreturn keys create "Dashboard"
 
-# Create a key with a per-minute rate limit
-openreturn keys create "CI pipeline" --rate-limit 60
+# Create a key with a per-minute rate limit and a role
+openreturn keys create "CI pipeline" --rate-limit 60 --role service
 
-# List all active keys
+# List all keys (shows each key's role)
 openreturn keys list
 
 # Revoke a key by ID (shown in the list)

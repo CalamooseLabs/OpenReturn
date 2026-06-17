@@ -88,15 +88,45 @@ class TestScoreRouterRegistration(unittest.TestCase):
         self.assertIn("/scores/debug", self.router.routes["GET"])
 
     def test_no_unexpected_get_routes(self):
-        expected = {"/scores/factors", "/scores", "/scores/filing", "/scores/detail",
-                    "/scores/lookup", "/scores/compare", "/scores/debug", "/scores/types",
-                    "/scores/kinds"}
+        expected = {"/scores/factors", "/scores", "/scores/history", "/scores/leaderboard",
+                    "/scores/ranking", "/scores/filing",
+                    "/scores/detail", "/scores/lookup", "/scores/compare", "/scores/debug",
+                    "/scores/types", "/scores/kinds"}
         self.assertEqual(set(self.router.routes["GET"].keys()), expected)
 
     def test_no_unexpected_post_routes(self):
         expected = {"/scores", "/scores/factors", "/scores/finalize", "/scores/calculate",
                     "/scores/grade"}
         self.assertEqual(set(self.router.routes["POST"].keys()), expected)
+
+
+class TestScoreHistoryRoute(unittest.TestCase):
+
+    def setUp(self):
+        self.router, self.db = _make_router()
+
+    def test_history_requires_ein(self):
+        out = _call(self.router, "GET", "/scores/history", {})
+        self.assertIn("error", out)
+
+    def test_history_defaults_version_and_passes_through(self):
+        self.db.scores.list_score_history.return_value = [
+            {"year": 2021, "total_score": 0.8, "imputed": False, "score_id": 1, "source_year": None},
+            {"year": 2022, "total_score": 0.8, "imputed": True, "score_id": 2, "source_year": 2021}]
+        out = _call(self.router, "GET", "/scores/history", _qp(ein="111111111"))
+        self.db.scores.list_score_history.assert_called_once_with("111111111", 1)
+        self.assertEqual(out["model_version"], 1)
+        self.assertEqual(len(out["history"]), 2)
+        self.assertTrue(out["history"][1]["imputed"])
+
+    def test_history_honors_version(self):
+        self.db.scores.list_score_history.return_value = []
+        _call(self.router, "GET", "/scores/history", _qp(ein="111111111", version="30"))
+        self.db.scores.list_score_history.assert_called_once_with("111111111", 30)
+
+    def test_history_rejects_bad_version(self):
+        out = _call(self.router, "GET", "/scores/history", _qp(ein="1", version="abc"))
+        self.assertIn("error", out)
 
 
 # ---------------------------------------------------------------------------

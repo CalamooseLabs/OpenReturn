@@ -258,6 +258,29 @@ The upload endpoint commits everything in a single transaction. For a ZIP with t
 
 ---
 
+## OCR of 990 PDFs
+
+When only a **PDF** of a 990 is available (no e-file XML), it can be OCR'd into
+confidence-scored financial observations (see [Financial Data](financials.md)):
+
+```bash
+openreturn ocr return.pdf --ein 364348917 --year 2024
+```
+or `POST /upload/pdf?ein=…&year=…` (`upload:write`) with the PDF as
+`multipart/form-data`.
+
+The OCR engine is the bundled **`tesseract`** binary (plus `pdftoppm` from poppler
+to rasterize pages) — shelled out to via subprocess, so the Python side stays
+stdlib-only and the core still runs (degraded) where the binaries are absent
+(`ocr.ocr_available()`). Tesseract's TSV output gives a **per-word confidence**,
+which becomes the confidence on each observation. Mapping recognized amounts to
+canonical concepts is a **best-effort label-proximity heuristic** (a 990 PDF's
+layout varies), so readings are confidence-scored and should be reviewed — OCR
+observations (`source = ocr_990_pdf`) never auto-override a higher-trust source,
+since [canonical selection is manual](financials.md).
+
+---
+
 ## Why Ingest Breaks the Running Server
 
 Running `openreturn ingest` while the API server is up will cause the server to return errors for the duration of the ingest run.

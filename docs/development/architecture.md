@@ -153,15 +153,22 @@ Connection lifecycle — `commit`/`close`/`begin_bulk_load`/`end_bulk_load` — 
 | Namespace (folder / class) | Representative methods |
 |------------------------|------------------------|
 | `db.meta` (`Schema/` `SchemaDatabase`) | `get_xpath_index()`, `get_supported_forms()`, `get_field_source()`, `drop_/restore_ingest_indexes()`, `_build_field_meta_cache()` |
-| `db.orgs` (`Organization/` `OrganizationDatabase`) | `list_organizations()`, `search_organizations()` (strict/fuzzy), `list_states()`/`list_cities()`, `get_organization()`, `upsert_organization()` (+ normalized address), `set_favorite()`, `rebuild_search_index()` |
+| `db.orgs` (`Organization/` `OrganizationDatabase`) | `list_organizations()`, `search_organizations()` (strict/fuzzy), `list_states()`/`list_cities()`, `get_organization()`, `upsert_organization()` (ingest path), `create_org()`/`update_org()` (editable CRUD: EIN-validated, physical + mailing address, contact fields, audited), `set_favorite()`, `rebuild_search_index()`, `classify_organizations()` (derive `org_type` foundation/nonprofit + `is_grantmaker`; search takes `org_type=`/`grantmaker=`), `list_sectors()`/`list_counties()` + assignable `sector_code` (NTEE) and `import_zip_county()`/`derive_counties()` (ZIP→county; search takes `sector=`/`county=`) |
 | `db.filings` (`Filing/` `FilingDatabase`) | `list_filings()`, `get_filing()`, `create_filing()`, `get_filing_data_by_ein_year()` |
 | `db.reported_data` (`ReportedData/` `ReportedDataDatabase`) | `get_reported_data()`, `get_historical_values()`, `get_org_scoring_data()` (batch scoring loader), `store_reported_data()` |
-| `db.keys` (`ApiKey/` `ApiKeyDatabase`) | `create_api_key()`, `validate_api_key()`, `list_api_keys()`, `revoke_api_key()` |
+| `db.keys` (`ApiKey/` `ApiKeyDatabase`) | `create_api_key()` (role-bound), `validate_api_key()`, `get_active_key()`, `list_api_keys()`, `revoke_api_key()` |
+| `db.users` (`User/` `UserDatabase`) | `create_user()`/`set_password()`/`reset_password()`/`set_active()`, `assign_role()`/`revoke_role()`, `grant_permission()`/`revoke_permission()`, `create_role()`/`delete_role()`/`create_permission()`, `list_roles()`, `login()`, `authenticate()` (session **or** API key → `Principal`), `logout()`, `user_permissions()` — the `/admin/*` routes (`src/router/Admin/`, all `user:admin`) front these over HTTP |
+| `db.audit` (`Audit/` `AuditDatabase`) | `record(actor, action, entity_type, entity_id, changes)`, `list_log()` |
+| `db.people` (`People/` `PeopleDatabase`) | `create_person()`/`update_person()`/`delete_person()`, `get_person()`/`list_people()`, `add_membership()`/`remove_membership()` (person↔org), `list_org_people()`/`list_person_orgs()` — editable CRM, audited |
+| `db.tags` (`Tags/` `TagsDatabase`) | `list_tags()`, `org_tags()`, `apply_tag()`/`remove_tag()`, `orgs_with_tags(names, match)` (backs smart lists) |
+| `db.lists` (`Lists/` `ListsDatabase`) | `create_list()`/`update_list()`/`delete_list()`, `get_list()`/`list_lists()` (private/public, owner-scoped), `add_member()`/`remove_member()` (static), `list_members()` (static rows or smart tag-resolved) |
+| `db.follows` (`Follow/` `FollowDatabase`) | per-user watchlist: `follow_org()`/`unfollow_org()` (user-only, audited), `is_following()`/`followed_eins()` (annotate org rows), `list_followed(org_type=…)`, `follower_count()` |
+| `db.financials` (`Financials/` `FinancialsDatabase`) | unified financial layer scoring reads from: `list_concepts()` (seeded from the engine's `_PATHS`), `record_observations()`/`set_canonical()`, `get_org_financials()`/`conflicts()`, `derive_from_990()`/`rebuild()`, and the scoring loaders `get_org_scoring_data()`/`get_historical_values()`/`get_year_canonical_values()` (keyed by canonical **concept**) |
 | `db.migrations` (`Migration/` `MigrationDatabase`) | `list_available_migrations()` (static), `get_applied_migrations()`, `apply_migration()` |
 | `db.ingest` (`Ingest/` `IngestDatabase`) | `get_ingested_sources()`, `record_ingested_zip()`, `find_/forget_ingested_zips()` |
-| `db.scores` (`Score/` `ScoreDatabase`) | `get_factors()`, `get_model()`, `list_computed_models()`, `create_score()`, `finalize_score()`, `grade_factor()`, `replace_org_scores()` (batch), `all_eins()`, `get_score()`, `compare_scores()`, `delete_filings_by_zip()` |
+| `db.scores` (`Score/` `ScoreDatabase`) | `get_factors()`, `get_model()`, `list_computed_models()`, `create_score()`, `finalize_score()`, `grade_factor()`, `replace_org_scores()` (batch), `all_eins()`, `get_score()`, `compare_scores()`, `list_score_history()`, `rank_leaderboard()`/`rank_org()`/`rank_org_dimensions()` (query-time ranking, global or subset), `delete_filings_by_zip()` |
 
-**Standalone concerns** (`db.keys`, `db.ingest`, `db.migrations`) have no FKs to the rest, but still share the one connection. The 990 data graph (`db.meta`'s form schema + `db.orgs`/`db.filings`/`db.reported_data`) and `db.scores` are FK-linked and JOIN across each other — which is why a single file/connection is required (separate databases would break joins/FKs/transactions).
+**Standalone concerns** (`db.keys`, `db.users`, `db.audit`, `db.ingest`, `db.migrations`) have no FKs to the 990 data graph, but still share the one connection (`api_key.role_id` FKs the User concern's `role`, so `db.users` is instantiated before `db.keys`). The User concern owns the RBAC tables (`app_user`, `role`, `permission`, `role_permission`, `user_role`, `session`); `db.audit` is an append-only `audit_log`. The 990 data graph (`db.meta`'s form schema + `db.orgs`/`db.filings`/`db.reported_data`) and `db.scores` are FK-linked and JOIN across each other — which is why a single file/connection is required (separate databases would break joins/FKs/transactions).
 
 **Scoring** (`db.scores`, `src/database/Score/score.py`): a model declares a `model_type` (seeded category), a `scoring_mode` — **computed** (formula factors) or **manual** (graded by a person via `POST /scores/grade`, with a `manual_scale` + `comment`) — and a `model_kind` — **model** (base, reads 990 fields), **composite** (weights base models' scores), or **super_composite** (weights composites' scores). Composites/super-composites reference children via `model:<version>` inputs and are scored in dependency order (see the Scoring Engine section). `ScoringEngine.calculate` rejects manual models; `grade()` normalizes per `manual_scale` and recomputes the total. The purge helpers (`delete_filings_by_zip`/`delete_all_filings`) live on `db.scores` because they also count scores for the removal summary; the deletes themselves are just `DELETE FROM filing` — both `organization_score` and `reported_data` reference the integer `filing.filing_id` with `ON DELETE CASCADE`.
 
@@ -235,9 +242,9 @@ class MyRouter(Router):
 Wraps Python's `http.server.HTTPServer`. Wires routers to routes via `include_router()`.
 
 - `include_router(router)` — merges a router's route table into the server's global dispatch table.
-- `_create_handler()` — returns a `RequestHandler` class (closure) that handles auth, rate limiting, body parsing, routing, and response serialization.
-- Auth checks `Authorization: Bearer <key>` and `X-API-Key: <key>` headers when `--auth` is active.
-- Rate limiter uses a sliding window (60 s) keyed by the raw API key value (not the hash).
+- `_create_handler()` — returns a `RequestHandler` class (closure) that handles auth, permission gating, rate limiting, body parsing, routing, and response serialization.
+- **Auth & RBAC** (when `--auth` is active): the server holds an `authenticator(token) -> Principal | None` (`db.users.authenticate`, which resolves a user **session key** or a program **API key**). For a route that is `_secured` or carries a `_permission`, it 401s a missing/invalid token, 403s a principal lacking the route's `_permission`, rate-limits, then attaches the `Principal` to the request `headers` (read by handlers via `Router._principal(headers)` for audit attribution and private-data scoping). A base model declares its permission with `@self.get(..., permission='org:read')`. See [Access Control](../access-control.md).
+- Rate limiter uses a sliding window (60 s) keyed by the raw token (not the hash); user sessions are unlimited (`-1`).
 - Request bodies up to 50 MB are accepted; larger bodies return 413.
 - JSON bodies are auto-parsed; `multipart/form-data` is passed as raw bytes.
 - Debug mode (`--debug`) logs every request and response with ANSI color.
@@ -250,10 +257,13 @@ sequenceDiagram
   participant DB as OpenReturnDB
   C->>S: HTTP request
   alt --auth and route is secured
-    S->>DB: validate_api_key(key)
-    DB-->>S: rate limit or None
-    opt invalid key
+    S->>DB: authenticate(token)
+    DB-->>S: Principal or None
+    opt invalid/missing token
       S-->>C: 401 Unauthorized
+    end
+    opt principal lacks route permission
+      S-->>C: 403 Forbidden
     end
     opt over rate limit
       S-->>C: 429 + Retry-After
@@ -286,11 +296,13 @@ sequenceDiagram
 
 `_topo_sort(factors)` — Kahn-style DFS that raises `ValueError` on circular or missing `factor:<name>` references.
 
-`_resolve_input(key, vals, computed, model_totals)` — resolves a single input key in priority order: `factor:<name>` → `model:<version>` → numeric literal string → field key shorthand → `None`.
+`_resolve_input(key, vals, computed, model_totals)` — resolves a single input key in priority order: `factor:<name>` → `model:<version>` → numeric literal string → **canonical concept code** → `None`. `vals` is now keyed by concept code (the chosen value per concept), loaded from `db.financials`, not by 990 `xml_path`. The engine idempotently `derive_from_990(ein)`s before reading, so 990 values are mirrored into the canonical layer; `_PATHS` is retained only for that derivation and the debug source trace. For a 990-only org with no conflicts, the chosen values equal the 990 values — scores are unchanged.
 
-**Model kinds — composites.** A model has a `model_kind`: `model` (base, reads 990 fields), `composite` (factors weight base models' totals), or `super_composite` (factors weight composites' totals). A composite/super-composite factor takes `model:<version>` inputs that resolve to another model's `total_score` *for the same filing*, looked up in a per-filing `model_totals` map. `_score_model_for_filing(factors, vals, historical, model_totals)` is the shared per-(model, filing) primitive behind both paths; `_model_refs()` extracts a model's `model:` dependencies and `_order_versions()` topologically orders prepared models (base → composite → super-composite) so each layer's inputs are ready. The batch `score_org` accumulates a per-filing `{version: total}` as it scores in that order; `calculate()` computes a composite's dependency chain on the fly via `_compute_dependency_totals()`, so it is self-contained regardless of batch state. Cross-model kind/existence/cycle rules are enforced at registration (`models.cmd_register`) and validation (`models.validate_toml`).
+**Model kinds — composites.** A model has a `model_kind`: `model` (base, reads 990 fields), `composite` (factors weight base models' totals), or `super_composite` (factors weight composites' totals). A composite/super-composite factor takes `model:<version>` inputs that resolve to another model's `total_score` *for the same filing*, looked up in a per-filing `model_totals` map. `_score_model_for_filing(factors, vals, historical, model_totals)` is the shared per-(model, filing) primitive behind both paths; `_model_refs()` extracts a model's `model:` dependencies and `_order_versions()` topologically orders prepared models (base → composite → super-composite) so each layer's inputs are ready. The batch `score_org` accumulates a per-filing `{version: total}` as it scores in that order; `calculate()` computes a composite's dependency chain on the fly via `_compute_dependency_totals()`, so it is self-contained regardless of batch state. Cross-model kind/existence/cycle rules are enforced by `models.register_model()` (validation + cross-model DB checks + insert) and `models.validate_toml`. `register_model` is the shared core of both create paths: the CLI `models.cmd_register` (file) and the admin `POST /admin/models` (a JSON `{model, factor}` definition). The bundled **template catalog** (`src/templates/`, exposed read-only by `TemplatesRouter` at `/templates` and `openreturn templates`) is a set of prefill guides the model builder seeds from — not active models.
 
-See [Scoring Models](../scoring/models.md) for the full list of formula types, input keys, and the model kinds.
+**Missing-data fallbacks.** A factor input may declare a fill strategy (`{key, missing}` or a model-level `missing_data` default); `parse_inputs()` is the one boundary that splits stored inputs into `(keys, policies)` so every legacy key-only consumer is unchanged. A model with no policy scores via the unchanged per-filing loop (byte-identical totals); a model with a policy scores **one row per year across the org's data span**, filling missing inputs from other years (`_resolve_input_filled`/`_pick_donor_year`) and synthesizing a FIN anchor for fully-missing interior years. A shared per-year `model_series` carries child totals so composites read (and propagate the `imputed` flag from) filled child years; historical formulas read real years only. `calculate()`/`debug()` fill an existing incomplete year the same way via `_build_org_series` + a `_FillCtx`. Imputed scores/factors are flagged (`organization_score.imputed`, `organization_score_factor.imputed`/`source_year`) and exposed by `GET /scores/history`.
+
+See [Scoring Models](../scoring/models.md) for the full list of formula types, input keys, the model kinds, and the missing-data strategies.
 
 ---
 

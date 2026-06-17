@@ -25,6 +25,7 @@
 version     = 30
 type        = "financial"
 kind        = "super_composite"
+missing_data = "closest_newer"   # carry a pillar's nearest-year score into a missing year
 description = "Overall Score — weighted blend of the pillar composites (Financial only for now)"
 
 [[factor]]

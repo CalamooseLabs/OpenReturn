@@ -39,6 +39,7 @@ let
   modelFiles = map mkModelToml cfg.models;
 
   hasModels = cfg.models != [];
+  hasAdmin  = cfg.initialAdmin.passwordFile != null;
 
   # ---------------------------------------------------------------------------
   # Database encryption key injection
@@ -127,6 +128,17 @@ in {
       type = lib.types.bool;
       default = false;
       description = "Require API key authentication for all requests.";
+    };
+
+    corsOrigins = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      example = [ "https://app.example.org" ];
+      description = ''
+        Allowed CORS origins for browser clients. Empty (the default) allows any
+        origin (`*`), which is safe because auth is header-based (Bearer / X-API-Key),
+        not cookie-based. Set specific origins to restrict cross-origin access.
+      '';
     };
 
     database = {
@@ -285,6 +297,25 @@ in {
       '';
     };
 
+    initialAdmin = {
+      username = lib.mkOption {
+        type = lib.types.str;
+        default = "admin";
+        description = "Username for the bootstrap admin account (created on first deploy).";
+      };
+      passwordFile = lib.mkOption {
+        type = lib.types.nullOr lib.types.path;
+        default = null;
+        description = ''
+          Path to a file containing the bootstrap admin's password (agenix/sops-nix/
+          systemd credential). When set, a one-shot service creates a user with the
+          `admin` role on first deploy (idempotent — skipped if the user already
+          exists). User accounts and password resets are otherwise CLI-only
+          (`openreturn users …`). Leave null to bootstrap the admin manually.
+        '';
+      };
+    };
+
   };
 
   config = lib.mkIf cfg.enable {
@@ -308,6 +339,8 @@ in {
       systemctl reset-failed openreturn-migrate.service 2>/dev/null || true
       ${lib.optionalString hasModels
         "systemctl reset-failed openreturn-register-models.service 2>/dev/null || true"}
+      ${lib.optionalString hasAdmin
+        "systemctl reset-failed openreturn-bootstrap-admin.service 2>/dev/null || true"}
     '';
 
     networking.firewall.allowedTCPPorts = lib.mkIf cfg.openFirewall [ cfg.port ];
@@ -411,15 +444,52 @@ in {
     };
 
     # ------------------------------------------------------------------
+    # One-shot service: bootstrap the admin user on first deployment.
+    # Idempotent (--skip-existing); the password is read from a credential
+    # file, never the Nix store. Only created when initialAdmin.passwordFile
+    # is set. Account/password management is otherwise CLI-only.
+    # ------------------------------------------------------------------
+    systemd.services.openreturn-bootstrap-admin = lib.mkIf hasAdmin {
+      description = "Bootstrap the OpenReturn admin user";
+      wantedBy = [ "multi-user.target" ];
+      after     = [ "openreturn-migrate.service" ];
+      wants     = [ "openreturn-migrate.service" ];
+      before    = [ "openreturn.service" ];
+
+      serviceConfig = {
+        Type             = "oneshot";
+        RemainAfterExit  = true;
+        User             = effectiveUser;
+        Group            = effectiveGroup;
+        WorkingDirectory = cfg.dataDir;
+        StateDirectory   = lib.removePrefix "/var/lib/" cfg.dataDir;
+        StateDirectoryMode = "0750";
+        PrivateTmp       = true;
+        ProtectSystem    = "strict";
+        ReadWritePaths   = [ cfg.dataDir ];
+        ProtectHome      = true;
+        NoNewPrivileges  = true;
+        LoadCredential   = [ "admin-password:${cfg.initialAdmin.passwordFile}" ];
+      } // dbSecretServiceConfig;
+
+      script = ''
+        ${cfg.package}/bin/openreturn users create ${cfg.initialAdmin.username} \
+          --role admin --skip-existing --password-file "$CREDENTIALS_DIRECTORY/admin-password"
+      '';
+    };
+
+    # ------------------------------------------------------------------
     # Main API server
     # ------------------------------------------------------------------
     systemd.services.openreturn = {
       description = "OpenReturn API server";
       wantedBy = [ "multi-user.target" ];
       after  = [ "network.target" "openreturn-migrate.service" ]
-               ++ lib.optional hasModels "openreturn-register-models.service";
+               ++ lib.optional hasModels "openreturn-register-models.service"
+               ++ lib.optional hasAdmin "openreturn-bootstrap-admin.service";
       wants  = [ "openreturn-migrate.service" ]
-               ++ lib.optional hasModels "openreturn-register-models.service";
+               ++ lib.optional hasModels "openreturn-register-models.service"
+               ++ lib.optional hasAdmin "openreturn-bootstrap-admin.service";
 
       restartTriggers = [ cfg.package cfg.host (toString cfg.port) ];
 
@@ -434,6 +504,7 @@ in {
           [ "${cfg.package}/bin/openreturn" "serve" "--host" cfg.host "--port" (toString cfg.port) ]
           ++ lib.optional cfg.debug "--debug"
           ++ lib.optional cfg.auth "--auth"
+          ++ lib.concatMap (o: [ "--cors-origin" o ]) cfg.corsOrigins
         );
 
         Environment = [ "PYTHONUNBUFFERED=1" ] ++ (dbSecretServiceConfig.Environment or []);

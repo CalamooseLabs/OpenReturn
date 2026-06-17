@@ -767,7 +767,7 @@ class TestGetScore(ScoreDbTestCase):
         result = self.db.scores.get_score(self.score_id)
         expected_keys = {"score_id", "ein", "model_version", "filing_id",
                          "year", "total_score", "scored_at", "factors",
-                         "model_type", "scoring_mode", "model_kind"}
+                         "model_type", "scoring_mode", "model_kind", "imputed"}
         self.assertEqual(set(result.keys()), expected_keys)
 
     def test_factor_null_raw_value_preserved(self):

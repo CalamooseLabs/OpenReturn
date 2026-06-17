@@ -21,6 +21,15 @@ from router.Upload import UploadRouter
 from router.Org import OrgRouter
 from router.Filing import FilingRouter
 from router.Score import ScoreRouter
+from router.Auth import AuthRouter
+from router.People import PeopleRouter
+from router.Tags import TagsRouter
+from router.Lists import ListsRouter
+from router.Admin import AdminRouter
+from router.Financials import FinancialsRouter
+from router.Follow import FollowRouter
+from router.Meta import MetaRouter
+from router.Templates import TemplatesRouter
 
 _ROOT = os.path.join(os.path.dirname(__file__), '..')
 _COMMITTED_SPEC = os.path.join(_ROOT, 'openapi.json')
@@ -74,7 +83,10 @@ class TestSpecCoverage(unittest.TestCase):
     def _registered_routes(self):
         db = MagicMock()
         routers = [UploadRouter(db=db), OrgRouter(db=db), FilingRouter(db=db),
-                   ScoreRouter(db=db)]
+                   ScoreRouter(db=db), AuthRouter(db=db), PeopleRouter(db=db),
+                   TagsRouter(db=db), ListsRouter(db=db), AdminRouter(db=db),
+                   FinancialsRouter(db=db), FollowRouter(db=db), MetaRouter(),
+                   TemplatesRouter(db=db)]
         routes = set()
         for r in routers:
             for method, paths in r.routes.items():

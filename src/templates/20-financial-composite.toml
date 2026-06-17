@@ -14,6 +14,7 @@
 version     = 20
 type        = "financial"
 kind        = "composite"
+missing_data = "closest_newer"   # carry a child's nearest-year score into a missing year
 description = "Financial composite — weighted blend of the operating, funding, liquidity, and investing models"
 
 [[factor]]

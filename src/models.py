@@ -10,10 +10,11 @@ except ImportError:  # pragma: no cover
 
 from database import OpenReturnDB
 from scoring.engine import (_PATHS as _VALID_INPUTS, FORMULA_TYPES,
-                            FORMULA_INPUT_COUNTS, _FACTOR_PREFIX, _MODEL_PREFIX)
+                            FORMULA_INPUT_COUNTS, _FACTOR_PREFIX, _MODEL_PREFIX,
+                            valid_strategy, parse_inputs)
 from scoring.graph import find_cycle
 
-_MODEL_KEYS  = {'version', 'description', 'type', 'mode', 'kind'}
+_MODEL_KEYS  = {'version', 'description', 'type', 'mode', 'kind', 'missing_data'}
 _FACTOR_KEYS = {'name', 'weight', 'formula_type', 'inputs', 'direction',
                 'benchmark_lo', 'benchmark_hi', 'formula_description', 'scale'}
 _FACTOR_REQUIRED = {'name', 'weight', 'formula_type', 'inputs', 'direction',
@@ -123,6 +124,11 @@ def validate_toml(data: dict) -> list[str]:
         issues.append(f"ERROR: [model].mode must be one of {list(_MODES)}, got: {mode!r}")
     if 'type' in model and not isinstance(model['type'], str):
         issues.append(f"ERROR: [model].type must be a string, got: {model['type']!r}")
+    if 'missing_data' in model and not valid_strategy(model['missing_data']):
+        issues.append(
+            f"ERROR: [model].missing_data must be a missing-data strategy "
+            f"(none/newest/oldest/closest_older/closest_newer/value:<x>), "
+            f"got: {model['missing_data']!r}")
 
     kind = model.get('kind', 'model')
     if kind not in _KINDS:
@@ -205,7 +211,25 @@ def validate_toml(data: dict) -> list[str]:
                     f.get('name') for f in factors
                     if isinstance(f, dict) and isinstance(f.get('name'), str)
                 }
-                for inp in inputs:
+                for entry in inputs:
+                    # An input is either a bare string or a {key, missing} table
+                    # (a per-input missing-data fallback). Normalize to `inp` (the
+                    # key string) for the type checks below; validate `missing`.
+                    if isinstance(entry, dict):
+                        for ek in entry:
+                            if ek not in ('key', 'missing'):
+                                issues.append(f"ERROR: {prefix}: unknown input-table key "
+                                              f"'{ek}' (allowed: key, missing)")
+                        if not isinstance(entry.get('key'), str):
+                            issues.append(f"ERROR: {prefix}: input table must have a "
+                                          f"string 'key', got: {entry.get('key')!r}")
+                            continue
+                        if 'missing' in entry and not valid_strategy(entry['missing']):
+                            issues.append(f"ERROR: {prefix}: invalid missing strategy "
+                                          f"{entry['missing']!r}")
+                        inp = entry['key']
+                    else:
+                        inp = entry
                     if isinstance(inp, str) and inp.startswith(_FACTOR_PREFIX):
                         ref = inp[len(_FACTOR_PREFIX):]
                         if not ref:
@@ -300,7 +324,7 @@ def validate_toml(data: dict) -> list[str]:
         if not isinstance(inp_list, list):
             continue
         deps: set[str] = set()
-        for inp in inp_list:
+        for inp in parse_inputs(inp_list)[0]:
             if isinstance(inp, str) and inp.startswith(_FACTOR_PREFIX):
                 deps.add(inp[len(_FACTOR_PREFIX):])
         dep_graph[name] = deps
@@ -315,30 +339,23 @@ def validate_toml(data: dict) -> list[str]:
     return issues
 
 
-def cmd_register(args) -> None:
-    with open(args.file, 'rb') as f:
-        data = tomllib.load(f)
-
-    issues  = validate_toml(data)
-    errors  = [i for i in issues if i.startswith('ERROR:')]
-    warnings = [i for i in issues if i.startswith('WARNING:')]
-
-    for w in warnings:
-        print(w)
-
+def register_model(db, data: dict, *, actor=None, skip_existing: bool = False,
+                   dry_run: bool = False) -> dict:
+    """Validate + register one model definition (the shared core of the CLI
+    ``models register`` and the admin ``POST /admin/models``). Operates on an
+    already-open ``db`` (the caller owns its lifecycle) and does NOT print or exit:
+    it **raises ``ValueError``** (joined messages) on any validation / cross-model /
+    duplicate error, and returns a result dict. With ``dry_run`` it validates only.
+    On a duplicate version it returns ``{"skipped": True, ...}`` when ``skip_existing``
+    else raises. ``data`` is the parsed TOML/JSON ``{model, factor}``."""
+    issues = validate_toml(data)
+    errors = [i for i in issues if i.startswith('ERROR:')]
+    warnings = [i.removeprefix('WARNING: ') for i in issues if i.startswith('WARNING:')]
     if errors:
-        for e in errors:
-            print(e)
-        sys.exit(1)
+        raise ValueError("; ".join(e.removeprefix('ERROR: ') for e in errors))
 
     version = data['model']['version']
     n_factors = len(data['factor'])
-
-    if args.dry_run:
-        print(f"Validation passed: model version {version} with {n_factors} factors")
-        return
-
-    db = OpenReturnDB(path=args.db)
     description = data['model'].get('description')
     mode = data['model'].get('mode', 'computed')
     model_type = data['model'].get('type')
@@ -347,27 +364,21 @@ def cmd_register(args) -> None:
     if model_type is not None:
         valid_types = {t['code'] for t in db.scores.list_model_types()}
         if model_type not in valid_types:
-            print(f"ERROR: unknown model type '{model_type}'. Known types: "
-                  f"{sorted(valid_types)}", file=sys.stderr)
-            db.close()
-            sys.exit(1)
+            raise ValueError(f"unknown model type '{model_type}'. Known types: "
+                             f"{sorted(valid_types)}")
 
-    # (kind is already constrained to _KINDS by validate_toml, which matches the
-    # seeded model_kind table — no separate DB existence check needed here.)
-
-    # A composite/super-composite must reference models that already exist, are
-    # the right kind (composite → base models; super → composites), and are
-    # computed (their totals are derived, not graded). validate_toml already
-    # confirmed the model:<v> tokens are well-formed; this checks them against the
-    # DB, which it could not see.
+    # A composite/super-composite must reference models that already exist, are the
+    # right kind (composite → base models; super → composites), and are computed.
+    # validate_toml confirmed the model:<v> tokens are well-formed; this checks them
+    # against the DB, which it could not see.
     if kind in _CHILD_KIND:
         want_kind = _CHILD_KIND[kind]
         refs = sorted({
-            int(inp[len(_MODEL_PREFIX):])
+            int(k[len(_MODEL_PREFIX):])
             for factor in data['factor']
-            for inp in (factor.get('inputs') or [])
-            if isinstance(inp, str) and inp.startswith(_MODEL_PREFIX)
-            and inp[len(_MODEL_PREFIX):].isdigit()
+            for k in parse_inputs(factor.get('inputs') or [])[0]
+            if isinstance(k, str) and k.startswith(_MODEL_PREFIX)
+            and k[len(_MODEL_PREFIX):].isdigit()
         })
         ref_errors = []
         for ref in refs:
@@ -384,75 +395,84 @@ def cmd_register(args) -> None:
                 ref_errors.append(f"is a '{kind}' but references version {ref}, which is a "
                                   f"'{child.get('model_kind', 'model')}' (expected '{want_kind}')")
         if ref_errors:
-            for e in ref_errors:
-                print(f"ERROR: model {e}.", file=sys.stderr)
-            db.close()
-            sys.exit(1)
+            raise ValueError("; ".join(f"model {e}" for e in ref_errors))
+
+    if dry_run:
+        return {"dry_run": True, "valid": True, "version": version,
+                "factors": n_factors, "kind": kind, "mode": mode, "warnings": warnings}
 
     existing = db.cursor.execute(
-        "SELECT 1 FROM score_model WHERE version = ?", (version,)
-    ).fetchone()
+        "SELECT 1 FROM score_model WHERE version = ?", (version,)).fetchone()
     if existing:
-        if args.skip_existing:
-            print(f"Model version {version} already registered, skipping.")
-            db.close()
-            return
-        print(f"ERROR: model version {version} is already registered.", file=sys.stderr)
-        db.close()
-        sys.exit(1)
+        if skip_existing:
+            return {"skipped": True, "version": version, "warnings": warnings}
+        raise ValueError(f"model version {version} is already registered")
 
     db.cursor.execute(
-        "INSERT INTO score_model (version, description, model_type, scoring_mode, model_kind) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (version, description, model_type, mode, kind)
-    )
+        "INSERT INTO score_model "
+        "(version, description, model_type, scoring_mode, model_kind, missing_data) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (version, description, model_type, mode, kind, data['model'].get('missing_data')))
     model_id = db.cursor.lastrowid
 
     for factor in data['factor']:
         if mode == 'manual':
             db.cursor.execute(
-                """
-                INSERT INTO score_factor
-                  (model_id, name, weight, formula_type, inputs, direction,
-                   benchmark_lo, benchmark_hi, manual_scale, formula_description)
-                VALUES (?, ?, ?, 'manual', '[]', ?, ?, ?, ?, ?)
-                """,
-                (
-                    model_id,
-                    factor['name'],
-                    factor['weight'],
-                    factor.get('direction', 'higher'),
-                    factor.get('benchmark_lo', 0.0),
-                    factor.get('benchmark_hi', 1.0),
-                    factor['scale'],
-                    factor.get('formula_description'),
-                )
-            )
+                "INSERT INTO score_factor (model_id, name, weight, formula_type, inputs, "
+                "direction, benchmark_lo, benchmark_hi, manual_scale, formula_description) "
+                "VALUES (?, ?, ?, 'manual', '[]', ?, ?, ?, ?, ?)",
+                (model_id, factor['name'], factor['weight'], factor.get('direction', 'higher'),
+                 factor.get('benchmark_lo', 0.0), factor.get('benchmark_hi', 1.0),
+                 factor['scale'], factor.get('formula_description')))
         else:
             db.cursor.execute(
-                """
-                INSERT INTO score_factor
-                  (model_id, name, weight, formula_type, inputs, direction,
-                   benchmark_lo, benchmark_hi, formula_description)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    model_id,
-                    factor['name'],
-                    factor['weight'],
-                    factor['formula_type'],
-                    json.dumps(factor['inputs']),
-                    factor['direction'],
-                    factor['benchmark_lo'],
-                    factor['benchmark_hi'],
-                    factor.get('formula_description'),
-                )
-            )
+                "INSERT INTO score_factor (model_id, name, weight, formula_type, inputs, "
+                "direction, benchmark_lo, benchmark_hi, formula_description) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (model_id, factor['name'], factor['weight'], factor['formula_type'],
+                 json.dumps(factor['inputs']), factor['direction'], factor['benchmark_lo'],
+                 factor['benchmark_hi'], factor.get('formula_description')))
 
+    db.audit.record(actor, 'create', 'score_model', str(version),
+                    {'kind': kind, 'mode': mode, 'factors': n_factors}, commit=False)
     db.connection.commit()
-    label = f"{mode} {model_type or ''} {kind}".replace('  ', ' ').strip()
-    print(f"Registered {label} model version {version} with {n_factors} factors.")
+    return {"version": version, "model_id": model_id, "factors": n_factors,
+            "kind": kind, "mode": mode, "model_type": model_type, "warnings": warnings}
+
+
+def cmd_register(args) -> None:
+    with open(args.file, 'rb') as f:
+        data = tomllib.load(f)
+
+    # Syntactic validation first so the CLI can print every issue at once.
+    issues = validate_toml(data)
+    for w in (i for i in issues if i.startswith('WARNING:')):
+        print(w)
+    errors = [i for i in issues if i.startswith('ERROR:')]
+    if errors:
+        for e in errors:
+            print(e)
+        sys.exit(1)
+
+    version = data['model']['version']
+    n_factors = len(data['factor'])
+    if args.dry_run:
+        print(f"Validation passed: model version {version} with {n_factors} factors")
+        return
+
+    db = OpenReturnDB(path=args.db)
+    try:
+        result = register_model(db, data, skip_existing=getattr(args, 'skip_existing', False))
+    except ValueError as e:
+        print(f"ERROR: {e}.", file=sys.stderr)
+        db.close()
+        sys.exit(1)
     db.close()
+    if result.get('skipped'):
+        print(f"Model version {version} already registered, skipping.")
+        return
+    label = f"{result['mode']} {result.get('model_type') or ''} {result['kind']}".replace('  ', ' ').strip()
+    print(f"Registered {label} model version {version} with {n_factors} factors.")
 
 
 def cmd_list(args) -> None:

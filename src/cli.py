@@ -40,6 +40,9 @@ def main() -> int:
     serve_p.add_argument('--host',    default='localhost', help='Bind host (default: localhost)')
     serve_p.add_argument('--port',    type=int, default=8080, help='Bind port (default: 8080)')
     serve_p.add_argument('--auth',    action='store_true', help='Require API key authentication')
+    serve_p.add_argument('--cors-origin', action='append', dest='cors_origin', metavar='ORIGIN',
+                         help='Allowed CORS origin (repeatable). Default: any origin (*). '
+                              'Auth is header-based, so * is safe.')
     serve_p.add_argument('--workers', type=int, default=None,
                          help='Parallel XML parser processes for --zip-dir ingestion (default: CPU count)')
 
@@ -116,11 +119,57 @@ def main() -> int:
     k_create.add_argument('name', help='Human-readable label (e.g. "Dashboard", "CI pipeline")')
     k_create.add_argument('--rate-limit', type=int, default=-1, dest='rate_limit', metavar='N',
                           help='Max requests per minute (-1 = unlimited, default)')
+    k_create.add_argument('--role', default='service', metavar='ROLE',
+                          help='Role granting the key its permissions (default: service — restricted read-only)')
 
     keys_sub.add_parser('list', help='List all API keys')
 
     k_revoke = keys_sub.add_parser('revoke', help='Revoke a key by ID')
     k_revoke.add_argument('key_id', type=int, help='Key ID (from openreturn keys list)')
+
+    # ── users ──────────────────────────────────────────────────────────────────
+    users_p = sub.add_parser('users', help='Manage user accounts, roles, and permissions')
+    users_sub = users_p.add_subparsers(dest='users_cmd', required=True)
+
+    u_create = users_sub.add_parser('create', help='Create a user account')
+    u_create.add_argument('username')
+    u_create.add_argument('--role', action='append', metavar='ROLE',
+                          help='Role to assign (repeatable: --role editor --role ...)')
+    u_create.add_argument('--password', default=None,
+                          help='Set this password (default: generate a temporary one and print it)')
+    u_create.add_argument('--password-file', dest='password_file', default=None,
+                          help='Read the password from this file (for deploys/secrets)')
+    u_create.add_argument('--skip-existing', dest='skip_existing', action='store_true',
+                          help='Exit 0 without changes if the user already exists (idempotent bootstrap)')
+
+    u_setpw = users_sub.add_parser('set-password', help='Set a user password (prompts securely)')
+    u_setpw.add_argument('username')
+
+    u_resetpw = users_sub.add_parser('reset-password', help='Generate a new temporary password')
+    u_resetpw.add_argument('username')
+
+    users_sub.add_parser('list', help='List user accounts')
+
+    u_act = users_sub.add_parser('activate', help='Reactivate a user account')
+    u_act.add_argument('username')
+    u_deact = users_sub.add_parser('deactivate', help='Deactivate a user (revokes their sessions)')
+    u_deact.add_argument('username')
+
+    u_assign = users_sub.add_parser('assign-role', help='Assign a role to a user')
+    u_assign.add_argument('username')
+    u_assign.add_argument('role')
+    u_revrole = users_sub.add_parser('revoke-role', help='Revoke a role from a user')
+    u_revrole.add_argument('username')
+    u_revrole.add_argument('role')
+
+    users_sub.add_parser('roles', help='List roles and their permissions')
+
+    u_grant = users_sub.add_parser('grant', help='Grant a permission to a role')
+    u_grant.add_argument('role')
+    u_grant.add_argument('permission')
+    u_revperm = users_sub.add_parser('revoke', help='Revoke a permission from a role')
+    u_revperm.add_argument('role')
+    u_revperm.add_argument('permission')
 
     # ── models ───────────────────────────────────────────────────────────────
     models_p = sub.add_parser('models', help='Manage scoring models')
@@ -150,11 +199,49 @@ def main() -> int:
     score_p.add_argument('--version', type=int, action='append', metavar='V',
                          help='Limit to specific model version(s); repeatable (default: all computed)')
 
+    # ── ocr ────────────────────────────────────────────────────────────────────
+    ocr_p = sub.add_parser('ocr', help='OCR a 990 PDF into confidence-scored financial observations')
+    ocr_p.add_argument('file', help='Path to the 990 PDF')
+    ocr_p.add_argument('--ein', required=True, help='Organization EIN')
+    ocr_p.add_argument('--year', type=int, required=True, help='Fiscal year')
+
+    # ── financials ───────────────────────────────────────────────────────────
+    fin_p = sub.add_parser('financials', help='Derive/import unified financial observations')
+    fin_sub = fin_p.add_subparsers(dest='financials_cmd', required=True)
+    f_rebuild = fin_sub.add_parser('rebuild', help='Derive 990 observations into the canonical layer')
+    f_rebuild.add_argument('--org', action='append', metavar='EIN',
+                           help='Limit to specific organization EIN(s); repeatable')
+    fin_sub.add_parser('backfill-values',
+                       help='One-time backfill of denormalized canonical values (resumable)')
+    f_import = fin_sub.add_parser('import', help='Import financial observations from a JSON file')
+    f_import.add_argument('file', help='JSON: an object (or list) with {ein, fiscal_year, source, values}')
+    f_import.add_argument('--ein', default=None, help='Default EIN for records that omit it')
+    f_import.add_argument('--year', type=int, default=None, help='Default fiscal year')
+    f_import.add_argument('--source', default='audited_statement', help='Default source code')
+
     resolve_p = sub.add_parser('resolve',
                                help='Cluster graph appearances into canonical party nodes')
     resolve_p.add_argument('--db', default=None, help='Path to OpenReturn.db (defaults to ./OpenReturn.db)')
     resolve_p.add_argument('--version', type=int, default=1, metavar='V',
                            help='Resolver version to stamp on created party nodes (default: 1)')
+
+    classify_p = sub.add_parser('classify',
+                                help='(Re)derive each org\'s foundation/nonprofit type + grantmaker flag')
+    classify_p.add_argument('--db', default=None, help='Path to OpenReturn.db (defaults to ./OpenReturn.db)')
+
+    counties_p = sub.add_parser('counties', help='Deduce org counties from a ZIP→county crosswalk')
+    counties_sub = counties_p.add_subparsers(dest='counties_cmd', required=True)
+    c_import = counties_sub.add_parser('import', help='Import a ZIP→county crosswalk CSV (e.g. HUD) + derive')
+    c_import.add_argument('file', help='Path to the crosswalk CSV')
+    c_import.add_argument('--db', default=None, help='Path to OpenReturn.db (defaults to ./OpenReturn.db)')
+    c_derive = counties_sub.add_parser('derive', help='Re-derive counties from the imported crosswalk')
+    c_derive.add_argument('--db', default=None, help='Path to OpenReturn.db (defaults to ./OpenReturn.db)')
+
+    templates_p = sub.add_parser('templates', help='Browse the model-template catalog (prefill guides)')
+    templates_sub = templates_p.add_subparsers(dest='templates_cmd', required=True)
+    templates_sub.add_parser('list', help='List the model templates in the catalog')
+    t_show = templates_sub.add_parser('show', help='Print a template\'s TOML (to edit + register)')
+    t_show.add_argument('code', help='Template code (filename stem, e.g. 10-operating-ratios)')
 
     args = parser.parse_args()
 
@@ -191,6 +278,23 @@ def main() -> int:
         dispatch = {'create': cmd_create, 'list': _keys_list, 'revoke': cmd_revoke}
         return dispatch[args.keys_cmd](args) or 0
 
+    if args.command == 'users':
+        import users as _users
+        dispatch = {
+            'create':         _users.cmd_create,
+            'set-password':   _users.cmd_set_password,
+            'reset-password': _users.cmd_reset_password,
+            'list':           _users.cmd_list,
+            'activate':       _users.cmd_activate,
+            'deactivate':     _users.cmd_deactivate,
+            'assign-role':    _users.cmd_assign_role,
+            'revoke-role':    _users.cmd_revoke_role,
+            'roles':          _users.cmd_roles,
+            'grant':          _users.cmd_grant,
+            'revoke':         _users.cmd_revoke,
+        }
+        return dispatch[args.users_cmd](args) or 0
+
     if args.command == 'models':
         from models import cmd_register, cmd_list as _models_list
         if args.models_cmd == 'register':
@@ -201,9 +305,34 @@ def main() -> int:
         from scores import cmd_score
         return cmd_score(args)
 
+    if args.command == 'ocr':
+        from ocr import cmd_ocr
+        return cmd_ocr(args)
+
+    if args.command == 'financials':
+        import financials as _fin
+        return {'rebuild': _fin.cmd_rebuild, 'import': _fin.cmd_import,
+                'backfill-values': _fin.cmd_backfill_values}[args.financials_cmd](args) or 0
+
     if args.command == 'resolve':
         from resolve import cmd_resolve
         return cmd_resolve(args)
+
+    if args.command == 'classify':
+        from classify import cmd_classify
+        return cmd_classify(args)
+
+    if args.command == 'templates':
+        import templates as _templates
+        if args.templates_cmd == 'show':
+            return _templates.cmd_show(args)
+        return _templates.cmd_list(args)
+
+    if args.command == 'counties':
+        import counties as _counties
+        if args.counties_cmd == 'import':
+            return _counties.cmd_import(args)
+        return _counties.cmd_derive(args)
 
 
 if __name__ == '__main__':  # pragma: no cover

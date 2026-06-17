@@ -13,7 +13,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from router import Router
 from server import Server
+from auth import Principal
 import server.server as server_module
+
+
+def _prin(rate_limit=-1):
+    return Principal(kind='program', actor_id=1, label='t',
+                     permissions=frozenset(), rate_limit=rate_limit)
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +205,7 @@ class TestServerRun(unittest.TestCase):
         captured = io.StringIO()
         with patch('server.server.HTTPServer') as MockHTTP:
             MockHTTP.return_value = self._make_mock_httpd()
-            srv = Server(host='127.0.0.1', port=0, key_validator=lambda k: -1)
+            srv = Server(host='127.0.0.1', port=0, authenticator=lambda k: _prin())
             with patch('sys.stdout', captured):
                 srv.run()
         output = captured.getvalue()
@@ -209,7 +215,7 @@ class TestServerRun(unittest.TestCase):
         captured = io.StringIO()
         with patch('server.server.HTTPServer') as MockHTTP:
             MockHTTP.return_value = self._make_mock_httpd()
-            srv = Server(host='127.0.0.1', port=0, debug=True, key_validator=lambda k: -1)
+            srv = Server(host='127.0.0.1', port=0, debug=True, authenticator=lambda k: _prin())
             with patch('sys.stdout', captured):
                 srv.run()
         output = captured.getvalue()
@@ -628,7 +634,7 @@ class TestServerDebugAuth(unittest.TestCase):
             host='127.0.0.1',
             port=0,
             debug=True,
-            key_validator=lambda k: -1 if k == 'secret' else None
+            authenticator=lambda k: _prin() if k == 'secret' else None
         )
         router = Router(prefix='')
 
@@ -1075,6 +1081,57 @@ class TestServerBodySizeLimit(unittest.TestCase):
         over_limit = server_module._MAX_BODY_SIZE + 1
         _, body = self._send_claimed_size(over_limit)
         self.assertIn('error', json.loads(body))
+
+
+def _options(url: str, headers: dict | None = None):
+    req = urllib.request.Request(url, headers=headers or {}, method='OPTIONS')
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return resp.status, resp.headers
+    except urllib.error.HTTPError as e:  # pragma: no cover
+        return e.code, e.headers
+
+
+class TestCORS(unittest.TestCase):
+    def _serve(self, cors_origins=None):
+        srv = Server(host='127.0.0.1', port=0, cors_origins=cors_origins)
+
+        @srv.get('/ping')
+        def ping(**_):
+            return {"pong": True}
+
+        ctx = _LiveServer(srv)
+        self.addCleanup(lambda: ctx.__exit__(None, None, None))
+        return ctx.__enter__()
+
+    def test_get_wildcard_origin_echoes_star(self):
+        live = self._serve()
+        _, headers, _ = _get(f'{live.url}/ping', {'Origin': 'https://app.example.com'})
+        self.assertEqual(headers.get('Access-Control-Allow-Origin'), '*')
+
+    def test_no_origin_no_cors_header(self):
+        live = self._serve()
+        _, headers, _ = _get(f'{live.url}/ping')
+        self.assertIsNone(headers.get('Access-Control-Allow-Origin'))
+
+    def test_options_preflight(self):
+        live = self._serve()
+        status, headers = _options(f'{live.url}/ping', {'Origin': 'https://app.example.com'})
+        self.assertEqual(status, 204)
+        self.assertEqual(headers.get('Access-Control-Allow-Origin'), '*')
+        self.assertIn('GET', headers.get('Access-Control-Allow-Methods', ''))
+        self.assertIn('Authorization', headers.get('Access-Control-Allow-Headers', ''))
+
+    def test_restricted_origins_echo_match(self):
+        live = self._serve(cors_origins=['https://app.example.com'])
+        _, headers, _ = _get(f'{live.url}/ping', {'Origin': 'https://app.example.com'})
+        self.assertEqual(headers.get('Access-Control-Allow-Origin'), 'https://app.example.com')
+        self.assertEqual(headers.get('Vary'), 'Origin')
+
+    def test_restricted_origins_reject_nonmatch(self):
+        live = self._serve(cors_origins=['https://app.example.com'])
+        _, headers, _ = _get(f'{live.url}/ping', {'Origin': 'https://evil.example.com'})
+        self.assertIsNone(headers.get('Access-Control-Allow-Origin'))
 
 
 if __name__ == '__main__':

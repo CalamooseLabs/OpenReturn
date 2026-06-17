@@ -183,6 +183,69 @@ class AppearanceDatabase(Database):
         "WHERE ro.filing_id = ? ORDER BY ro.group_code, ro.occurrence_index", (fid,)).fetchall()]
     return {"people": people, "grants": grants, "related_orgs": related}
 
+  @staticmethod
+  def _grant_summary(grants: list[dict], *, key: str) -> dict:
+    """Roll a list of grant rows into totals: count, summed amount, distinct
+    counterparties (by ``key``), and amount by year (newest first)."""
+    by_year: dict[int, float] = {}
+    parties = set()
+    total = 0.0
+    for g in grants:
+      total += g["amount"]
+      by_year[g["year"]] = by_year.get(g["year"], 0.0) + g["amount"]
+      if g.get(key):
+        parties.add(g[key])
+    return {"grant_count": len(grants), "total_amount": total,
+            "counterparties": len(parties),
+            "by_year": [{"year": y, "amount": by_year[y]} for y in sorted(by_year, reverse=True)]}
+
+  def grants_made(self, ein: str) -> dict:
+    """A grantor org's **outbound** grants (the foundation/grantmaker → recipients
+    view): every grant_edge on the org's filings, joined to the grantee appearance
+    (+ its resolved canonical party). ``amount`` is cash + non-cash. For a 990-PF
+    grant the recipient EIN is only known once ``openreturn resolve`` links the
+    grantee to a party; Schedule-I grants carry the EIN as filed."""
+    ein = self._db.orgs.try_normalize_ein(ein)
+    rows = self.cursor.execute(
+      "SELECT f.year, pa.business_name, pa.person_name, "
+      "       COALESCE(g.recipient_ein, p.ein) AS recipient_ein, g.grant_kind, "
+      "       g.cash_amount, g.noncash_amount, g.purpose_txt, "
+      "       g.recipient_foundation_status, pa.resolved_party_id, p.canonical_name "
+      "FROM filing f "
+      "JOIN grant_edge g ON g.filing_id = f.filing_id "
+      "JOIN party_appearance pa ON pa.appearance_id = g.appearance_id "
+      "LEFT JOIN party p ON p.party_id = pa.resolved_party_id "
+      "WHERE f.organization_id = ? "
+      "ORDER BY f.year DESC, g.cash_amount DESC", (ein,)).fetchall()
+    grants = [{"year": r[0], "recipient": r[10] or r[1] or r[2], "recipient_ein": r[3],
+               "grant_kind": r[4], "cash_amount": r[5], "noncash_amount": r[6],
+               "amount": (r[5] or 0.0) + (r[6] or 0.0), "purpose": r[7],
+               "foundation_status": r[8], "resolved_party_id": r[9]} for r in rows]
+    return {"ein": ein, "direction": "made",
+            "summary": self._grant_summary(grants, key="recipient_ein"), "grants": grants}
+
+  def grants_received(self, ein: str) -> dict:
+    """An org's **inbound** grants (who funds this nonprofit): grant_edges whose
+    recipient EIN is this org (Schedule-I, matched directly) or whose grantee
+    appearance resolves to a party with this EIN (990-PF, after ``openreturn
+    resolve``), joined to the grantor filer org."""
+    ein = self._db.orgs.try_normalize_ein(ein)
+    rows = self.cursor.execute(
+      "SELECT f.year, f.organization_id, o.name, g.grant_kind, "
+      "       g.cash_amount, g.noncash_amount, g.purpose_txt "
+      "FROM grant_edge g "
+      "JOIN filing f ON f.filing_id = g.filing_id "
+      "LEFT JOIN organization o ON o.ein = f.organization_id "
+      "LEFT JOIN party_appearance pa ON pa.appearance_id = g.appearance_id "
+      "LEFT JOIN party p ON p.party_id = pa.resolved_party_id "
+      "WHERE g.recipient_ein = ? OR p.ein = ? "
+      "ORDER BY f.year DESC, g.cash_amount DESC", (ein, ein)).fetchall()
+    grants = [{"year": r[0], "grantor_ein": r[1], "grantor": r[2] or r[1],
+               "grant_kind": r[3], "cash_amount": r[4], "noncash_amount": r[5],
+               "amount": (r[4] or 0.0) + (r[5] or 0.0), "purpose": r[6]} for r in rows]
+    return {"ein": ein, "direction": "received",
+            "summary": self._grant_summary(grants, key="grantor_ein"), "grants": grants}
+
   def graph_counts(self) -> dict:
     """Row counts for the graph tables (for status / coverage reporting)."""
     out = {}

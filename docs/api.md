@@ -26,23 +26,33 @@ The sections below are the human-readable reference; the OpenAPI document is the
 
 ## Authentication
 
-When the server is started with `--auth`, every route requires a valid API key.
-Pass the key in either header — both are accepted:
+When the server is started with `--auth`, every route is permission-gated. There
+are two kinds of caller, both sending their key in either header (both accepted):
 
 ```
 Authorization: Bearer <key>
 X-API-Key: <key>
 ```
 
-Keys are managed with the `openreturn keys` CLI:
+- **Users** log in at **`POST /auth/login`** with a username + password and get a
+  **session key**. `GET /auth/me` reports the caller; `POST /auth/logout` revokes
+  the session. User accounts are created/reset with the `openreturn users` CLI —
+  there is no HTTP route to create a user or reset a password.
+- **Programs** (e.g. the frontend) use an **[API key](api-keys.md)** bound to a
+  role (default `service`, a restricted read-only role).
 
-```bash
-openreturn keys create "my-app"          # create and print a new key
-openreturn keys list                     # list all keys
-openreturn keys revoke <key_id>          # deactivate a key
-```
+Each route requires one permission (e.g. `org:write`). Access is allowed when the
+caller's roles grant it, else **403**; a missing/invalid key is **401**. See
+**[Access Control](access-control.md)** for roles, permissions, sessions, and the
+`openreturn users` CLI.
 
-A `401` is returned if the key is missing or invalid.
+### Auth endpoints
+
+| Method & path | Auth | Body / result |
+|---------------|------|---------------|
+| `POST /auth/login` | public | `{username, password}` → `{session_key, expires_at, user}` |
+| `POST /auth/logout` | session | revokes the caller's session → `{logged_out}` |
+| `GET /auth/me` | any principal | `{kind, label, permissions, user}` |
 
 ---
 
@@ -82,6 +92,9 @@ List organizations with optional name search and pagination.
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
 | `search` | string | — | Case-insensitive substring match on organization name |
+| `type` | string | — | Filter by `org_type`: `foundation` / `nonprofit` / `other` (see [Foundations & Grants](foundations.md)) |
+| `grantmaker` | boolean | — | Truthy → only grantmaking orgs (`is_grantmaker`) |
+| `sector` | string | — | Filter by sector (NTEE major-group code; see `/organizations/sectors`) |
 | `limit` | integer | `50` | Results per page (max 500) |
 | `offset` | integer | `0` | Number of results to skip |
 | `favorite` | boolean | `false` | When truthy (`1`/`true`/`yes`), return only favorited organizations |
@@ -98,9 +111,15 @@ List organizations with optional name search and pagination.
       "ein": "010234567",
       "name": "ACME NONPROFIT INC",
       "is_favorite": false,
+      "org_type": "nonprofit",
+      "is_grantmaker": false,
+      "sector_code": "E",
+      "sector_name": "Health Care",
+      "following": false,
       "created_at": "2025-01-15 10:23:45",
       "updated_at": "2025-01-15 10:23:45",
-      "address": {"street": "1 MAIN ST", "city": "AUSTIN", "state": "TX", "zip": "78701"}
+      "address": {"street": "1 MAIN ST", "city": "AUSTIN", "state": "TX", "zip": "78701",
+                  "county_fips": "48453", "county_name": "Travis"}
     }
   ]
 }
@@ -108,6 +127,13 @@ List organizations with optional name search and pagination.
 
 Every organization record carries an `address` object (the filer's return-header
 mailing address, normalized into a separate table) or `null` if none was captured.
+`org_type` (`foundation`/`nonprofit`/`other`/`null`) and `is_grantmaker` are the
+derived classification (see [Foundations & Grants](foundations.md)); `following` is
+true when the calling user follows the org (false for non-user callers).
+`sector_code`/`sector_name` are the org's assigned [sector](#get-organizationssectors)
+(NTEE major group, `null` until set); the address `county_fips`/`county_name` are
+deduced from the filer ZIP (`null` until a crosswalk is imported — see
+[`GET /organizations/counties`](#get-organizationscounties)).
 
 ---
 
@@ -127,9 +153,15 @@ supplied filters combine with AND; at least one of `q`/`ein`/`state`/`city` is r
 | `ein` | string | — | EIN forward-looking prefix (`1234` → `123456789…`) |
 | `state` | string | — | Exact 2-letter USPS state code |
 | `city` | string | — | Exact city, case-insensitive |
+| `county` | string | — | Exact 5-digit county FIPS (see `/organizations/counties`) |
+| `type` | string | — | Exact `org_type`: `foundation` / `nonprofit` / `other` |
+| `grantmaker` | boolean | — | Truthy → only grantmaking orgs |
+| `sector` | string | — | Exact sector (NTEE major-group code; see `/organizations/sectors`) |
 | `favorite` | boolean | `false` | Truthy → only favorited organizations |
 | `limit` | integer | `50` | Results per page (max 500) |
 | `offset` | integer | `0` | Number of results to skip |
+
+At least one of `q`/`ein`/`state`/`city`/`county`/`type`/`grantmaker`/`sector` is required.
 
 **Response** — same shape as `GET /organizations`, plus a `"mode"` of `"strict"` or `"fuzzy"`.
 
@@ -146,6 +178,41 @@ The states present in stored filer addresses (for the state-search dropdown):
 
 The cities present in stored filer addresses, optionally within one state
 (param `state`) — for the city-search dropdown: `{"cities": ["Austin", "Dallas", …]}`.
+
+---
+
+### `GET /organizations/sectors`
+
+The sector vocabulary (the [NTEE major groups](https://nccs.urban.org/publication/irs-activity-codes),
+seeded on every startup) for the sector dropdown / assignment UI:
+
+```json
+{"sectors": [{"code": "A", "name": "Arts, Culture & Humanities", "parent_code": null},
+             {"code": "B", "name": "Education", "parent_code": null}, …]}
+```
+
+`parent_code` is reserved for grouping the majors into custom buckets (always `null`
+in the shipped seed). A sector is assigned to an org via
+[`POST /organizations`](#post-organizations) / [`/organizations/edit`](#post-organizationsedit)
+(`sector_code`); the 990 e-file XML carries no NTEE code, so sector is assignable, not parsed.
+
+---
+
+### `GET /organizations/counties`
+
+The counties present in stored filer addresses (deduced from the filer ZIP),
+optionally within one state (param `state`) — for the county-search dropdown:
+
+```json
+{"counties": [{"fips": "48453", "name": "Travis", "state": "TX"}, …]}
+```
+
+County is **deduced offline** from a ZIP→county crosswalk, so the list is empty
+until an operator imports one with `openreturn counties import <file>` (e.g. the
+public [HUD USPS ZIP-COUNTY crosswalk](https://www.huduser.gov/portal/datasets/usps_crosswalk.html);
+`openreturn counties derive` re-derives without re-importing). The 990 carries no
+county; a ZIP that straddles a county line is approximated by its **dominant**
+(highest-residential-share) county.
 
 ---
 
@@ -166,11 +233,27 @@ Fetch a single organization by EIN.
   "ein": "010234567",
   "name": "ACME NONPROFIT INC",
   "is_favorite": false,
+  "website": "https://acme.org",
+  "main_email": "info@acme.org",
+  "sector_code": "E",
+  "sector_name": "Health Care",
+  "created_by": "alice",
+  "updated_by": "alice",
   "created_at": "2025-01-15 10:23:45",
   "updated_at": "2025-01-15 10:23:45",
-  "address": {"street": "1 MAIN ST", "city": "AUSTIN", "state": "TX", "zip": "78701"}
+  "address": {"street": "1 MAIN ST", "city": "AUSTIN", "state": "TX", "zip": "78701",
+              "county_fips": "48453", "county_name": "Travis"},
+  "mailing_address": {"street": "PO BOX 5", "city": "AUSTIN", "state": "TX", "zip": "78702"}
 }
 ```
+
+`address` is the physical (as-filed filer) address; `mailing_address` is the
+editable mailing address. `website`/`main_email`/`mailing_address` are `null`
+until set via [`POST /organizations`](#post-organizations) or
+[`/organizations/edit`](#post-organizationsedit). `sector_code`/`sector_name` are
+the assigned [sector](#get-organizationssectors) (`null` until set); the address
+`county_fips`/`county_name` are deduced from the filer ZIP (`null` until a crosswalk
+is imported). `created_by`/`updated_by` name the actor of the last create/edit.
 
 ---
 
@@ -215,17 +298,84 @@ Fetch an organization together with all its filing metadata and convenience link
 
 ---
 
-### `POST /organizations`
+### `GET /organizations/grants`
 
-Upsert an organization (insert if EIN is new, no-op if it already exists).
+Grants an organization **made** (the foundation → nonprofits view, the default) or
+**received** (its funders), built on the grant graph. See
+[Foundations & Grants](foundations.md).
 
-**Request body**
+**Query parameters**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `ein` | string | yes | 9-digit EIN |
+| `direction` | string | no | `made` (default) or `received` |
+
+**Response**
 
 ```json
-{ "ein": "010234567", "name": "ACME NONPROFIT INC" }
+{
+  "ein": "364348917",
+  "direction": "made",
+  "summary": {"grant_count": 2, "total_amount": 30000.0, "counterparties": 2,
+              "by_year": [{"year": 2023, "amount": 30000.0}]},
+  "grants": [
+    {"year": 2023, "recipient": "ACME NONPROFIT INC", "recipient_ein": "010234567",
+     "grant_kind": "PF_PAID", "cash_amount": 25000.0, "noncash_amount": 0.0,
+     "amount": 25000.0, "purpose": "General support", "foundation_status": null,
+     "resolved_party_id": 42}
+  ]
+}
 ```
 
-**Response** — the current organization record (same shape as `GET /organizations/detail`).
+For `direction=received`, each grant carries `grantor_ein` / `grantor` instead of
+the recipient fields. **Note:** 990-PF grants carry no recipient EIN in the e-file
+XML, so a foundation→nonprofit link for PF grants appears only after
+`openreturn resolve`; Schedule-I grants link immediately.
+
+---
+
+### `POST /organizations`
+
+Create an organization. Requires `org:write`. The EIN must be 9 digits (a hyphen
+is allowed) and must not already exist. The change is recorded in the audit trail.
+
+**Request body** (only `ein` and `name` are required)
+
+```json
+{
+  "ein": "36-4348917",
+  "name": "Administer Justice",
+  "website": "https://administerjustice.org",
+  "main_email": "info@administerjustice.org",
+  "sector_code": "I",
+  "address":         { "street": "1 Tyler Creek", "city": "Elgin", "state": "IL", "zip": "60120" },
+  "mailing_address": { "street": "PO Box 12", "city": "Elgin", "state": "IL", "zip": "60121" }
+}
+```
+
+`address` is the organization's **physical** address; `mailing_address` is a
+separate editable address. Both are optional and accept `{street, city, state,
+zip}` (plus `street2`). `sector_code` is optional and validated against the
+[sector](#get-organizationssectors) vocabulary (an unknown code is rejected; an
+empty string clears it).
+
+**Response** — the created organization (see [`GET /organizations/detail`](#get-organizationsdetail)),
+which now also carries `website`, `main_email`, `mailing_address`, and
+`created_by`/`updated_by`.
+
+---
+
+### `POST /organizations/edit`
+
+Edit an existing organization. Requires `org:write`. Only the fields present in
+the body are changed; `ein` selects the organization. Audited.
+
+```json
+{ "ein": "364348917", "main_email": "hello@administerjustice.org" }
+```
+
+**Response** — the updated organization, or `{"error": …}` if the EIN is unknown.
 
 ---
 
@@ -438,11 +588,80 @@ List all scores for an organization across all years and model versions.
       "filing_id": "550e8400-e29b-41d4-a716-446655440000",
       "year": 2023,
       "total_score": 72.4,
-      "scored_at": "2025-06-01 14:00:00"
+      "scored_at": "2025-06-01 14:00:00",
+      "imputed": false
     }
   ]
 }
 ```
+
+`imputed` is `true` when the score used a [missing-data fallback](scoring/models.md#missing-data-fallbacks-completing-a-multi-year-history) (one or more inputs filled from another year).
+
+---
+
+### `GET /scores/history`
+
+One model's full year-by-year score series for an org, oldest→newest — the multi-year ("five-year history") view. Years missing data are filled per the model's fallback strategy and flagged.
+
+**Query parameters**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `ein` | string | yes | 9-digit EIN |
+| `version` | integer | no | Model version (default `1`) |
+
+**Response**
+
+```json
+{
+  "ein": "010234567",
+  "model_version": 20,
+  "history": [
+    {"year": 2020, "total_score": 0.81, "imputed": false, "score_id": 11, "source_year": null},
+    {"year": 2021, "total_score": 0.81, "imputed": true,  "score_id": 12, "source_year": 2020},
+    {"year": 2022, "total_score": 0.87, "imputed": false, "score_id": 13, "source_year": null}
+  ]
+}
+```
+
+For an `imputed` year, `source_year` is the donor year its filled factors were carried from. The series spans the org's earliest data year through its latest; years before the earliest are never fabricated.
+
+---
+
+### `GET /scores/leaderboard`
+
+Rank organizations by a model's score — globally or within a subset. Ranks each org's **latest scored** year for the model (or a fixed `year`); ties share a rank. Works for base, composite, and super-composite models.
+
+**Query parameters**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `model` | integer | `1` | Model version to rank by |
+| `year` | integer | — | Rank a fixed tax year (default: each org's latest scored year) |
+| `sector` | string | — | Subset: NTEE sector code |
+| `state` / `city` / `county` | string | — | Subset: region (county is a FIPS code) |
+| `type` | string | — | Subset: `org_type` |
+| `list` | integer | — | Subset: members of an org list (`list_id`) |
+| `grantmaker` | boolean | — | Subset: grantmakers only |
+| `limit` / `offset` | integer | `50` / `0` | Pagination |
+
+**Response** — `{model_version, year, total, limit, offset, leaderboard: [{rank, ein, name, total_score, year}]}`. The subset filters compose with AND; the rank is computed **within the subset**.
+
+---
+
+### `GET /scores/ranking`
+
+One organization's rank for a model across dimensions — global plus its **own** sector / state / city / county — for an org page.
+
+**Query parameters**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `ein` | string | yes | 9-digit EIN |
+| `model` | integer | no | Model version (default `1`) |
+| `year` | integer | no | Fixed tax year (default: latest scored) |
+
+**Response** — `{ein, model_version, year, dimensions: {global, sector, state, city, county}}` where each dimension is `{rank, of, percentile, total_score}` (`rank`/`percentile` null if the org isn't ranked in that subset).
 
 ---
 
@@ -484,6 +703,7 @@ Fetch a score including per-factor breakdown.
   "model_type": "financial",
   "scoring_mode": "computed",
   "model_kind": "model",
+  "imputed": false,
   "factors": [
     {
       "factor_id": 1,
@@ -492,13 +712,15 @@ Fetch a score including per-factor breakdown.
       "raw_value": 0.12,
       "weighted_value": 18.6,
       "comment": null,
-      "manual_scale": null
+      "manual_scale": null,
+      "imputed": false,
+      "source_year": null
     }
   ]
 }
 ```
 
-For a **manual** model, `scoring_mode` is `"manual"`, each factor's `manual_scale` is set, and `comment` holds the grader's note (see [`POST /scores/grade`](#post-scoresgrade)). `model_kind` is `model` (base), `composite`, or `super_composite`; for a composite each factor's `raw_value` is a child model's score and the factor name names the child (see [Scoring Models → Model Kinds](scoring/models.md#model-kinds-composites)).
+For a **manual** model, `scoring_mode` is `"manual"`, each factor's `manual_scale` is set, and `comment` holds the grader's note (see [`POST /scores/grade`](#post-scoresgrade)). `model_kind` is `model` (base), `composite`, or `super_composite`; for a composite each factor's `raw_value` is a child model's score and the factor name names the child (see [Scoring Models → Model Kinds](scoring/models.md#model-kinds-composites)). The score-level and per-factor `imputed` flags (and a factor's donor `source_year`) mark values filled by a [missing-data fallback](scoring/models.md#missing-data-fallbacks-completing-a-multi-year-history).
 
 ---
 
@@ -825,3 +1047,150 @@ Record a grader's value and optional comment for one factor of a **manual** mode
 ```
 
 **Response** — the updated score (same shape as `GET /scores/detail`); each factor includes its `raw_value`, `comment`, and `weighted_value`. Errors with `{"error": …}` if the score is for a computed model, or the factor isn't part of the model.
+
+---
+
+## People
+
+User-managed people and their organization memberships — editable records,
+distinct from the read-only people in the 990 graph. Reads require `person:read`;
+all mutations require `person:write` and are audited.
+
+### `GET /people`
+
+List people. With `?ein=<EIN>` returns the people who belong to that organization
+(each with their membership role); otherwise a paged list (`?search=`, `?limit=`,
+`?offset=`).
+
+### `GET /people/detail?person_id=<id>`
+
+A person with their `memberships` (each carrying `org_ein`, `org_name`,
+`role_title`, `is_primary`, `start_date`, `end_date`).
+
+### `POST /people`
+
+Create a person. Body: `{full_name, email?, phone?, title?, notes?}` → the created `Person`.
+
+### `POST /people/edit`
+
+Edit a person. Body: `{person_id, ...changed fields}` (only present fields change).
+
+### `POST /people/delete`
+
+Body: `{person_id}` → `{deleted: bool}` (cascades the person's memberships).
+
+### `POST /people/membership`
+
+Link a person to an organization (upsert on person+org). Body:
+`{person_id, ein, role_title?, is_primary?, start_date?, end_date?}` → the
+`Membership`. Errors if the person or organization does not exist.
+
+### `POST /people/membership/remove`
+
+Body: `{person_id, ein}` → `{removed: bool}`.
+
+---
+
+## Tags
+
+Named labels applied to organizations. Reads require `tag:read`; applying/removing
+requires `tag:write` (audited). Tag names are unique case-insensitively.
+
+| Method & path | Body / params | Result |
+|---------------|---------------|--------|
+| `GET /tags` | `?ein=` (optional) | all tags + org counts, or one org's tag names |
+| `GET /tags/organizations` | `?tag=<name>` | `{tag, eins}` — orgs carrying the tag |
+| `POST /tags` | `{ein, tag}` | applies the tag → `{ein, tags}` |
+| `POST /tags/remove` | `{ein, tag}` | `{removed}` |
+
+---
+
+## Lists
+
+Lists of organizations, each **private** (only the owner reads/edits) or
+**public**, and **static** (explicit members) or **smart** (members derived from
+a tag query). Reads require `list:read`; mutations require `list:write` and are
+owner-scoped for private lists. A program (API key) can read public lists but
+owns no private ones.
+
+| Method & path | Body / params | Result |
+|---------------|---------------|--------|
+| `GET /lists` | — | lists the caller can see (public + own) |
+| `GET /lists/detail` | `?list_id=` | the list + its resolved `organizations` |
+| `POST /lists` | `{name, visibility?, kind?, definition?}` | creates a list |
+| `POST /lists/edit` | `{list_id, ...changed}` | edit (owner only) |
+| `POST /lists/delete` | `{list_id}` | `{deleted}` (owner only) |
+| `POST /lists/members/add` | `{list_id, ein}` | add to a **static** list |
+| `POST /lists/members/remove` | `{list_id, ein}` | remove from a static list |
+
+A **smart** list sets `kind: "smart"` and a `definition` such as
+`{"tags": ["prospect", "midwest"], "match": "any"}` (`"any"` = at least one tag,
+`"all"` = every tag); its membership is computed live from the tags, so
+`/lists/members/*` is rejected for smart lists.
+
+---
+
+## Financials
+
+The unified, multi-source financial layer the scoring models read from — see
+**[Financial Data](financials.md)** for the model. Reads require `data:read`,
+writes `data:write` (audited).
+
+| Method & path | Does |
+|---------------|------|
+| `GET /financials/concepts` · `/financials/sources` | the concept catalog (= scoring keys) · the source list |
+| `GET /financials?ein=&year=` | every fact: all observations, the canonical pick, conflict flag |
+| `GET /financials/conflicts?ein=` | facts where sources disagree and none is chosen yet |
+| `POST /financials/observations` | `{ein, fiscal_year, source, values:{concept:number}, confidence?}` — record a source |
+| `POST /financials/canonical` | `{ein, fiscal_year, concept, observation_id}` — choose the value models use |
+
+---
+
+## Follows
+
+A per-user **watchlist** for tracking organizations (e.g. foundations) — see
+**[Foundations & Grants](foundations.md)**. Following is a user action: a program
+(API key) caller has no watchlist. `GET` requires `follow:read`; follow/unfollow
+require `follow:write`.
+
+| Method & path | Does |
+|---------------|------|
+| `GET /follows` | the caller's followed orgs (optional `?type=foundation`) |
+| `POST /follows/follow` | `{ein}` — follow an org (idempotent) |
+| `POST /follows/unfollow` | `{ein}` — unfollow |
+
+The `following` flag on organization responses reflects this per-user state.
+
+---
+
+## Admin
+
+User, role, and permission administration over HTTP. **Every route requires the
+`user:admin` permission** and is audited. See [Access Control](access-control.md#admin-http-api)
+for the full table; the routes are `/admin/users` (+ `/reset-password`,
+`/activate`, `/deactivate`, `/assign-role`, `/revoke-role`), `/admin/roles` (+
+`/delete`, `/grant`, `/revoke`), and `/admin/permissions`. Creating a user
+returns a one-time `temporary_password` when none is supplied.
+
+The admin surface also builds **scoring models** (the model builder):
+
+| Method & path | Does |
+|---------------|------|
+| `GET /admin/models` | list registered models (so a composite can see its candidate children) |
+| `POST /admin/models` | create a model from `{definition, dry_run?, skip_existing?}` — `definition` is a `{model, factor}` model definition (e.g. a [template](#templates), edited). `dry_run` validates without writing; audited |
+
+---
+
+## Templates
+
+A read-only catalog of **model templates** — guides that prefill the model builder
+(you create the model from one; templates aren't active). Reads require `score:read`.
+See [Scoring Models → Templates](scoring/models.md#templates--the-model-builder) and
+the [Frontend Guide](frontend.md).
+
+| Method & path | Does |
+|---------------|------|
+| `GET /templates` | list the catalog: `code` / `name` / `kind` / `type` / `version` / `factor_count` |
+| `GET /templates/detail?code=` | the full `{model, factor}` definition to prefill the builder |
+
+Build a model from a template: `GET /templates/detail?code=…` → edit → `POST /admin/models`.

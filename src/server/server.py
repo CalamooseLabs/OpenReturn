@@ -54,6 +54,13 @@ def _debug_sep(title: str = ''):
 _RATE_WINDOW = 60.0   # seconds per rate-limit window
 _MAX_BODY_SIZE = 50 * 1024 * 1024  # 50 MB hard limit on request body
 
+# CORS — so a browser SPA can call the API cross-origin. Auth is header-based
+# (Bearer / X-API-Key), NOT cookie-based, so a wildcard origin is safe (no
+# credentialed requests); a deployment may still restrict to specific origins.
+_CORS_METHODS = 'GET, POST, OPTIONS'
+_CORS_HEADERS = 'Authorization, Content-Type, X-API-Key'
+_CORS_MAX_AGE = '86400'
+
 
 def _404_html(method: str, path: str) -> str:
   return (
@@ -68,11 +75,18 @@ def _404_html(method: str, path: str) -> str:
 
 
 class Server:
-  def __init__(self, host: str = 'localhost', port: int = 8080, debug: bool = False, key_validator=None):
+  def __init__(self, host: str = 'localhost', port: int = 8080, debug: bool = False,
+               authenticator=None, cors_origins=None):
     self.host = host
     self.port = port
     self.debug = debug
-    self.key_validator = key_validator
+    # Allowed CORS origins. Default ['*'] (safe — auth is header-based, not
+    # cookie-based). A specific list restricts to those origins (echoed back).
+    self.cors_origins = list(cors_origins) if cors_origins else ['*']
+    # authenticator(token) -> auth.Principal | None. Resolves a Bearer/X-API-Key
+    # token to the calling user (session) or program (API key). None disables all
+    # auth enforcement (dev mode / --auth off).
+    self.authenticator = authenticator
     self.routes: dict[str, dict[str, Callable]] = {
       'GET': {},
       'POST': {}
@@ -115,10 +129,11 @@ class Server:
   def _create_handler(self):
     routes = self.routes
     debug = self.debug
-    key_validator = self.key_validator
+    authenticator = self.authenticator
     rate_counters = self._rate_counters
     rate_lock = self._rate_lock
     fallback = self._fallback
+    cors_origins = self.cors_origins
 
     def _is_rate_limited(key: str, limit: int) -> bool:
       if limit == -1:
@@ -135,9 +150,24 @@ class Server:
         return entry[0] > limit
 
     class RequestHandler(BaseHTTPRequestHandler):
+      def _cors_headers(self) -> dict:
+        """CORS response headers for this request's Origin (empty if no Origin or
+        the origin isn't allowed). Wildcard config → ``*``; a specific allow-list
+        echoes the matching origin with ``Vary: Origin``."""
+        origin = self.headers.get('Origin')
+        if not origin:
+          return {}
+        if '*' in cors_origins:
+          return {'Access-Control-Allow-Origin': '*'}
+        if origin in cors_origins:
+          return {'Access-Control-Allow-Origin': origin, 'Vary': 'Origin'}
+        return {}
+
       def _send_response(self, status_code: int, body: str | bytes, content_type: str = 'text/html', extra_headers: dict | None = None):
         self.send_response(status_code)
         self.send_header('Content-Type', content_type)
+        for k, v in self._cors_headers().items():
+          self.send_header(k, v)
         if extra_headers:
           for k, v in extra_headers.items():
             self.send_header(k, v)
@@ -208,7 +238,8 @@ class Server:
           if debug:
             _debug_sep(f'handler → {handler.__name__}')
 
-          if key_validator is not None and getattr(handler, '_secured', False):
+          required_perm = getattr(handler, '_permission', None)
+          if authenticator is not None and (getattr(handler, '_secured', False) or required_perm):
             provided = None
             auth_header = self.headers.get('Authorization', '')
             if auth_header.startswith('Bearer '):
@@ -216,31 +247,31 @@ class Server:
             if not provided:
               provided = self.headers.get('X-API-Key') or None
 
-            rate_limit = key_validator(provided) if provided else None
-            if rate_limit is None:
-              err_body = json.dumps({"error": "unauthorized"})
-              self._send_response(401, err_body, 'application/json',
-                                  {'WWW-Authenticate': 'Bearer realm="openreturn"'})
+            principal = authenticator(provided) if provided else None
+
+            def _reject(code: int, msg: str, extra: dict | None = None):
+              self._send_response(code, json.dumps({"error": msg}), 'application/json', extra)
               elapsed_ms = (time.monotonic() - start) * 1000
               mc = _method_color(method)
               if debug:
                 _debug_sep()
-                print(f"  {_DIM}└─{_R}  {_RED}{_BOLD}401{_R}  {_DIM}{elapsed_ms:.1f}ms{_R}")
+                print(f"  {_DIM}└─{_R}  {_RED}{_BOLD}{code}{_R}  {_DIM}{elapsed_ms:.1f}ms{_R}")
               else:
-                print(f"  {mc}{_BOLD}{method:<6}{_R}  {_CYAN}{path}{_R}  {_RED}401{_R}  {_DIM}{elapsed_ms:.1f}ms{_R}")
+                print(f"  {mc}{_BOLD}{method:<6}{_R}  {_CYAN}{path}{_R}  {_RED}{code}{_R}  {_DIM}{elapsed_ms:.1f}ms{_R}")
+
+            if principal is None:
+              _reject(401, "unauthorized", {'WWW-Authenticate': 'Bearer realm="openreturn"'})
               return
-            if _is_rate_limited(provided, rate_limit):
-              err_body = json.dumps({"error": "rate limit exceeded"})
-              self._send_response(429, err_body, 'application/json',
-                                  {'Retry-After': str(int(_RATE_WINDOW))})
-              elapsed_ms = (time.monotonic() - start) * 1000
-              mc = _method_color(method)
-              if debug:
-                _debug_sep()
-                print(f"  {_DIM}└─{_R}  {_RED}{_BOLD}429{_R}  {_DIM}{elapsed_ms:.1f}ms{_R}")
-              else:
-                print(f"  {mc}{_BOLD}{method:<6}{_R}  {_CYAN}{path}{_R}  {_RED}429{_R}  {_DIM}{elapsed_ms:.1f}ms{_R}")
+            # Rate-limit before the permission check so a forbidden caller's repeated
+            # probes still count against (and are blocked by) their limit.
+            if _is_rate_limited(provided, principal.rate_limit):
+              _reject(429, "rate limit exceeded", {'Retry-After': str(int(_RATE_WINDOW))})
               return
+            if required_perm and required_perm not in principal.permissions:
+              _reject(403, "forbidden")
+              return
+            # Hand the resolved caller to the handler (per-request headers object).
+            self.headers._principal = principal
 
           try:
             result = handler(query_params=query_params, body=body, headers=self.headers)
@@ -266,6 +297,10 @@ class Server:
               print(f"  {_RED}ERROR{_R}  {_DIM}{str(e)}{_R}")
 
         elif fallback is not None:
+          # NOTE: the fallback handler runs WITHOUT the auth/permission/rate-limit
+          # gate above (it has no registered route to carry _secured/_permission).
+          # No router currently sets a fallback; if one is added for anything
+          # non-public, gate it here (or give it _permission and hoist the check).
           if debug:
             _debug_sep(f'fallback → {fallback.__name__}')
           try:
@@ -328,6 +363,19 @@ class Server:
       def do_POST(self):
         self._handle_request('POST')
 
+      def do_OPTIONS(self):
+        """CORS preflight — answered unauthenticated (preflight carries no auth
+        header) with the allowed methods/headers, so a browser SPA can then make
+        the real request."""
+        self.send_response(204)
+        for k, v in self._cors_headers().items():
+          self.send_header(k, v)
+        self.send_header('Access-Control-Allow-Methods', _CORS_METHODS)
+        self.send_header('Access-Control-Allow-Headers', _CORS_HEADERS)
+        self.send_header('Access-Control-Max-Age', _CORS_MAX_AGE)
+        self.send_header('Content-Length', '0')
+        self.end_headers()
+
       def log_message(self, format: str, *args):
         pass  # suppress default HTTPServer noise; handled in _handle_request
 
@@ -347,7 +395,7 @@ class Server:
     tags = []
     if self.debug:
       tags.append(f"{_YELLOW}{_BOLD}debug{_R}")
-    if self.key_validator:
+    if self.authenticator:
       tags.append(f"{_MAGENTA}auth{_R}")
     tag_str = ("  " + "  ".join(tags)) if tags else ""
     print(f"{_BOLD}{_GREEN}OpenReturn{_R}  {_DIM}v{_version}{_R}  listening on {_CYAN}http://{self.host}:{self.port}{_R}{tag_str}")

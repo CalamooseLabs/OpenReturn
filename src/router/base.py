@@ -13,19 +13,36 @@ class Router:
     self._template_cache: dict[str, str] = {}
     self._fallback = None
 
-  def route(self, path: str, method: str = 'GET', secured: bool | None = None):
+  def route(self, path: str, method: str = 'GET', secured: bool | None = None,
+            permission: str | None = None):
+    """Register a handler. ``permission`` (e.g. ``'org:write'``) gates the route
+    on an RBAC permission code: the server requires an authenticated caller whose
+    role grants it (else 403). A route with a ``permission`` is implicitly secured.
+    ``secured`` alone requires only a valid principal (any permission)."""
     def decorator(func: Callable):
       full_path = self.prefix + path
-      func._secured = secured if secured is not None else self.secure_by_default
+      func._permission = permission
+      if secured is None:
+        func._secured = bool(permission) or self.secure_by_default
+      else:
+        func._secured = secured
       self.routes[method.upper()][full_path] = func
       return func
     return decorator
 
-  def get(self, path: str, secured: bool | None = None):
-    return self.route(path, 'GET', secured=secured)
+  def get(self, path: str, secured: bool | None = None, permission: str | None = None):
+    return self.route(path, 'GET', secured=secured, permission=permission)
 
-  def post(self, path: str, secured: bool | None = None):
-    return self.route(path, 'POST', secured=secured)
+  def post(self, path: str, secured: bool | None = None, permission: str | None = None):
+    return self.route(path, 'POST', secured=secured, permission=permission)
+
+  @staticmethod
+  def _principal(headers):
+    """The authenticated caller for this request (an ``auth.Principal``), or None
+    when the route is public or the server runs without ``--auth``. The server
+    attaches it to the request headers; handlers read it for audit attribution
+    and to scope user-private data."""
+    return getattr(headers, '_principal', None)
 
   @staticmethod
   def _qp(query_params: dict, key: str) -> str | None:

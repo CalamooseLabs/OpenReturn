@@ -51,9 +51,23 @@ The project maintains **100% statement coverage**. PRs that reduce coverage shou
 | `tests/test_score_router.py` | `src/router/Score/score.py` |
 | `tests/test_score_debug.py` | `src/scoring/engine.py` (`debug()` walkthrough) + `GET /scores/debug` + `get_field_source` |
 | `tests/test_model_types.py` | model types + manual scoring: `src/models.py` (manual TOML), `src/scoring/engine.py` (`_normalize_manual`/`grade`), `src/database/Score/score.py` |
-| `tests/test_model_kinds.py` | model kinds (model/composite/super_composite): `src/models.py` (kind validation + cross-model registration), `src/scoring/engine.py` (`model:<version>` resolution, dependency ordering, composite scoring), `src/database/Score/score.py` (`list_model_kinds`/`model_kind`), `GET /scores/kinds`, and the shipped `models/*.toml` stack |
+| `tests/test_sector.py` | sector classification: `src/database/Organization/organization.py` (NTEE seed, `sector_code` on create/update, `sector`/search filter, `list_sectors`) + the `/organizations/sectors` route |
+| `tests/test_counties.py` | county deduction: `src/counties.py` (`parse_crosswalk` + the `counties import/derive` CLI) and `src/database/Organization/organization.py` (`import_zip_county`/`derive_counties`, county search + `list_counties`) |
+| `tests/test_ranking.py` | query-time ranking: `src/database/Score/score.py` (`rank_leaderboard`/`rank_org`/`rank_org_dimensions`, the subset-rank invariant) + the `/scores/leaderboard` + `/scores/ranking` routes |
+| `tests/test_foundations.py` | foundation/nonprofit classification: `src/database/Organization/organization.py` (`classify_organizations`, `org_type`/`is_grantmaker`, type/grantmaker search filters), `src/database/Appearance/appearance.py` (`grants_made`/`grants_received`), and the `/organizations/grants` route + `following` flag |
+| `tests/test_follow.py` | per-user watchlist: `src/database/Follow/follow.py` (follow/unfollow/list/`followed_eins`/cascade) + `src/router/Follow/follow.py` + the seeded `follow:*` permissions |
+| `tests/test_missing_data.py` | missing-data fallbacks: `src/scoring/engine.py` (`parse_inputs`, `_pick_donor_year`, `_resolve_input_filled`, two-pass `score_org` fill + composite propagation, `calculate`/`debug` fill) + `src/database/Score/score.py` (`list_score_history`, imputed/source_year columns) + `src/models.py` per-input/`missing_data` validation |
+| `tests/test_model_kinds.py` | model kinds (model/composite/super_composite): `src/models.py` (kind validation + cross-model registration), `src/scoring/engine.py` (`model:<version>` resolution, dependency ordering, composite scoring), `src/database/Score/score.py` (`list_model_kinds`/`model_kind`), `GET /scores/kinds`, and the bundled template catalog (`src/templates/*.toml`) |
+| `tests/test_templates.py` | model-template catalog: `src/templates/` loader + `openreturn templates` CLI, `src/router/Templates/templates.py` (read routes), and the template→`register_model` round-trip |
 | `tests/test_openapi.py` | `src/openapi.py` (spec + route-coverage + committed `openapi.json` sync) |
-| `tests/test_api_keys.py` | `src/keys.py` |
+| `tests/test_api_keys.py` | `src/keys.py` + `src/database/ApiKey/api_key.py` (key roles) |
+| `tests/test_users.py` | auth core: `src/auth.py` (scrypt/tokens/Principal), `src/database/User/user.py` (accounts/roles/permissions/sessions/`authenticate`), `src/router/Auth/auth.py` (login/logout/me), and the `openreturn users` CLI (`src/users.py`) |
+| `tests/test_org_crud.py` | editable orgs: `src/database/Organization/organization.py` (`normalize_ein`/`create_org`/`update_org`, physical+mailing address) + `src/database/Audit/audit.py` (audit entries) |
+| `tests/test_people.py` | People concern: `src/database/People/people.py` (person CRUD + org membership upsert/cascade) and `src/router/People/people.py` (routes + permissions) |
+| `tests/test_tags_lists.py` | Tags + Lists: `src/database/Tags/tags.py` (apply/remove, `orgs_with_tags` any/all), `src/database/Lists/lists.py` (static + smart-by-tag, private/public owner scoping), and the `/tags` + `/lists` routers |
+| `tests/test_admin.py` | admin HTTP management: `src/database/User/user.py` (`create_role`/`delete_role`/`create_permission`) and `src/router/Admin/admin.py` (`/admin/*`, all `user:admin`, audited) |
+| `tests/test_financials.py` | unified financial layer: `src/database/Financials/financials.py` (concepts seeded from `_PATHS`, 990 derivation + score equality, conflict + manual canonical, non-990 scoring) and `src/router/Financials/financials.py` |
+| `tests/test_ocr.py` | `src/ocr.py` — tesseract TSV parsing, label→concept extraction with per-reading confidence, and recording OCR observations (`ocr_990_pdf`); the live test skips when the OCR binaries are absent |
 | `tests/test_server_auth.py` | `src/server/server.py` (auth/rate-limit paths) |
 | `tests/test_server_coverage.py` | `src/server/server.py` (request handling, formats, errors) |
 | `tests/test_serve_instance.py` | `src/main.py` `cmd_serve` (single-instance guard, server.pid) |

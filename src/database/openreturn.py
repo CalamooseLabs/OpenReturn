@@ -1,13 +1,20 @@
 from database.base import Database
 from database.ApiKey import ApiKeyDatabase
 from database.Appearance import AppearanceDatabase
+from database.Audit import AuditDatabase
 from database.Filing import FilingDatabase
+from database.Financials import FinancialsDatabase
+from database.Follow import FollowDatabase
 from database.Ingest import IngestDatabase
+from database.Lists import ListsDatabase
 from database.Migration import MigrationDatabase
 from database.Organization import OrganizationDatabase
+from database.People import PeopleDatabase
 from database.ReportedData import ReportedDataDatabase
 from database.Schema import SchemaDatabase
 from database.Score import ScoreDatabase
+from database.Tags import TagsDatabase
+from database.User import UserDatabase
 
 
 class OpenReturnDB(Database):
@@ -43,13 +50,20 @@ class OpenReturnDB(Database):
         # seed inserts and the mental model honest.)
         self.meta          = SchemaDatabase(self)        # form/part/section/line/field
         self.orgs          = OrganizationDatabase(self)  # organization/address/state
+        self.users         = UserDatabase(self)          # app_user/role/permission/session (before keys)
+        self.audit         = AuditDatabase(self)         # audit_log (standalone)
+        self.keys          = ApiKeyDatabase(self)        # api_key → role
         self.filings       = FilingDatabase(self)        # filing → organization, form
         self.reported_data = ReportedDataDatabase(self)  # reported_data → filing, field
-        self.keys          = ApiKeyDatabase(self)        # api_key (standalone)
         self.ingest        = IngestDatabase(self)        # ingested_zip (standalone)
         self.migrations    = MigrationDatabase(self)     # migration tracking
         self.scores        = ScoreDatabase(self)         # score_* → filing
         self.appearances   = AppearanceDatabase(self)    # graph: people/grants/related → filing
+        self.financials    = FinancialsDatabase(self)    # unified concept/observation layer → filing/org
+        self.people        = PeopleDatabase(self)        # person/org_person → organization
+        self.tags          = TagsDatabase(self)          # tag/org_tag → organization
+        self.lists         = ListsDatabase(self)         # org_list/org_list_member → org + app_user
+        self.follows       = FollowDatabase(self)        # follow → app_user + organization
 
         # Shared field-metadata cache: built once here, read by reported_data.
         self._field_meta: dict[int, dict] = self.meta._build_field_meta_cache()

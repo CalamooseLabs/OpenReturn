@@ -904,5 +904,46 @@ class TestMain(unittest.TestCase):
         self.assertEqual(captured.get('db'), '/tmp/x.db')
 
 
+class TestRegisterModel(unittest.TestCase):
+    """register_model — the shared core of the CLI + admin create paths."""
+
+    def _defn(self, version=88, **model):
+        return {"model": {"version": version, **model},
+                "factor": [{"name": "PE", "weight": 1.0, "formula_type": "ratio",
+                            "inputs": ["prog", "total_exp"], "direction": "higher",
+                            "benchmark_lo": 0.0, "benchmark_hi": 1.0}]}
+
+    def setUp(self):
+        from database import OpenReturnDB
+        from models import register_model
+        self.db = OpenReturnDB(path=':memory:')
+        self.register = register_model
+
+    def tearDown(self):
+        self.db.close()
+
+    def test_creates_and_audits(self):
+        res = self.register(self.db, self._defn(88))
+        self.assertEqual(res['version'], 88)
+        self.assertIsNotNone(self.db.scores.get_model(88))
+        self.assertTrue(self.db.audit.list_log(entity_type='score_model', entity_id='88'))
+
+    def test_unknown_type_raises(self):
+        with self.assertRaises(ValueError):
+            self.register(self.db, self._defn(89, type='bogus'))
+
+    def test_dry_run_and_duplicate(self):
+        self.assertTrue(self.register(self.db, self._defn(90), dry_run=True)['dry_run'])
+        self.assertIsNone(self.db.scores.get_model(90))      # dry-run wrote nothing
+        self.register(self.db, self._defn(90))
+        with self.assertRaises(ValueError):
+            self.register(self.db, self._defn(90))            # duplicate
+        self.assertTrue(self.register(self.db, self._defn(90), skip_existing=True)['skipped'])
+
+    def test_invalid_definition_raises(self):
+        with self.assertRaises(ValueError):
+            self.register(self.db, {"model": {}, "factor": []})
+
+
 if __name__ == '__main__':
     unittest.main()

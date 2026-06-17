@@ -30,6 +30,12 @@ class ScoreDatabase(Database):
       "ALTER TABLE score_model ADD COLUMN model_kind TEXT REFERENCES model_kind (code)",
       "ALTER TABLE score_factor ADD COLUMN manual_scale TEXT",
       "ALTER TABLE organization_score_factor ADD COLUMN comment TEXT",
+      # Missing-data fallback (see scoring/models.md): model-level default policy +
+      # per-score / per-factor imputation provenance.
+      "ALTER TABLE score_model ADD COLUMN missing_data TEXT",
+      "ALTER TABLE organization_score ADD COLUMN imputed INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE organization_score_factor ADD COLUMN imputed INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE organization_score_factor ADD COLUMN source_year INTEGER",
     ):
       try:
         self.cursor.execute(ddl)
@@ -135,7 +141,7 @@ class ScoreDatabase(Database):
     """Model header — version, description, category type, scoring mode, and kind."""
     row = self.cursor.execute(
       "SELECT version, description, model_type, scoring_mode, "
-      "COALESCE(model_kind, 'model'), created_at "
+      "COALESCE(model_kind, 'model'), created_at, missing_data "
       "FROM score_model WHERE version = ?",
       (version,)
     ).fetchone()
@@ -143,7 +149,7 @@ class ScoreDatabase(Database):
       return None
     return {"version": row[0], "description": row[1], "model_type": row[2],
             "scoring_mode": row[3] or "computed", "model_kind": row[4] or "model",
-            "created_at": row[5]}
+            "created_at": row[5], "missing_data": row[6]}
 
   def list_model_types(self) -> list[dict]:
     rows = self.cursor.execute(
@@ -173,17 +179,25 @@ class ScoreDatabase(Database):
     composites before super-composites. (A model with no factors is still listed;
     the engine skips it.)"""
     rows = self.cursor.execute(
-      "SELECT version, model_id, COALESCE(model_kind, 'model') FROM score_model "
-      "WHERE COALESCE(scoring_mode, 'computed') != 'manual' ORDER BY version"
+      "SELECT version, model_id, COALESCE(model_kind, 'model'), missing_data "
+      "FROM score_model WHERE COALESCE(scoring_mode, 'computed') != 'manual' "
+      "ORDER BY version"
     ).fetchall()
-    return [{"version": r[0], "model_id": r[1], "model_kind": r[2]} for r in rows]
+    return [{"version": r[0], "model_id": r[1], "model_kind": r[2],
+             "missing_data": r[3]} for r in rows]
 
   def replace_org_scores(self, ein: str, model_ids: list[int], results: list) -> None:
     """Batch (re)write of one org's computed scores. Deletes the org's existing
     scores for ``model_ids`` (factors cascade) then inserts the supplied results
     — used by the batch/recompute path so a fresh history reshapes every year's
     score. ``results`` is a list of
-    ``(filing_uuid, model_id, total_score, [(factor_id, raw, weighted), …])``.
+    ``(filing_id, model_id, total_score, factors[, imputed])`` where ``filing_id``
+    is the **integer** filing.filing_id (the scoring engine carries it through from
+    get_org_scoring_data / ensure_year_anchor_filing_id, so no uuid→id lookup is
+    needed) and each factor
+    is ``(factor_id, raw, weighted[, imputed, source_year])``; the optional
+    imputation fields default to not-imputed (a real score). The delete is org-wide
+    per model, so stale imputed rows from a prior run are cleaned up automatically.
     Does NOT commit — the batch driver commits per chunk of orgs. Scores for
     models outside ``model_ids`` (e.g. manual) are left untouched."""
     if model_ids:
@@ -192,18 +206,23 @@ class ScoreDatabase(Database):
         f"DELETE FROM organization_score WHERE model_id IN ({qmarks}) "
         f"AND filing_id IN (SELECT filing_id FROM filing WHERE organization_id = ?)",
         (*model_ids, ein))
-    for filing_uuid, model_id, total, factors in results:
-      # results carry the public uuid; resolve to the integer filing_id.
+    for entry in results:
+      filing_id, model_id, total, factors = entry[0], entry[1], entry[2], entry[3]
+      imputed = entry[4] if len(entry) > 4 else 0
+      # results carry the integer filing_id directly — no uuid→id subquery.
       self.cursor.execute(
-        "INSERT INTO organization_score (filing_id, model_id, total_score) "
-        "VALUES ((SELECT filing_id FROM filing WHERE uuid = ?), ?, ?)",
-        (filing_uuid, model_id, total))
+        "INSERT INTO organization_score (filing_id, model_id, total_score, imputed) "
+        "VALUES (?, ?, ?, ?)",
+        (filing_id, model_id, total, 1 if imputed else 0))
       score_id = self.cursor.lastrowid
       if factors:
         self.cursor.executemany(
           "INSERT INTO organization_score_factor "
-          "(score_id, factor_id, raw_value, weighted_value) VALUES (?, ?, ?, ?)",
-          [(score_id, fid, raw, weighted) for fid, raw, weighted in factors])
+          "(score_id, factor_id, raw_value, weighted_value, imputed, source_year) "
+          "VALUES (?, ?, ?, ?, ?, ?)",
+          [(score_id, f[0], f[1], f[2],
+            1 if (len(f) > 3 and f[3]) else 0,
+            f[4] if len(f) > 4 else None) for f in factors])
 
   def all_eins(self) -> list[str]:
     """Every organization EIN (for a full score rebuild). Materialized as a list
@@ -246,29 +265,34 @@ class ScoreDatabase(Database):
     self.connection.commit()
     return self.cursor.lastrowid
 
-  def store_factor_values(self, score_id: int, values: dict[int, tuple[float, float]]) -> None:
-    """Store per-factor results. values maps factor_id → (raw_value, weighted_value)."""
+  def store_factor_values(self, score_id: int, values: dict) -> None:
+    """Store per-factor results. ``values`` maps factor_id → ``(raw, weighted)`` or
+    ``(raw, weighted, imputed, source_year)`` (the latter carrying missing-data
+    provenance; the short form defaults to not-imputed)."""
     self.cursor.executemany(
       """
       INSERT OR REPLACE INTO organization_score_factor
-        (score_id, factor_id, raw_value, weighted_value)
-      VALUES (?, ?, ?, ?)
+        (score_id, factor_id, raw_value, weighted_value, imputed, source_year)
+      VALUES (?, ?, ?, ?, ?, ?)
       """,
-      [(score_id, fid, raw, weighted) for fid, (raw, weighted) in values.items()]
+      [(score_id, fid, t[0], t[1],
+        1 if (len(t) > 2 and t[2]) else 0, t[3] if len(t) > 3 else None)
+       for fid, t in values.items()]
     )
     self.connection.commit()
 
-  def finalize_score(self, score_id: int, total_score: float) -> None:
+  def finalize_score(self, score_id: int, total_score: float, imputed: bool = False) -> None:
     self.cursor.execute(
-      "UPDATE organization_score SET total_score = ? WHERE score_id = ?",
-      (total_score, score_id)
+      "UPDATE organization_score SET total_score = ?, imputed = ? WHERE score_id = ?",
+      (total_score, 1 if imputed else 0, score_id)
     )
     self.connection.commit()
 
   def list_scores(self, ein: str) -> list[dict]:
     rows = self.cursor.execute(
       """
-      SELECT os.score_id, sm.version, f.uuid, f.year, os.total_score, os.scored_at
+      SELECT os.score_id, sm.version, f.uuid, f.year, os.total_score, os.scored_at,
+             os.imputed
       FROM organization_score os
       JOIN score_model sm ON sm.model_id = os.model_id
       JOIN filing f ON f.filing_id = os.filing_id
@@ -279,15 +303,151 @@ class ScoreDatabase(Database):
     ).fetchall()
     return [
       {"score_id": r[0], "model_version": r[1], "filing_id": r[2], "year": r[3],
-       "total_score": r[4], "scored_at": r[5]}
+       "total_score": r[4], "scored_at": r[5], "imputed": bool(r[6])}
       for r in rows
     ]
+
+  def list_score_history(self, ein: str, model_version: int) -> list[dict]:
+    """One model's full score series for an org, oldest→newest — the MinistryWatch-
+    style multi-year view. Each year carries ``imputed`` and, for an imputed year,
+    the donor ``source_year`` of its filled factors (the earliest such donor)."""
+    rows = self.cursor.execute(
+      """
+      SELECT f.year, os.total_score, os.imputed, os.score_id,
+             MIN(osf.source_year)
+      FROM organization_score os
+      JOIN score_model sm ON sm.model_id = os.model_id
+      JOIN filing f ON f.filing_id = os.filing_id
+      LEFT JOIN organization_score_factor osf
+        ON osf.score_id = os.score_id AND osf.source_year IS NOT NULL
+      WHERE f.organization_id = ? AND sm.version = ?
+      GROUP BY os.score_id
+      ORDER BY f.year ASC
+      """,
+      (ein, model_version)
+    ).fetchall()
+    return [
+      {"year": r[0], "total_score": r[1], "imputed": bool(r[2]),
+       "score_id": r[3], "source_year": r[4]}
+      for r in rows
+    ]
+
+  # ── ranking (query-time; no stored ranks) ────────────────────────────────
+  # Rank orgs by a model's latest scored total_score, globally or within a subset
+  # (sector / state / city / county / list / org_type / grantmaker). One window-fn
+  # leaderboard + a COUNT-greater primitive for a single org's place in a subset.
+
+  @staticmethod
+  def _rank_subset(*, sector=None, state=None, city=None, county=None,
+                   org_type=None, grantmaker=None, list_id=None):
+    """Build (clauses, params) for the subset predicate, on the `sub` CTE aliases
+    (o.* / a.* / l.ein). Mirrors OrganizationDatabase.search_organizations filters."""
+    cl, p = [], []
+    pairs = [
+      (sector, "o.sector_code = ?", sector),
+      (state, "a.state_code = ?", str(state).strip().upper() if state else None),
+      (city, "a.city = ? COLLATE NOCASE", str(city).strip() if city else None),
+      (county, "a.county_fips = ?", county),
+      (org_type, "o.org_type = ?", org_type),
+      (grantmaker is not None, "o.is_grantmaker = ?", 1 if grantmaker else 0),
+      (list_id is not None,
+       "EXISTS (SELECT 1 FROM org_list_member ml WHERE ml.org_ein = l.ein AND ml.list_id = ?)",
+       list_id),
+    ]
+    for present, clause, param in pairs:
+      if present:
+        cl.append(clause)
+        p.append(param)
+    return cl, p
+
+  def _rank_cte(self, model_version, year, clauses, params):
+    """The `WITH latest, sub` prefix: `latest` = one row per org (the newest scored
+    filing for the model, or a fixed year), `sub` = that set filtered to the subset.
+    Returns (cte_sql, params)."""
+    inner_year, iparams = "", [model_version]
+    if year is not None:
+      inner_year = " AND f.year = ?"
+      iparams.append(year)
+    subset = (" AND " + " AND ".join(clauses)) if clauses else ""
+    cte = (
+      "WITH latest AS ("
+      " SELECT os.total_score AS total_score, f.organization_id AS ein, f.year AS year,"
+      " ROW_NUMBER() OVER (PARTITION BY f.organization_id"
+      "   ORDER BY f.year DESC, os.scored_at DESC) AS rn"
+      " FROM organization_score os"
+      " JOIN filing f ON f.filing_id = os.filing_id"
+      " JOIN score_model sm ON sm.model_id = os.model_id"
+      f" WHERE sm.version = ? AND os.total_score IS NOT NULL{inner_year}"
+      "), sub AS ("
+      " SELECT l.ein AS ein, o.name AS name, l.total_score AS total_score, l.year AS year"
+      " FROM latest l"
+      " JOIN organization o ON o.ein = l.ein"
+      " LEFT JOIN address a ON a.uuid = o.business_address_id"
+      f" WHERE l.rn = 1{subset}"
+      ") ")
+    return cte, [*iparams, *params]
+
+  def rank_leaderboard(self, model_version: int = 1, *, year=None,
+                       limit: int = 50, offset: int = 0, **subset) -> dict:
+    """Rank orgs by ``model_version``'s latest scored total_score (or a fixed
+    ``year``), within the optional subset. Ties share a rank (RANK()); pagination is
+    deterministic (secondary sort by ein). Returns the page + the subset ``total``."""
+    cl, p = self._rank_subset(**subset)
+    cte, params = self._rank_cte(model_version, year, cl, p)
+    limit, offset = max(1, min(limit, 500)), max(offset, 0)
+    rows = self.cursor.execute(
+      cte + "SELECT ein, name, total_score, year, "
+            "RANK() OVER (ORDER BY total_score DESC) AS rank "
+            "FROM sub ORDER BY total_score DESC, ein LIMIT ? OFFSET ?",
+      [*params, limit, offset]).fetchall()
+    total = self.cursor.execute(cte + "SELECT COUNT(*) FROM sub", params).fetchone()[0]
+    return {"model_version": model_version, "year": year, "total": total,
+            "limit": limit, "offset": offset,
+            "leaderboard": [{"rank": r[4], "ein": r[0], "name": r[1],
+                             "total_score": r[2], "year": r[3]} for r in rows]}
+
+  def rank_org(self, ein: str, model_version: int = 1, *, year=None, **subset) -> dict:
+    """One org's rank within a subset for a model — the COUNT-greater primitive:
+    ``rank = 1 + (# scores strictly greater within the subset)``, with the subset size
+    and percentile. ``rank``/``percentile`` are None when the org isn't in the subset
+    (e.g. unscored, or filtered out)."""
+    cl, p = self._rank_subset(**subset)
+    cte, params = self._rank_cte(model_version, year, cl, p)
+    ein = self._db.orgs.try_normalize_ein(ein)
+    my, of = self.cursor.execute(
+      cte + "SELECT (SELECT total_score FROM sub WHERE ein = ?), (SELECT COUNT(*) FROM sub)",
+      [*params, ein]).fetchone()
+    if my is None:
+      return {"ein": ein, "rank": None, "of": of, "percentile": None, "total_score": None}
+    rank = self.cursor.execute(
+      cte + "SELECT 1 + COUNT(*) FROM sub WHERE total_score > ?", [*params, my]).fetchone()[0]
+    pct = round(100.0 * (of - rank) / (of - 1), 1) if of > 1 else 100.0
+    return {"ein": ein, "rank": rank, "of": of, "percentile": pct, "total_score": my}
+
+  def rank_org_dimensions(self, ein: str, model_version: int = 1, *, year=None) -> dict | None:
+    """An org's rank for a model in **global + its own sector / state / city /
+    county** — one call for an org-detail page. None if the org doesn't exist."""
+    ein = self._db.orgs.try_normalize_ein(ein)
+    org = self._db.orgs.get_organization(ein)
+    if org is None:
+      return None
+    addr = org.get('address') or {}
+    dims = {"global": self.rank_org(ein, model_version, year=year)}
+    if org.get('sector_code'):
+      dims["sector"] = self.rank_org(ein, model_version, year=year, sector=org['sector_code'])
+    if addr.get('state'):
+      dims["state"] = self.rank_org(ein, model_version, year=year, state=addr['state'])
+    if addr.get('city'):
+      dims["city"] = self.rank_org(ein, model_version, year=year, city=addr['city'])
+    if addr.get('county_fips'):
+      dims["county"] = self.rank_org(ein, model_version, year=year, county=addr['county_fips'])
+    return {"ein": ein, "model_version": model_version, "year": year, "dimensions": dims}
 
   def compare_scores(self, ein: str, year: int) -> list[dict]:
     """Return scores for all model versions for the given EIN + tax year."""
     rows = self.cursor.execute(
       """
-      SELECT os.score_id, sm.version, os.total_score, os.scored_at
+      SELECT os.score_id, sm.version, os.total_score, os.scored_at, os.imputed
       FROM organization_score os
       JOIN score_model sm ON sm.model_id = os.model_id
       JOIN filing f ON f.filing_id = os.filing_id
@@ -297,7 +457,8 @@ class ScoreDatabase(Database):
       (ein, year)
     ).fetchall()
     return [
-      {"score_id": r[0], "model_version": r[1], "total_score": r[2], "scored_at": r[3]}
+      {"score_id": r[0], "model_version": r[1], "total_score": r[2], "scored_at": r[3],
+       "imputed": bool(r[4])}
       for r in rows
     ]
 
@@ -399,7 +560,7 @@ class ScoreDatabase(Database):
       """
       SELECT os.score_id, f.organization_id, sm.version, f.uuid, f.year,
              os.total_score, os.scored_at, sm.model_type, sm.scoring_mode,
-             COALESCE(sm.model_kind, 'model')
+             COALESCE(sm.model_kind, 'model'), os.imputed
       FROM organization_score os
       JOIN score_model sm ON sm.model_id = os.model_id
       JOIN filing f ON f.filing_id = os.filing_id
@@ -412,7 +573,7 @@ class ScoreDatabase(Database):
     factors = self.cursor.execute(
       """
       SELECT sf.name, sf.weight, osf.raw_value, osf.weighted_value, osf.comment,
-             sf.factor_id, sf.manual_scale
+             sf.factor_id, sf.manual_scale, osf.imputed, osf.source_year
       FROM organization_score_factor osf
       JOIN score_factor sf ON sf.factor_id = osf.factor_id
       WHERE osf.score_id = ?
@@ -431,9 +592,11 @@ class ScoreDatabase(Database):
       "model_type": row[7],
       "scoring_mode": row[8] or "computed",
       "model_kind": row[9] or "model",
+      "imputed": bool(row[10]),
       "factors": [
         {"factor_id": f[5], "name": f[0], "weight": f[1], "raw_value": f[2],
-         "weighted_value": f[3], "comment": f[4], "manual_scale": f[6]}
+         "weighted_value": f[3], "comment": f[4], "manual_scale": f[6],
+         "imputed": bool(f[7]), "source_year": f[8]}
         for f in factors
       ],
     }

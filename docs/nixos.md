@@ -45,7 +45,10 @@ OpenReturn ships a NixOS module. Add the flake as an input and enable the servic
 | `group` | string | `"openreturn"` | Service group |
 | `runAsRoot` | bool | `false` | Run as root instead of the dedicated service user (not recommended) |
 | `openFirewall` | bool | `true` | Open the firewall for the configured port |
-| `auth` | bool | `false` | Require API key authentication for all requests |
+| `auth` | bool | `false` | Require authentication (sessions / API keys) and permission checks on all routes |
+| `corsOrigins` | list of string | `[]` | Allowed CORS origins for browser clients. Empty → any origin (`*`); safe because auth is header-based, not cookie-based. Set specific origins to restrict |
+| `initialAdmin.username` | string | `"admin"` | Username for the bootstrap admin account |
+| `initialAdmin.passwordFile` | null or path | `null` | When set, a one-shot service creates an `admin`-role user from this credential file on first deploy (idempotent). See [Access Control](access-control.md) |
 | `database.secretKeyFile` | null or path | `null` | Path to a file holding the SQLCipher key; loaded at runtime via systemd credentials (never in the store). See [Database Encryption](#database-encryption) |
 | `database.secretKey` | null or string | `null` | SQLCipher key as a literal string (**insecure** — lands in the Nix store). Prefer `secretKeyFile` |
 | `models` | list of model submodules | `[]` | Scoring models to register automatically (see below) |
@@ -174,14 +177,39 @@ Model versions are immutable once registered — changing a factor's formula wit
 
 The registration service will register the new version. The old version remains in the database and any scores computed under it are preserved. Use `GET /scores/compare?ein=...&year=...` to see results under both versions side by side.
 
+## Bootstrapping the admin user
+
+Set `initialAdmin.passwordFile` to a credential file (agenix/sops-nix/systemd
+credential) and the module creates an `admin`-role user on first deploy via a
+one-shot `openreturn-bootstrap-admin.service`:
+
+```nix
+services.openreturn = {
+  enable = true;
+  auth = true;
+  initialAdmin = {
+    username = "admin";
+    passwordFile = "/run/secrets/openreturn-admin-password";
+  };
+};
+```
+
+The password is loaded via a systemd credential (never the Nix store), and the
+step is idempotent (`--skip-existing`), so redeploys are safe. All other user and
+password management is **CLI-only** — `openreturn users …` (see
+[Access Control](access-control.md)). Leave `passwordFile` null to bootstrap the
+admin by hand instead.
+
 ## Systemd Service Chain
 
 ```mermaid
 graph LR
   init[openreturn-init<br/>schema + seed] --> migrate[openreturn-migrate<br/>apply migrations]
   migrate --> models[openreturn-register-models<br/>optional]
+  migrate --> admin[openreturn-bootstrap-admin<br/>optional]
   models --> server[openreturn<br/>API server]
-  migrate -.->|no models| server
+  admin --> server
+  migrate -.->|no models / no admin| server
 ```
 
 The module creates up to four services that run in dependency order before the API server starts:

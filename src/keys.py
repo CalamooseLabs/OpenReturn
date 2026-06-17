@@ -18,12 +18,14 @@ def _require_db() -> OpenReturnDB:
 
 def cmd_create(args) -> int:
     db = _require_db()
-    key_id, raw = db.keys.create_api_key(args.name, rate_limit=args.rate_limit)
+    role = getattr(args, 'role', 'service')
+    key_id, raw = db.keys.create_api_key(args.name, rate_limit=args.rate_limit, role=role)
     db.close()
     limit_str = "unlimited" if args.rate_limit == -1 else f"{args.rate_limit} req/min"
     print(f"\n{_B}{_GRN}API key created{_R}")
     print(f"  ID:     {key_id}")
     print(f"  Name:   {args.name}")
+    print(f"  Role:   {role}")
     print(f"  Limit:  {limit_str}")
     print(f"  Key:    {_CYN}{raw}{_R}")
     print(f"  Header: {_DIM}Authorization: Bearer {raw}{_R}")
@@ -76,6 +78,8 @@ def main() -> int:
     p_create.add_argument('name', help='Human-readable label (e.g. "Dashboard", "CI pipeline")')
     p_create.add_argument('--rate-limit', type=int, default=-1, dest='rate_limit',
                           metavar='N', help='Max requests per minute (-1 = unlimited, default)')
+    p_create.add_argument('--role', default='service', metavar='ROLE',
+                          help='Role granting the key its permissions (default: service)')
 
     sub.add_parser('list', help='List all API keys')
 

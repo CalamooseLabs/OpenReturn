@@ -43,6 +43,10 @@ CREATE TABLE IF NOT EXISTS score_model (
   -- composite/super_composite scores by weighting other models' totals (its
   -- factors take model:<version> inputs); a base model reads 990 fields.
   model_kind TEXT NOT NULL DEFAULT 'model' REFERENCES model_kind (code),
+  -- Default missing-data fallback for this model's factor inputs when a year is
+  -- missing a value (a per-input `missing=` overrides it). NULL/'none' = no fill
+  -- (the historical behavior). See scoring/models.md for the strategy set.
+  missing_data TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -74,6 +78,9 @@ CREATE TABLE IF NOT EXISTS organization_score (
   filing_id INTEGER NOT NULL REFERENCES filing (filing_id) ON DELETE CASCADE,
   model_id INTEGER NOT NULL REFERENCES score_model (model_id),
   total_score REAL,
+  -- 1 when at least one of this score's factor inputs was filled from another
+  -- year (a missing-data fallback). Real scores stay 0.
+  imputed INTEGER NOT NULL DEFAULT 0,
   scored_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   UNIQUE (filing_id, model_id)
 );
@@ -85,6 +92,11 @@ CREATE TABLE IF NOT EXISTS organization_score_factor (
   raw_value REAL,
   weighted_value REAL,
   comment TEXT,
+  -- Missing-data provenance: imputed=1 if any of this factor's inputs were filled
+  -- from another year; source_year is the donor year (NULL for a constant fill or
+  -- when not imputed).
+  imputed INTEGER NOT NULL DEFAULT 0,
+  source_year INTEGER,
   UNIQUE (score_id, factor_id)
 );
 

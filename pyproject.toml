@@ -16,10 +16,10 @@ openreturn = "cli:main"
 where = ["src"]
 
 [tool.setuptools]
-py-modules = ["cli", "main", "keys", "ingest", "console", "models", "db", "sources", "status", "daemon", "openapi"]
+py-modules = ["cli", "main", "keys", "ingest", "console", "models", "db", "sources", "status", "daemon", "openapi", "auth", "users", "financials", "ocr", "resolve", "scores", "classify", "counties"]
 
 [tool.setuptools.package-data]
-"*" = ["*.sql", "*.html", "sql/**/*.sql"]
+"*" = ["*.sql", "*.html", "sql/**/*.sql", "*.toml"]
 
 [tool.setuptools.package-dir]
 "" = "src"

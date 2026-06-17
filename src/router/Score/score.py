@@ -19,7 +19,7 @@ class ScoreRouter(Router):
 
     # --- Model / Factors ---
 
-    @self.get('/factors')
+    @self.get('/factors', permission='score:read')
     def get_factors(query_params: dict, body: Any, headers: HTTPMessage):
       version = self._qp_int(query_params, 'version', default=1)
       model = self.db.scores.get_model(version)
@@ -31,19 +31,19 @@ class ScoreRouter(Router):
         "factors": self.db.scores.get_factors(version),
       }
 
-    @self.get('/types')
+    @self.get('/types', permission='score:read')
     def list_model_types(query_params: dict, body: Any, headers: HTTPMessage):
       """The available model categories (financial, governance, …)."""
       return {"types": self.db.scores.list_model_types()}
 
-    @self.get('/kinds')
+    @self.get('/kinds', permission='score:read')
     def list_model_kinds(query_params: dict, body: Any, headers: HTTPMessage):
       """The available model kinds (model, composite, super_composite)."""
       return {"kinds": self.db.scores.list_model_kinds()}
 
     # --- Manual (graded) scoring ---
 
-    @self.post('/grade')
+    @self.post('/grade', permission='score:write')
     def grade_factor(query_params: dict, body: Any, headers: HTTPMessage):
       """Record a grader's value + comment for one factor of a *manual* model and
       return the updated score. Body: {score_id, factor_id, value, comment?}."""
@@ -66,14 +66,73 @@ class ScoreRouter(Router):
 
     # --- Scores ---
 
-    @self.get('')
+    @self.get('', permission='score:read')
     def list_scores(query_params: dict, body: Any, headers: HTTPMessage):
       ein = self._qp(query_params, 'ein')
       if not ein:
         return {"error": "missing query param: ein"}
       return {"ein": ein, "scores": self.db.scores.list_scores(ein)}
 
-    @self.get('/filing')
+    @self.get('/history', permission='score:read')
+    def score_history(query_params: dict, body: Any, headers: HTTPMessage):
+      """One model's full year-by-year score series for an org (oldest→newest),
+      with each year flagged ``imputed`` and carrying the donor ``source_year`` of
+      any filled factors — the multi-year history view. ``version`` defaults to 1."""
+      ein = self._qp(query_params, 'ein')
+      if not ein:
+        return {"error": "missing query param: ein"}
+      version, err = self._qp_int_or_error(query_params, 'version', default=1, field='version')
+      if err:
+        return err
+      return {"ein": ein, "model_version": version,
+              "history": self.db.scores.list_score_history(ein, version)}
+
+    @self.get('/leaderboard', permission='score:read')
+    def leaderboard(query_params: dict, body: Any, headers: HTTPMessage):
+      """Rank orgs by a model's latest scored total (or ``year=``), globally or within
+      a subset: ``sector`` (NTEE code), ``state`` (2-letter), ``city``, ``county``
+      (FIPS), ``list`` (list_id), ``type`` (org_type), ``grantmaker`` (1/0). ``model``
+      = model version (default 1). Paginated (``limit``/``offset``)."""
+      model, err = self._qp_int_or_error(query_params, 'model', default=1, field='model')
+      if err:
+        return err
+      year, e2 = self._qp_int_or_error(query_params, 'year', default=None, field='year')
+      if e2:
+        return e2
+      limit, e3 = self._qp_int_or_error(query_params, 'limit', default=50, field='limit')
+      offset, e4 = self._qp_int_or_error(query_params, 'offset', default=0, field='offset')
+      if e3 or e4:
+        return e3 or e4
+      list_id, e5 = self._qp_int_or_error(query_params, 'list', default=None, field='list')
+      if e5:
+        return e5
+      gm = self._qp(query_params, 'grantmaker')
+      return self.db.scores.rank_leaderboard(
+        model, year=year, limit=limit, offset=offset,
+        sector=self._qp(query_params, 'sector'), state=self._qp(query_params, 'state'),
+        city=self._qp(query_params, 'city'), county=self._qp(query_params, 'county'),
+        org_type=self._qp(query_params, 'type'), list_id=list_id,
+        grantmaker=None if gm is None else gm.strip().lower() in ('1', 'true', 'yes'))
+
+    @self.get('/ranking', permission='score:read')
+    def ranking(query_params: dict, body: Any, headers: HTTPMessage):
+      """An org's rank for a model in global + its own sector/state/city/county.
+      ``ein`` required; ``model`` (version, default 1); optional ``year``."""
+      ein = self._qp(query_params, 'ein')
+      if not ein:
+        return {"error": "missing query param: ein"}
+      model, err = self._qp_int_or_error(query_params, 'model', default=1, field='model')
+      if err:
+        return err
+      year, e2 = self._qp_int_or_error(query_params, 'year', default=None, field='year')
+      if e2:
+        return e2
+      result = self.db.scores.rank_org_dimensions(ein, model, year=year)
+      if result is None:
+        return {"error": f"organization not found: {ein}"}
+      return result
+
+    @self.get('/filing', permission='score:read')
     def get_score_by_filing(query_params: dict, body: Any, headers: HTTPMessage):
       filing_id = self._qp(query_params, 'filing_id')
       if not filing_id:
@@ -83,7 +142,7 @@ class ScoreRouter(Router):
         return {"error": f"no score found for filing: {filing_id}"}
       return score
 
-    @self.get('/detail')
+    @self.get('/detail', permission='score:read')
     def get_score(query_params: dict, body: Any, headers: HTTPMessage):
       if not self._qp(query_params, 'score_id'):
         return {"error": "missing query param: score_id"}
@@ -95,7 +154,7 @@ class ScoreRouter(Router):
         return {"error": f"score not found: {score_id}"}
       return score
 
-    @self.post('')
+    @self.post('', permission='score:write')
     def create_score(query_params: dict, body: Any, headers: HTTPMessage):
       data, err = self._require_fields(body, 'filing_id')
       if err:
@@ -109,7 +168,7 @@ class ScoreRouter(Router):
         return {"error": str(e)}
       return {"score_id": score_id, "filing_id": data['filing_id'], "model_version": model_version}
 
-    @self.post('/factors')
+    @self.post('/factors', permission='score:write')
     def store_factor_values(query_params: dict, body: Any, headers: HTTPMessage):
       """
       Body: {score_id: int, values: [{factor_id, raw_value, weighted_value}, ...]}
@@ -134,7 +193,7 @@ class ScoreRouter(Router):
         return {"error": str(e)}
       return {"score_id": score_id, "factors_stored": len(values)}
 
-    @self.post('/finalize')
+    @self.post('/finalize', permission='score:write')
     def finalize_score(query_params: dict, body: Any, headers: HTTPMessage):
       data, err = self._require_fields(body, 'score_id', 'total_score')
       if err:
@@ -147,7 +206,7 @@ class ScoreRouter(Router):
         return {"error": str(e)}
       return {"score_id": score_id, "total_score": total_score}
 
-    @self.post('/calculate')
+    @self.post('/calculate', permission='score:write')
     def calculate_score(query_params: dict, body: Any, headers: HTTPMessage):
       data, err = self._require_fields(body, 'ein', 'year')
       if err:
@@ -162,7 +221,7 @@ class ScoreRouter(Router):
         return {"error": str(e)}
       return result
 
-    @self.get('/lookup')
+    @self.get('/lookup', permission='score:read')
     def lookup_score(query_params: dict, body: Any, headers: HTTPMessage):
       ein  = self._qp(query_params, 'ein')
       year = self._qp(query_params, 'year')
@@ -176,7 +235,7 @@ class ScoreRouter(Router):
         return {"error": f"no score found for EIN {ein} year {year}"}
       return score
 
-    @self.get('/debug')
+    @self.get('/debug', permission='score:read')
     def debug_score(query_params: dict, body: Any, headers: HTTPMessage):
       """Trace a model evaluation: per factor, the formula, the formula with this
       filing's numbers substituted in, every variable, and where each field input
@@ -203,7 +262,7 @@ class ScoreRouter(Router):
       except ValueError as e:
         return {"error": str(e)}
 
-    @self.get('/compare')
+    @self.get('/compare', permission='score:read')
     def compare_scores(query_params: dict, body: Any, headers: HTTPMessage):
       ein  = self._qp(query_params, 'ein')
       year = self._qp(query_params, 'year')

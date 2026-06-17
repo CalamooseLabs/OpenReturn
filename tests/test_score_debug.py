@@ -84,10 +84,14 @@ class TestDebugRatio(unittest.TestCase):
 
     def test_variable_values(self):
         v = {var['key']: var for var in self.f0['variables']}
-        self.assertEqual(v['prog']['kind'], 'field')
+        # field-key inputs are now canonical concepts; the chosen value for a
+        # 990-only org equals the derived 990 value, with its provenance attached.
+        self.assertEqual(v['prog']['kind'], 'concept')
         self.assertEqual(v['prog']['value'], 812000.0)
         self.assertEqual(v['prog']['raw_value'], '812000')
         self.assertTrue(v['prog']['present'])
+        self.assertEqual(v['prog']['canonical_source'], 'irs_990_xml')
+        self.assertFalse(v['prog']['conflict'])
 
     def test_variable_source_traceback(self):
         src = self.f0['variables'][0]['source']

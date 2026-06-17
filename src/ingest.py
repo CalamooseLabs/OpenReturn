@@ -517,6 +517,14 @@ def _finish_run(args, ctx: _Ctx, db, t_start: float, t_process: float) -> int:
     # FTS sync in upsert_organization), so rebuild the fuzzy-search trigram index
     # once here from the full organization table.
     db.orgs.rebuild_search_index()
+    # Refresh the cached foundation/nonprofit classification + grantmaker flag for the
+    # touched orgs (a cheap set-based UPDATE; never fail the ingest over it).
+    if ctx.seen_eins:
+        try:
+            db.orgs.classify_organizations(eins=ctx.seen_eins)
+            db.orgs.derive_counties(eins=ctx.seen_eins)   # no-op if no crosswalk imported
+        except Exception as exc:  # noqa: BLE001
+            print(f"  {_YLW}classification skipped after error: {exc}{_R}")
     print(f"{_DIM}Checkpointing WAL…{_R}", flush=True)
     db.end_bulk_load()
     t_finalize = time.monotonic()

@@ -16,6 +16,15 @@ from router.Upload import UploadRouter
 from router.Org import OrgRouter
 from router.Filing import FilingRouter
 from router.Score import ScoreRouter
+from router.Auth import AuthRouter
+from router.People import PeopleRouter
+from router.Tags import TagsRouter
+from router.Lists import ListsRouter
+from router.Admin import AdminRouter
+from router.Financials import FinancialsRouter
+from router.Follow import FollowRouter
+from router.Meta import MetaRouter
+from router.Templates import TemplatesRouter
 from server import Server
 
 
@@ -138,12 +147,24 @@ def cmd_serve(args) -> int:
 
     app = Server(
         host=args.host, port=args.port, debug=args.debug,
-        key_validator=db.keys.validate_api_key if args.auth else None,
+        # Resolves a session key (user) or API key (program) to a Principal; the
+        # routes declare the permission each requires. None disables enforcement.
+        authenticator=db.users.authenticate if args.auth else None,
+        cors_origins=getattr(args, 'cors_origin', None),
     )
     app.include_router(upload_router)
+    app.include_router(AuthRouter(db=db))
     app.include_router(OrgRouter(db=db, secure_by_default=True))
     app.include_router(FilingRouter(db=db, secure_by_default=True))
     app.include_router(ScoreRouter(db=db, secure_by_default=True))
+    app.include_router(PeopleRouter(db=db, secure_by_default=True))
+    app.include_router(TagsRouter(db=db, secure_by_default=True))
+    app.include_router(ListsRouter(db=db, secure_by_default=True))
+    app.include_router(AdminRouter(db=db, secure_by_default=True))
+    app.include_router(FinancialsRouter(db=db, secure_by_default=True))
+    app.include_router(FollowRouter(db=db, secure_by_default=True))
+    app.include_router(TemplatesRouter(db=db, secure_by_default=True))
+    app.include_router(MetaRouter())   # public: /openapi.json, /health, /version
 
     # Treat SIGTERM like Ctrl-C so the server shuts down cleanly and removes its
     # PID file (signal handlers must be installed on the main thread).

@@ -85,6 +85,7 @@ class FilingDatabase(Database):
       """
       SELECT uuid, form_code, xml_filename, zip_filename
       FROM filing WHERE organization_id = ? AND year = ?
+      ORDER BY (form_code = 'FIN') ASC, filing_id
       """,
       (ein, year)
     ).fetchone()

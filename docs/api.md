@@ -589,13 +589,15 @@ List all scores for an organization across all years and model versions.
       "year": 2023,
       "total_score": 72.4,
       "scored_at": "2025-06-01 14:00:00",
-      "imputed": false
+      "imputed": false,
+      "model_type": "financial",
+      "model_kind": "model"
     }
   ]
 }
 ```
 
-`imputed` is `true` when the score used a [missing-data fallback](scoring/models.md#missing-data-fallbacks-completing-a-multi-year-history) (one or more inputs filled from another year).
+`imputed` is `true` when the score used a [missing-data fallback](scoring/models.md#missing-data-fallbacks-completing-a-multi-year-history) (one or more inputs filled from another year). Each row also carries its model's `model_type` (category) and `model_kind` (`model`/`composite`/`super_composite`) so a client can group scores by dimension/pillar without a separate model lookup.
 
 ---
 

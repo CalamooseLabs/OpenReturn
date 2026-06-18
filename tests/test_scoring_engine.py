@@ -52,8 +52,11 @@ class TestModuleConstants(unittest.TestCase):
     def test_paths_is_dict(self):
         self.assertIsInstance(_PATHS, dict)
 
-    def test_paths_has_19_keys(self):
-        self.assertEqual(len(_PATHS), 19)
+    def test_paths_key_count(self):
+        # 19 nonprofit (990) concepts + 5 private-foundation (990-PF) concepts.
+        self.assertEqual(len(_PATHS), 24)
+        for k in ('pf_charitable_disb', 'pf_grants_paid', 'pf_total_assets'):
+            self.assertIn(k, _PATHS)
 
     def test_formula_types_is_set(self):
         self.assertIsInstance(FORMULA_TYPES, set)

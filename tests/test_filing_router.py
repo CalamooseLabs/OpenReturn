@@ -563,5 +563,50 @@ class TestGetReportedDataFormat(unittest.TestCase):
         self.assertIsInstance(result, dict)
 
 
+# ---------------------------------------------------------------------------
+# archives_summary (real in-memory DB) — backs the admin "what was ingested" view
+# ---------------------------------------------------------------------------
+
+class TestArchivesSummary(unittest.TestCase):
+
+    def setUp(self):
+        from database import OpenReturnDB
+        self.db = OpenReturnDB(path=":memory:")
+
+    def tearDown(self):
+        self.db.close()
+
+    def _org(self, ein, name):
+        self.db.cursor.execute(
+            "INSERT OR IGNORE INTO organization (ein, name) VALUES (?, ?)", (ein, name))
+
+    def _filing(self, ein, year, form, zip_name):
+        self.db.cursor.execute(
+            "INSERT INTO filing (uuid, year, organization_id, form_code, zip_filename) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (f"u-{ein}-{year}-{form}", year, ein, form, zip_name))
+
+    def test_groups_by_zip_with_counts_and_year_span(self):
+        self._org("100000001", "A")
+        self._org("100000002", "B")
+        self._filing("100000001", 2023, "990", "arch1.zip")
+        self._filing("100000002", 2024, "990", "arch1.zip")
+        self._filing("100000001", 2024, "990EZ", "arch2.zip")
+        rows = self.db.filings.archives_summary()
+        by_zip = {r["zip_filename"]: r for r in rows}
+        self.assertEqual(by_zip["arch1.zip"]["filings"], 2)
+        self.assertEqual(by_zip["arch1.zip"]["first_year"], 2023)
+        self.assertEqual(by_zip["arch1.zip"]["last_year"], 2024)
+        self.assertEqual(by_zip["arch2.zip"]["filings"], 1)
+
+    def test_excludes_synthetic_fin_anchors(self):
+        self._org("100000001", "A")
+        self._filing("100000001", 2023, "990", "arch1.zip")
+        self._filing("100000001", 2022, "FIN", None)  # synthetic financial anchor
+        rows = self.db.filings.archives_summary()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["zip_filename"], "arch1.zip")
+
+
 if __name__ == "__main__":
     unittest.main()

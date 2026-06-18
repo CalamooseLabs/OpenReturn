@@ -33,6 +33,9 @@ class ScoreDatabase(Database):
       # Missing-data fallback (see scoring/models.md): model-level default policy +
       # per-score / per-factor imputation provenance.
       "ALTER TABLE score_model ADD COLUMN missing_data TEXT",
+      # Per-type applicability (nonprofit / foundation / both). Default 'both' keeps
+      # legacy models scoring every org; the shipped stack is scoped via its templates.
+      "ALTER TABLE score_model ADD COLUMN applies_to TEXT NOT NULL DEFAULT 'both'",
       "ALTER TABLE organization_score ADD COLUMN imputed INTEGER NOT NULL DEFAULT 0",
       "ALTER TABLE organization_score_factor ADD COLUMN imputed INTEGER NOT NULL DEFAULT 0",
       "ALTER TABLE organization_score_factor ADD COLUMN source_year INTEGER",
@@ -141,7 +144,8 @@ class ScoreDatabase(Database):
     """Model header — version, description, category type, scoring mode, and kind."""
     row = self.cursor.execute(
       "SELECT version, description, model_type, scoring_mode, "
-      "COALESCE(model_kind, 'model'), created_at, missing_data "
+      "COALESCE(model_kind, 'model'), created_at, missing_data, "
+      "COALESCE(applies_to, 'both') "
       "FROM score_model WHERE version = ?",
       (version,)
     ).fetchone()
@@ -149,7 +153,7 @@ class ScoreDatabase(Database):
       return None
     return {"version": row[0], "description": row[1], "model_type": row[2],
             "scoring_mode": row[3] or "computed", "model_kind": row[4] or "model",
-            "created_at": row[5], "missing_data": row[6]}
+            "created_at": row[5], "missing_data": row[6], "applies_to": row[7]}
 
   def list_model_types(self) -> list[dict]:
     rows = self.cursor.execute(
@@ -166,12 +170,12 @@ class ScoreDatabase(Database):
   def list_models(self) -> list[dict]:
     rows = self.cursor.execute(
       "SELECT version, description, model_type, scoring_mode, "
-      "COALESCE(model_kind, 'model'), created_at "
+      "COALESCE(model_kind, 'model'), created_at, COALESCE(applies_to, 'both') "
       "FROM score_model ORDER BY version"
     ).fetchall()
     return [{"version": r[0], "description": r[1], "model_type": r[2],
              "scoring_mode": r[3] or "computed", "model_kind": r[4] or "model",
-             "created_at": r[5]} for r in rows]
+             "created_at": r[5], "applies_to": r[6]} for r in rows]
 
   def list_computed_models(self) -> list[dict]:
     """Versions + model_ids + kind of every non-manual model — the set batch
@@ -179,12 +183,13 @@ class ScoreDatabase(Database):
     composites before super-composites. (A model with no factors is still listed;
     the engine skips it.)"""
     rows = self.cursor.execute(
-      "SELECT version, model_id, COALESCE(model_kind, 'model'), missing_data "
+      "SELECT version, model_id, COALESCE(model_kind, 'model'), missing_data, "
+      "COALESCE(applies_to, 'both') "
       "FROM score_model WHERE COALESCE(scoring_mode, 'computed') != 'manual' "
       "ORDER BY version"
     ).fetchall()
     return [{"version": r[0], "model_id": r[1], "model_kind": r[2],
-             "missing_data": r[3]} for r in rows]
+             "missing_data": r[3], "applies_to": r[4]} for r in rows]
 
   def replace_org_scores(self, ein: str, model_ids: list[int], results: list) -> None:
     """Batch (re)write of one org's computed scores. Deletes the org's existing
@@ -292,7 +297,7 @@ class ScoreDatabase(Database):
     rows = self.cursor.execute(
       """
       SELECT os.score_id, sm.version, f.uuid, f.year, os.total_score, os.scored_at,
-             os.imputed
+             os.imputed, sm.model_type, sm.model_kind
       FROM organization_score os
       JOIN score_model sm ON sm.model_id = os.model_id
       JOIN filing f ON f.filing_id = os.filing_id
@@ -303,7 +308,8 @@ class ScoreDatabase(Database):
     ).fetchall()
     return [
       {"score_id": r[0], "model_version": r[1], "filing_id": r[2], "year": r[3],
-       "total_score": r[4], "scored_at": r[5], "imputed": bool(r[6])}
+       "total_score": r[4], "scored_at": r[5], "imputed": bool(r[6]),
+       "model_type": r[7], "model_kind": r[8]}
       for r in rows
     ]
 
@@ -425,23 +431,81 @@ class ScoreDatabase(Database):
     return {"ein": ein, "rank": rank, "of": of, "percentile": pct, "total_score": my}
 
   def rank_org_dimensions(self, ein: str, model_version: int = 1, *, year=None) -> dict | None:
-    """An org's rank for a model in **global + its own sector / state / city /
-    county** — one call for an org-detail page. None if the org doesn't exist."""
+    """An org's rank for a model across **its own org_type (overall) + sector /
+    state / city / county**, all *within that org_type* — one call for an org-detail
+    page. None if the org doesn't exist.
+
+    Rankings are **within-type**: a foundation ranks only against foundations, a
+    nonprofit only against nonprofits (the ``global`` dimension is "overall within
+    your type"). This both implements the foundation/nonprofit separation and lets
+    the page resolve all five dimensions from a SINGLE materialization of the model's
+    latest-score-per-org set (a temp table), instead of re-running the windowed
+    leaderboard CTE ~10x — which made the page hang at full-corpus scale."""
     ein = self._db.orgs.try_normalize_ein(ein)
     org = self._db.orgs.get_organization(ein)
     if org is None:
       return None
     addr = org.get('address') or {}
-    dims = {"global": self.rank_org(ein, model_version, year=year)}
-    if org.get('sector_code'):
-      dims["sector"] = self.rank_org(ein, model_version, year=year, sector=org['sector_code'])
-    if addr.get('state'):
-      dims["state"] = self.rank_org(ein, model_version, year=year, state=addr['state'])
-    if addr.get('city'):
-      dims["city"] = self.rank_org(ein, model_version, year=year, city=addr['city'])
-    if addr.get('county_fips'):
-      dims["county"] = self.rank_org(ein, model_version, year=year, county=addr['county_fips'])
-    return {"ein": ein, "model_version": model_version, "year": year, "dimensions": dims}
+    org_type = org.get('org_type')
+
+    cur = self.cursor
+    cur.execute("DROP TABLE IF EXISTS _rank_set")
+    inner_year, params = "", [model_version]
+    if year is not None:
+      inner_year = " AND f.year = ?"
+      params.append(year)
+    # Latest scored row per org for this model, with the ranking dimensions
+    # denormalized — built once, then every COUNT below hits this small temp table.
+    cur.execute(
+      "CREATE TEMP TABLE _rank_set AS "
+      "WITH latest AS ("
+      " SELECT os.total_score AS total_score, f.organization_id AS ein,"
+      " ROW_NUMBER() OVER (PARTITION BY f.organization_id"
+      "   ORDER BY f.year DESC, os.scored_at DESC) AS rn"
+      " FROM organization_score os"
+      " JOIN filing f ON f.filing_id = os.filing_id"
+      " JOIN score_model sm ON sm.model_id = os.model_id"
+      f" WHERE sm.version = ? AND os.total_score IS NOT NULL{inner_year}"
+      ") SELECT l.ein AS ein, l.total_score AS total_score, o.org_type AS org_type,"
+      " o.sector_code AS sector, a.state_code AS state, a.city AS city,"
+      " a.county_fips AS county"
+      " FROM latest l JOIN organization o ON o.ein = l.ein"
+      " LEFT JOIN address a ON a.uuid = o.business_address_id"
+      " WHERE l.rn = 1", params)
+    cur.execute("CREATE INDEX ix_rank_set ON _rank_set (org_type, total_score)")
+    try:
+      row = cur.execute("SELECT total_score FROM _rank_set WHERE ein = ?", (ein,)).fetchone()
+      my = row[0] if row else None
+      # org_type is always part of the predicate → every dimension is within-type.
+      type_clause, type_args = (("org_type = ?", [org_type]) if org_type is not None
+                                else ("org_type IS NULL", []))
+
+      def _rank(extra_clause: str | None = None, extra_args: list | None = None) -> dict:
+        clauses = [type_clause] + ([extra_clause] if extra_clause else [])
+        args = [*type_args, *(extra_args or [])]
+        where = " AND ".join(clauses)
+        of = cur.execute(f"SELECT COUNT(*) FROM _rank_set WHERE {where}", args).fetchone()[0]
+        if my is None:
+          return {"ein": ein, "rank": None, "of": of, "percentile": None, "total_score": None}
+        rank = cur.execute(
+          f"SELECT 1 + COUNT(*) FROM _rank_set WHERE {where} AND total_score > ?",
+          [*args, my]).fetchone()[0]
+        pct = round(100.0 * (of - rank) / (of - 1), 1) if of > 1 else 100.0
+        return {"ein": ein, "rank": rank, "of": of, "percentile": pct, "total_score": my}
+
+      dims = {"global": _rank()}
+      if org.get('sector_code'):
+        dims["sector"] = _rank("sector = ?", [org['sector_code']])
+      if addr.get('state'):
+        dims["state"] = _rank("state = ?", [str(addr['state']).strip().upper()])
+      if addr.get('city'):
+        dims["city"] = _rank("city = ? COLLATE NOCASE", [str(addr['city']).strip()])
+      if addr.get('county_fips'):
+        dims["county"] = _rank("county = ?", [addr['county_fips']])
+      return {"ein": ein, "model_version": model_version, "year": year,
+              "org_type": org_type, "dimensions": dims}
+    finally:
+      cur.execute("DROP TABLE IF EXISTS _rank_set")
 
   def compare_scores(self, ein: str, year: int) -> list[dict]:
     """Return scores for all model versions for the given EIN + tax year."""

@@ -140,6 +140,15 @@ children from these); `POST /admin/models { definition, dry_run? }` validates
 **Admin panel** (requires `user:admin`): `GET/POST /admin/users`, `/admin/roles`,
 `/admin/permissions` — see [Access Control](access-control.md).
 
+**Ingest / grab-from-IRS** (requires `upload:write`): `GET /upload/ingested` shows
+what's been grabbed and ingested (the URL ledger + a `filing`-table archive
+summary + whether an ingest is live); `POST /upload/discover { url? }` previews the
+`.zip` archives at a URL (default the IRS downloads page); `POST /upload/grab
+{ url, force? }` starts a detached background ingest of that URL. The grab briefly
+restarts the API server to take the DB lock, so tolerate a short "API not
+responding" window and poll `/upload/ingested`. See
+[Ingest → Grabbing from the IRS website](ingest.md#grabbing-from-the-irs-website-admin).
+
 ## Permissions by area
 
 Each route declares the permission it needs; the built-in roles bundle them. A
@@ -156,7 +165,7 @@ quick map (full detail in [Access Control](access-control.md)):
 | People · Tags · Lists | `*:read` | `*:write` |
 | Follows (watchlist) | `follow:read` | `follow:write` |
 | Admin (users/roles/perms) | — | `user:admin` |
-| Upload (ZIP / PDF) | — | `upload:write` |
+| Upload (ZIP / PDF) · grab-from-IRS (`/upload/ingested` · `/upload/discover` · `/upload/grab`) | — | `upload:write` |
 
 A typical read-only frontend uses a `viewer` user (all reads + manage their own
 watchlist); a server-side integration uses a `service` API key (restricted reads).

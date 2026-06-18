@@ -29,6 +29,14 @@ _PATHS: dict[str, str] = {
     'savings':    'ReturnData/IRS990/SavingsAndTempCashInvstGrp/EOYAmt',
     'invest_val': 'ReturnData/IRS990/InvestmentsOtherSecuritiesGrp/EOYAmt',
     'accts_pay':  'ReturnData/IRS990/AccountsPayableAccrExpnssGrp/EOYAmt',
+    # 990-PF (private foundation) concepts — foundations file a different return, so
+    # they're scored by foundation-only models against these paths. The "charitable
+    # disbursements" column (DsbrsChrtbl) is the qualifying-distributions view.
+    'pf_charitable_disb': 'ReturnData/IRS990PF/AnalysisOfRevenueAndExpenses/TotalExpensesDsbrsChrtblAmt',
+    'pf_grants_paid':     'ReturnData/IRS990PF/AnalysisOfRevenueAndExpenses/ContriPaidDsbrsChrtblAmt',
+    'pf_total_exp':       'ReturnData/IRS990PF/AnalysisOfRevenueAndExpenses/TotalExpensesRevAndExpnssAmt',
+    'pf_total_assets':    'ReturnData/IRS990PF/Form990PFBalanceSheetsGrp/TotalAssetsEOYAmt',
+    'pf_net_assets':      'ReturnData/IRS990PF/ChgInNetAssetsFundBalancesGrp/TotNetAstOrFundBalancesEOYAmt',
 }
 
 # None means variable-length (1+ inputs accepted); integer means exact count required.
@@ -298,6 +306,7 @@ class ScoringEngine:
                 "deps":          self._model_refs(sorted_factors),
                 "missing_data":  model_default,
                 "has_policy":    has_policy,
+                "applies_to":    m.get('applies_to', 'both'),
             }
         return [prepared_by_version[v] for v in self._order_versions(prepared_by_version)]
 
@@ -323,8 +332,19 @@ class ScoringEngine:
                 "year_vals": year_vals, "year_to_fid": year_to_fid,
                 "concept_series": concept_series, "real_years": sorted(year_vals)}
 
+    @staticmethod
+    def _model_applies(applies_to: str, org_type: str | None) -> bool:
+        """Whether a model with this ``applies_to`` scopes to an org of ``org_type``.
+        'foundation' → only 990-PF foundations; 'nonprofit' → everything that is NOT
+        a foundation (nonprofit / other / unclassified); 'both' (or None) → all."""
+        if applies_to == 'foundation':
+            return org_type == 'foundation'
+        if applies_to == 'nonprofit':
+            return org_type != 'foundation'
+        return True
+
     def score_org(self, ein: str, prepared_models: list[dict],
-                  scoring_concepts=_SCORING_CONCEPTS) -> int:
+                  scoring_concepts=_SCORING_CONCEPTS, org_type: str | None = None) -> int:
         """(Re)compute and store every prepared model's score for one org in a
         single bulk replace (no commit — the caller batches). Returns the number of
         scores written.
@@ -341,6 +361,16 @@ class ScoringEngine:
           are flagged with the donor year."""
         if not prepared_models:
             return 0
+        # Scope to the models that apply to this org's type — foundations and
+        # nonprofits are scored by different models. We still DELETE the org's scores
+        # for every prepared model (all_ids) so a now-inapplicable model's stale
+        # scores are removed, but only INSERT results for applicable models.
+        all_ids = [m['model_id'] for m in prepared_models]
+        applicable = [m for m in prepared_models
+                      if self._model_applies(m.get('applies_to', 'both'), org_type)]
+        if not applicable:
+            self.db.scores.replace_org_scores(ein, all_ids, [])
+            return 0
         # NOTE: 990 values are mirrored into the canonical layer by the caller in
         # BULK (rebuild() runs db.financials.derive_bulk once up front) — a set-based
         # pass that replaced the old per-org derive_from_990 here, which profiling
@@ -356,7 +386,7 @@ class ScoringEngine:
         # imputed, propagating the estimate up the chain.
         imputed_years: dict[int, set] = {}
         results = []
-        for m in prepared_models:
+        for m in applicable:
             hist = s['historical'] if m['needs_history'] else {}
             ms = model_series.setdefault(m['version'], {})
             if not m['has_policy']:
@@ -383,7 +413,7 @@ class ScoringEngine:
                     fid = s['year_to_fid'].get(year) or \
                         self.db.financials.ensure_year_anchor_filing_id(ein, year)
                     results.append((fid, m['model_id'], total, factor_results, imputed))
-        self.db.scores.replace_org_scores(ein, [m['model_id'] for m in prepared_models], results)
+        self.db.scores.replace_org_scores(ein, all_ids, results)
         return len(results)
 
     def rebuild(self, model_versions=None, eins=None, *,
@@ -407,10 +437,13 @@ class ScoringEngine:
         # small set (score --org, a tiny ingest) scopes by org.
         self.db.financials.derive_bulk(None if (full or len(eins) > 2000) else eins,
                                        commit=False)
+        # Each org is scored only by the models that apply to its type (foundations
+        # vs nonprofits) — one cheap {ein: org_type} lookup drives the per-org filter.
+        org_types = self.db.orgs.org_type_map(None if full else eins)
         total = len(eins)
         scores = 0
         for i, ein in enumerate(eins, 1):
-            scores += self.score_org(ein, prepared)
+            scores += self.score_org(ein, prepared, org_type=org_types.get(ein))
             if i % batch_size == 0:
                 self.db.commit()
                 if progress:

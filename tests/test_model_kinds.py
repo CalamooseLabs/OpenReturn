@@ -54,6 +54,68 @@ def _add_model(db, version, factors, kind='model', mode='computed', mtype='finan
     return mid
 
 
+def _add_model_scoped(db, version, factors, applies_to, kind='model'):
+    """Like _add_model but with an explicit applies_to (nonprofit/foundation/both)."""
+    db.cursor.execute(
+        "INSERT INTO score_model (version, description, model_type, scoring_mode, "
+        "model_kind, applies_to) VALUES (?,?,?,?,?,?)",
+        (version, f'm{version}', 'financial', 'computed', kind, applies_to))
+    mid = db.cursor.lastrowid
+    for name, w, ft, inp, d, lo, hi in factors:
+        db.cursor.execute(
+            "INSERT INTO score_factor (model_id, name, weight, formula_type, inputs, "
+            "direction, benchmark_lo, benchmark_hi) VALUES (?,?,?,?,?,?,?,?)",
+            (mid, name, w, ft, json.dumps(inp), d, lo, hi))
+    db.connection.commit()
+    return mid
+
+
+class TestAppliesToScoping(unittest.TestCase):
+    """A model is only applied to orgs of its type — foundations (990-PF) are scored
+    by foundation models, nonprofits by nonprofit models (the per-type separation)."""
+
+    def setUp(self):
+        self.db = OpenReturnDB(path=':memory:')
+        self.db.cursor.execute("DELETE FROM score_model")  # drop the seeded v1 ('both')
+        _add_model_scoped(self.db, 10,
+                          [('PE', 1.0, 'ratio', ['prog', 'total_exp'], 'higher', 0.0, 1.0)],
+                          'nonprofit')
+        _add_model_scoped(self.db, 40,
+                          [('CD', 1.0, 'ratio', ['pf_charitable_disb', 'pf_total_assets'],
+                            'higher', 0.0, 0.1)],
+                          'foundation')
+        _add_filing(self.db, ein='111111111', filing_id=1, uuid='np', form_code='990',
+                    values={'prog': 800, 'total_exp': 1000})
+        _add_filing(self.db, ein='222222222', filing_id=2, uuid='pf', form_code='990PF',
+                    values={'pf_charitable_disb': 50, 'pf_total_assets': 1000})
+        self.db.orgs.classify_organizations()   # 990 → nonprofit, 990PF → foundation
+        ScoringEngine(self.db).rebuild()
+
+    def tearDown(self):
+        self.db.close()
+
+    def _versions_for(self, ein):
+        return {r[0] for r in self.db.cursor.execute(
+            "SELECT sm.version FROM organization_score os "
+            "JOIN score_model sm ON sm.model_id = os.model_id "
+            "JOIN filing f ON f.filing_id = os.filing_id "
+            "WHERE f.organization_id = ?", (ein,)).fetchall()}
+
+    def test_nonprofit_scored_only_by_nonprofit_model(self):
+        self.assertEqual(self._versions_for('111111111'), {10})
+
+    def test_foundation_scored_only_by_foundation_model(self):
+        self.assertEqual(self._versions_for('222222222'), {40})
+
+    def test_rescope_clears_stale_scores(self):
+        # Flip the nonprofit model to foundation-only and rescore: the nonprofit's
+        # stale score must be removed (not left behind).
+        self.db.cursor.execute("UPDATE score_model SET applies_to='foundation' WHERE version=10")
+        self.db.connection.commit()
+        ScoringEngine(self.db).rebuild()
+        self.assertEqual(self._versions_for('111111111'), set())
+
+
 def _toml(kind='model', factors=None, mode='computed', version=2):
     model = {'version': version, 'kind': kind}
     if mode != 'computed':

@@ -14,13 +14,15 @@ from scoring.engine import (_PATHS as _VALID_INPUTS, FORMULA_TYPES,
                             valid_strategy, parse_inputs)
 from scoring.graph import find_cycle
 
-_MODEL_KEYS  = {'version', 'description', 'type', 'mode', 'kind', 'missing_data'}
+_MODEL_KEYS  = {'version', 'description', 'type', 'mode', 'kind', 'missing_data', 'applies_to'}
 _FACTOR_KEYS = {'name', 'weight', 'formula_type', 'inputs', 'direction',
                 'benchmark_lo', 'benchmark_hi', 'formula_description', 'scale'}
 _FACTOR_REQUIRED = {'name', 'weight', 'formula_type', 'inputs', 'direction',
                     'benchmark_lo', 'benchmark_hi'}
 
 _MODES = ('computed', 'manual')
+# Which org types a model scores (foundations are scored separately from nonprofits).
+_APPLIES_TO = ('nonprofit', 'foundation', 'both')
 # How a model is composed. 'model' (default) reads 990 fields; 'composite' weights
 # base models' scores; 'super_composite' weights composites' scores. The latter two
 # reference children via model:<version> inputs (see _MODEL_PREFIX).
@@ -124,6 +126,9 @@ def validate_toml(data: dict) -> list[str]:
         issues.append(f"ERROR: [model].mode must be one of {list(_MODES)}, got: {mode!r}")
     if 'type' in model and not isinstance(model['type'], str):
         issues.append(f"ERROR: [model].type must be a string, got: {model['type']!r}")
+    if 'applies_to' in model and model['applies_to'] not in _APPLIES_TO:
+        issues.append(f"ERROR: [model].applies_to must be one of {list(_APPLIES_TO)}, "
+                      f"got: {model['applies_to']!r}")
     if 'missing_data' in model and not valid_strategy(model['missing_data']):
         issues.append(
             f"ERROR: [model].missing_data must be a missing-data strategy "
@@ -360,6 +365,7 @@ def register_model(db, data: dict, *, actor=None, skip_existing: bool = False,
     mode = data['model'].get('mode', 'computed')
     model_type = data['model'].get('type')
     kind = data['model'].get('kind', 'model')
+    applies_to = data['model'].get('applies_to', 'both')
 
     if model_type is not None:
         valid_types = {t['code'] for t in db.scores.list_model_types()}
@@ -399,7 +405,8 @@ def register_model(db, data: dict, *, actor=None, skip_existing: bool = False,
 
     if dry_run:
         return {"dry_run": True, "valid": True, "version": version,
-                "factors": n_factors, "kind": kind, "mode": mode, "warnings": warnings}
+                "factors": n_factors, "kind": kind, "mode": mode,
+                "applies_to": applies_to, "warnings": warnings}
 
     existing = db.cursor.execute(
         "SELECT 1 FROM score_model WHERE version = ?", (version,)).fetchone()
@@ -410,9 +417,10 @@ def register_model(db, data: dict, *, actor=None, skip_existing: bool = False,
 
     db.cursor.execute(
         "INSERT INTO score_model "
-        "(version, description, model_type, scoring_mode, model_kind, missing_data) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (version, description, model_type, mode, kind, data['model'].get('missing_data')))
+        "(version, description, model_type, scoring_mode, model_kind, missing_data, applies_to) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (version, description, model_type, mode, kind, data['model'].get('missing_data'),
+         applies_to))
     model_id = db.cursor.lastrowid
 
     for factor in data['factor']:
@@ -434,10 +442,12 @@ def register_model(db, data: dict, *, actor=None, skip_existing: bool = False,
                  factor['benchmark_hi'], factor.get('formula_description')))
 
     db.audit.record(actor, 'create', 'score_model', str(version),
-                    {'kind': kind, 'mode': mode, 'factors': n_factors}, commit=False)
+                    {'kind': kind, 'mode': mode, 'factors': n_factors,
+                     'applies_to': applies_to}, commit=False)
     db.connection.commit()
     return {"version": version, "model_id": model_id, "factors": n_factors,
-            "kind": kind, "mode": mode, "model_type": model_type, "warnings": warnings}
+            "kind": kind, "mode": mode, "model_type": model_type,
+            "applies_to": applies_to, "warnings": warnings}
 
 
 def cmd_register(args) -> None:

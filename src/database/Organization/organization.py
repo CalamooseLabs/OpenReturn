@@ -137,6 +137,23 @@ class OrganizationDatabase(Database):
     self.connection.commit()
     return n
 
+  def org_type_map(self, eins=None) -> dict:
+    """``{ein: org_type}`` for scoping models per org during a batch rescore.
+    ``eins=None`` returns the whole corpus in one query; a subset is fetched in
+    chunks (SQLite bound-variable limit). Unclassified orgs map to None."""
+    if eins is None:
+      return {r[0]: r[1] for r in
+              self.cursor.execute("SELECT ein, org_type FROM organization").fetchall()}
+    out: dict = {}
+    eins = list(eins)
+    for i in range(0, len(eins), 900):
+      chunk = eins[i:i + 900]
+      ph = ",".join("?" * len(chunk))
+      for r in self.cursor.execute(
+          f"SELECT ein, org_type FROM organization WHERE ein IN ({ph})", chunk).fetchall():
+        out[r[0]] = r[1]
+    return out
+
   def classify_organizations(self, eins=None) -> dict:
     """(Re)derive each org's cached ``org_type`` + ``is_grantmaker`` from its filings
     and grant edges (idempotent, one set-based UPDATE). ``org_type`` is 'foundation'

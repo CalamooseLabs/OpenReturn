@@ -13,6 +13,7 @@
 [model]
 version     = 20
 type        = "financial"
+applies_to  = "nonprofit"   # 990 line-item ratios; foundations (990-PF) scored separately
 kind        = "composite"
 missing_data = "closest_newer"   # carry a child's nearest-year score into a missing year
 description = "Financial composite — weighted blend of the operating, funding, liquidity, and investing models"

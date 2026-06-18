@@ -43,6 +43,11 @@ CREATE TABLE IF NOT EXISTS score_model (
   -- composite/super_composite scores by weighting other models' totals (its
   -- factors take model:<version> inputs); a base model reads 990 fields.
   model_kind TEXT NOT NULL DEFAULT 'model' REFERENCES model_kind (code),
+  -- Which org types this model scores: 'nonprofit' (990/990EZ/990N filers — i.e.
+  -- everything that is NOT a 990-PF foundation), 'foundation' (990-PF filers), or
+  -- 'both'. The batch scorer only applies a model to an org whose type matches, so
+  -- foundations are scored separately from nonprofits.
+  applies_to TEXT NOT NULL DEFAULT 'both',
   -- Default missing-data fallback for this model's factor inputs when a year is
   -- missing a value (a per-input `missing=` overrides it). NULL/'none' = no fill
   -- (the historical behavior). See scoring/models.md for the strategy set.

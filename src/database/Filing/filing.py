@@ -80,6 +80,35 @@ class FilingDatabase(Database):
       return row[0]
     return filing_id
 
+  def archives_summary(self) -> list[dict]:
+    """Summarize ingested filings grouped by their source ZIP archive.
+
+    One row per distinct ``zip_filename`` (filings ingested without one — e.g.
+    the synthetic ``FIN`` anchors — are folded into a ``None`` bucket the caller
+    can drop). Each row carries the filing count, the year span, and the first/
+    last ingest timestamps, so the admin UI can show *what was ingested* even for
+    archives loaded from a local directory (which the URL-keyed ``ingested_zip``
+    table does not record). Newest activity first."""
+    rows = self.cursor.execute(
+      """
+      SELECT zip_filename,
+             COUNT(*)        AS filings,
+             MIN(year)       AS first_year,
+             MAX(year)       AS last_year,
+             MIN(created_at) AS first_ingested,
+             MAX(created_at) AS last_ingested
+      FROM filing
+      WHERE form_code <> 'FIN'
+      GROUP BY zip_filename
+      ORDER BY last_ingested DESC, zip_filename
+      """
+    ).fetchall()
+    return [
+      {"zip_filename": r[0], "filings": r[1], "first_year": r[2], "last_year": r[3],
+       "first_ingested": r[4], "last_ingested": r[5]}
+      for r in rows
+    ]
+
   def get_filing_data_by_ein_year(self, ein: str, year: int) -> dict | None:
     row = self.cursor.execute(
       """

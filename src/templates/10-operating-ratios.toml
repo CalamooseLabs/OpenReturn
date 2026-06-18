@@ -13,6 +13,7 @@
 [model]
 version     = 10
 type        = "financial"
+applies_to  = "nonprofit"   # 990 line-item ratios; foundations (990-PF) scored separately
 kind        = "model"
 missing_data = "closest_newer"   # fill a year's missing inputs from the nearest year
 description = "Operating ratios (Resource Allocation) — program/admin/fundraising mix and surplus"

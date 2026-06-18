@@ -258,6 +258,25 @@ The upload endpoint commits everything in a single transaction. For a ZIP with t
 
 ---
 
+## Grabbing from the IRS website (admin)
+
+For an administrator without shell access, three `upload:write` routes front the URL-ingest machinery from the browser (the OpenReturn-UI "Upload" screen wires them up):
+
+| Route | Does |
+|---|---|
+| `GET /upload/ingested` | What has been grabbed and ingested. `grabbed` is the URL-ingest ledger (the [`ingested_zip`](#managing-ingested-archives) records — source URL, byte size, filings stored, timestamp); `archives` summarizes **every** source ZIP seen in the `filing` table (so locally-ingested and uploaded archives appear too); `ingest_running` reflects a live background ingest. |
+| `POST /upload/discover` | Dry run. Body `{url?}` (defaults to the IRS Form 990 downloads page) → the list of `.zip` archives reachable there, each flagged `ingested`. No downloads, no DB writes — wraps `sources.discover_zip_urls`. |
+| `POST /upload/grab` | Body `{url, force?}` → starts a **detached background ingest** of that URL (a direct `.zip` or an index page). Returns immediately; poll `GET /upload/ingested` for progress. |
+
+`POST /upload/grab` launches the same job as the CLI — `openreturn ingest --background --restart-server <url>` — so the bulk load takes the exclusive lock cleanly: **the job briefly stops and restarts this API server** around the ingest (a ~12 s grace lets the triggering response return first). The page tolerates the restart window (it shows "API not responding — refresh in a moment"). The route is **refused** when:
+
+- a background ingest is already running (`ingest.pid` live), or
+- the server is **systemd-managed** — there the ingest can't safely restart the unit, so use the CLI (`openreturn ingest <url>`) / `systemctl` instead (see [Running Ingest Safely](#running-ingest-safely)).
+
+Because the grab uses the URL path, each completed archive is recorded in `ingested_zip` and appears under "grabbed". A bulk load from a local directory or the `/upload` form does **not** record there (it has no source URL) but still shows under "all source archives" via the `filing`-table summary.
+
+---
+
 ## OCR of 990 PDFs
 
 When only a **PDF** of a 990 is available (no e-file XML), it can be OCR'd into

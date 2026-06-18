@@ -1,11 +1,14 @@
 import io
 import os
+import subprocess
+import sys
 import xml.etree.ElementTree as ET
 import zipfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import Any
 from http.client import HTTPMessage
 from pathlib import Path
+from urllib.parse import urlparse
 
 from router import Router
 from database import OpenReturnDB
@@ -23,6 +26,10 @@ _xpath_index:     dict[str, int] = {}
 _supported_forms: set[str]       = set()
 
 _NS_PFX = '{http://www.irs.gov/efile}'
+
+# Default discovery source for the "grab from IRS" admin feature — the IRS Form
+# 990 series downloads index page (its ZIP archives live on apps.irs.gov).
+_IRS_DOWNLOADS_URL = "https://www.irs.gov/charities-non-profits/form-990-series-downloads"
 
 _EIN_PATH  = "ReturnHeader/Filer/EIN"
 _NAME_PATH = "ReturnHeader/Filer/BusinessName/BusinessNameLine1Txt"
@@ -373,3 +380,95 @@ class UploadRouter(Router):
                 "pages": result["pages"], "recorded": out["recorded"],
                 "concepts": result["concepts"]}
       return {"error": "No PDF file found in upload"}
+
+    # ── Grab from the IRS website ────────────────────────────────────────────
+    # List / discover / trigger a bulk ingest straight from irs.gov, so an admin
+    # can pull a year of filings without shell access. The actual ingest runs as
+    # a detached background process (it needs the exclusive DB lock), so these
+    # routes only *start* it and report status.
+
+    @self.get('/ingested', permission='upload:write')
+    def list_ingested(query_params: dict[str, list[str]], body: Any, headers: HTTPMessage):
+      """What has been grabbed and ingested. Two views: ``grabbed`` — archives
+      pulled from a URL (the ``ingested_zip`` ledger, with provenance + counts);
+      ``archives`` — every source ZIP seen in the filing table (covers local-dir
+      and uploaded archives too). Plus whether a background ingest is live now."""
+      import daemon
+      grabbed = self.db.ingest.list_ingested_zips()
+      grabbed.reverse()  # newest first
+      running = daemon.running_daemon()
+      return {
+        "grabbed":          grabbed,
+        "grabbed_count":    len(grabbed),
+        "archives":         self.db.filings.archives_summary(),
+        "ingest_running":   bool(running),
+        "ingest":           running,
+        "default_source":   _IRS_DOWNLOADS_URL,
+      }
+
+    @self.post('/discover', permission='upload:write')
+    def discover_archives(query_params: dict[str, list[str]], body: Any, headers: HTTPMessage):
+      """Dry run: list the ZIP archives reachable at a URL (a direct ``.zip`` or
+      an index page such as the IRS downloads page), each flagged with whether it
+      has already been ingested. No DB writes, no downloads."""
+      import sources
+      url = (body or {}).get('url') if isinstance(body, dict) else None
+      url = (url or self._qp(query_params, 'url') or _IRS_DOWNLOADS_URL).strip()
+      if not sources.is_url(url):
+        return {"error": "Provide an http(s):// URL (a .zip archive or an index page)."}
+      try:
+        urls = sources.discover_zip_urls(url)
+      except Exception as exc:  # noqa: BLE001 — surface the fetch/parse failure
+        return {"error": f"Could not read {url}: {exc}"}
+      already = self.db.ingest.get_ingested_sources()
+      archives = [
+        {"url": u, "filename": os.path.basename(urlparse(u).path) or u,
+         "ingested": u in already}
+        for u in urls
+      ]
+      return {"source": url, "count": len(archives),
+              "new": sum(1 for a in archives if not a["ingested"]), "archives": archives}
+
+    @self.post('/grab', permission='upload:write')
+    def grab_from_irs(query_params: dict[str, list[str]], body: Any, headers: HTTPMessage):
+      """Start a detached background ingest of ``url`` (a direct ``.zip`` or an
+      index page). Returns immediately; poll ``GET /upload/ingested`` for progress.
+
+      The ingest needs the exclusive DB lock, so the launched job uses
+      ``--restart-server``: it briefly stops and restarts this API server around
+      the load. Refused when the server is systemd-managed (use the CLI there) or
+      when a background ingest is already running."""
+      import daemon
+      import ingest as ingest_mod
+      import sources
+      url = (body or {}).get('url') if isinstance(body, dict) else None
+      url = (url or self._qp(query_params, 'url') or "").strip()
+      force = bool((body or {}).get('force')) if isinstance(body, dict) else False
+      if not sources.is_url(url):
+        return {"error": "Provide an http(s):// URL to grab."}
+      if daemon.running_daemon():
+        return {"error": "A background ingest is already running. Wait for it to finish."}
+      if ingest_mod._systemd_active():
+        return {"error": "This server is managed by systemd; trigger ingest from the CLI "
+                         "(openreturn ingest <url>) so it can coordinate with systemctl."}
+
+      cli = Path(__file__).parents[2] / "cli.py"
+      # +12s schedule: lets this HTTP response (and the launching process) return
+      # before the job stops the server to take the DB lock.
+      cmd = [sys.executable, str(cli), "ingest", "--background",
+             "--restart-server", "--schedule", "+12s", url]
+      if force:
+        cmd.insert(cmd.index(url), "--force")
+      actor = self._principal(headers)
+      try:
+        proc = subprocess.run(cmd, cwd=os.getcwd(), capture_output=True,
+                              text=True, timeout=30)
+      except subprocess.TimeoutExpired:
+        return {"error": "Timed out launching the background ingest."}
+      if proc.returncode != 0:
+        return {"error": "Failed to start background ingest.",
+                "detail": (proc.stderr or proc.stdout or "").strip()[-500:]}
+      self.db.audit.record(actor, "ingest.grab", "ingest", url, {"force": force})
+      return {"status": "started", "source": url, "force": force,
+              "note": "The API server will briefly restart to load this archive. "
+                      "Poll GET /upload/ingested for progress."}

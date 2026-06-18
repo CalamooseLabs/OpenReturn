@@ -46,8 +46,9 @@ The project maintains **100% statement coverage**. PRs that reduce coverage shou
 | `tests/test_openreturn_cli.py` | `src/cli.py` (unified dispatch, incl. `status`/`reset`/ingest mgmt flags) |
 | `tests/test_sources.py` | `src/sources.py` |
 | `tests/test_upload_worker.py` | `src/router/Upload/upload.py` |
+| `tests/test_upload_router.py` | `src/router/Upload/upload.py` (the `/upload/ingested`, `/upload/discover`, `/upload/grab` IRS-grab routes) |
 | `tests/test_org_router.py` | `src/router/Org/org.py` |
-| `tests/test_filing_router.py` | `src/router/Filing/filing.py` |
+| `tests/test_filing_router.py` | `src/router/Filing/filing.py` (incl. `archives_summary`) |
 | `tests/test_score_router.py` | `src/router/Score/score.py` |
 | `tests/test_score_debug.py` | `src/scoring/engine.py` (`debug()` walkthrough) + `GET /scores/debug` + `get_field_source` |
 | `tests/test_model_types.py` | model types + manual scoring: `src/models.py` (manual TOML), `src/scoring/engine.py` (`_normalize_manual`/`grade`), `src/database/Score/score.py` |

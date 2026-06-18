@@ -25,6 +25,12 @@ _CONCEPT_META: dict[str, tuple[str, str]] = {
   'savings': ('Savings & temp cash investments (EOY)', 'balance'),
   'invest_val': ('Other investments (EOY)', 'balance'),
   'accts_pay': ('Accounts payable & accrued expenses (EOY)', 'balance'),
+  # 990-PF (private foundation)
+  'pf_charitable_disb': ('Total charitable disbursements (990-PF)', 'expense'),
+  'pf_grants_paid': ('Contributions & grants paid (990-PF)', 'expense'),
+  'pf_total_exp': ('Total expenses (990-PF)', 'expense'),
+  'pf_total_assets': ('Total assets EOY (990-PF)', 'balance'),
+  'pf_net_assets': ('Net assets / fund balances EOY (990-PF)', 'balance'),
 }
 
 

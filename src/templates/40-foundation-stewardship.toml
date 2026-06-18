@@ -1,0 +1,44 @@
+# Foundation Stewardship  (base model — 990-PF private foundations)
+#
+# A starter financial-stewardship score for PRIVATE FOUNDATIONS, which file Form
+# 990-PF (not the 990) and so are scored separately from nonprofits (applies_to =
+# "foundation"). It reads 990-PF "Analysis of Revenue and Expenses" + balance-sheet
+# amounts, not the 990 functional-expense lines the nonprofit models use.
+#
+# Two basic, defensible factors:
+#   1. Charitable Distribution Ratio — total charitable disbursements ÷ total assets.
+#      A foundation must distribute ~5% of assets annually (the payout requirement),
+#      so the benchmark band sits around 3–7%.
+#   2. Grant Payout Share — grants/contributions paid ÷ total charitable disbursements:
+#      how much of the foundation's charitable spending flows out as actual grants
+#      vs. is consumed by the cost of grantmaking. Higher is better.
+#
+# Benchmarks are illustrative starting points — tune against the real corpus.
+
+[model]
+version      = 40
+type         = "financial"
+applies_to   = "foundation"   # 990-PF filers only (scored separately from nonprofits)
+kind         = "model"
+missing_data = "closest_newer"   # fill a year's missing inputs from the nearest year
+description  = "Foundation stewardship (990-PF) — charitable distribution rate and grant payout share"
+
+[[factor]]
+name                = "Charitable Distribution Ratio"
+weight              = 0.55
+formula_type        = "ratio"
+inputs              = ["pf_charitable_disb", "pf_total_assets"]
+direction           = "higher"
+benchmark_lo        = 0.03
+benchmark_hi        = 0.07
+formula_description = "Total charitable disbursements ÷ total assets (the ~5% payout view)."
+
+[[factor]]
+name                = "Grant Payout Share"
+weight              = 0.45
+formula_type        = "ratio"
+inputs              = ["pf_grants_paid", "pf_charitable_disb"]
+direction           = "higher"
+benchmark_lo        = 0.50
+benchmark_hi        = 0.90
+formula_description = "Grants & contributions paid ÷ total charitable disbursements (grant share of charitable spend)."

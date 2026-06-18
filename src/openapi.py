@@ -1516,6 +1516,71 @@ def _paths() -> dict:
                                    "concepts": {"type": "object"}}}, body_limit=True),
             },
         },
+        "/upload/ingested": {
+            "get": {
+                "tags": ["Upload"],
+                "summary": "List what has been grabbed and ingested",
+                "description": "`grabbed` is the URL-ingest ledger (provenance + counts); "
+                               "`archives` summarizes every source ZIP seen in the filings "
+                               "(covers local-dir and uploaded archives). `ingest_running` "
+                               "reflects a live background ingest.",
+                "responses": _responses({
+                    "type": "object",
+                    "properties": {
+                        "grabbed": {"type": "array", "items": {"type": "object"}},
+                        "grabbed_count": {"type": "integer"},
+                        "archives": {"type": "array", "items": {"type": "object"}},
+                        "ingest_running": {"type": "boolean"},
+                        "ingest": {"type": "object", "nullable": True},
+                        "default_source": {"type": "string"},
+                    }}),
+            },
+        },
+        "/upload/discover": {
+            "post": {
+                "tags": ["Upload"],
+                "summary": "List the ZIP archives reachable at a URL (dry run)",
+                "description": "Discovers `.zip` archives at a direct link or an index page "
+                               "(default: the IRS Form 990 downloads page) and flags which "
+                               "are already ingested. No downloads, no DB writes.",
+                "requestBody": _body({
+                    "type": "object",
+                    "properties": {"url": {"type": "string"}},
+                }, required=False),
+                "responses": _responses({
+                    "type": "object",
+                    "properties": {
+                        "source": {"type": "string"},
+                        "count": {"type": "integer"},
+                        "new": {"type": "integer"},
+                        "archives": {"type": "array", "items": {
+                            "type": "object",
+                            "properties": {"url": {"type": "string"},
+                                           "filename": {"type": "string"},
+                                           "ingested": {"type": "boolean"}}}},
+                    }}),
+            },
+        },
+        "/upload/grab": {
+            "post": {
+                "tags": ["Upload"],
+                "summary": "Start a background ingest from a URL",
+                "description": "Launches a detached ingest of a `.zip` archive or index page. "
+                               "The job briefly restarts this API server to take the DB lock; "
+                               "refused under systemd or while another ingest runs.",
+                "requestBody": _body({
+                    "type": "object", "required": ["url"],
+                    "properties": {"url": {"type": "string"},
+                                   "force": {"type": "boolean"}},
+                }),
+                "responses": _responses({
+                    "type": "object",
+                    "properties": {"status": {"type": "string"},
+                                   "source": {"type": "string"},
+                                   "force": {"type": "boolean"},
+                                   "note": {"type": "string"}}}),
+            },
+        },
     }
 
 

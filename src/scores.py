@@ -63,5 +63,5 @@ if __name__ == '__main__':  # pragma: no cover
     ap.add_argument('--db', default=None)
     ap.add_argument('--rebuild', action='store_true')
     ap.add_argument('--org', action='append', metavar='EIN')
-    ap.add_argument('--version', type=int, action='append', metavar='V')
+    ap.add_argument('--version', type=str, action='append', metavar='V')
     sys.exit(cmd_score(ap.parse_args()))

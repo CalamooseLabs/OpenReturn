@@ -16,7 +16,7 @@
 # Benchmarks are illustrative starting points — tune against the real corpus.
 
 [model]
-version      = 40
+version      = "40"
 type         = "financial"
 applies_to   = "foundation"   # 990-PF filers only (scored separately from nonprofits)
 kind         = "model"

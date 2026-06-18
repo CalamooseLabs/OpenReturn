@@ -12,7 +12,7 @@
 # absolute approximation.
 
 [model]
-version     = 11
+version     = "11"
 type        = "financial"
 applies_to  = "nonprofit"   # 990 line-item ratios; foundations (990-PF) scored separately
 kind        = "model"

@@ -11,7 +11,7 @@
 # ranges below — an absolute approximation of MinistryWatch's peer-relative method.
 
 [model]
-version     = 10
+version     = "10"
 type        = "financial"
 applies_to  = "nonprofit"   # 990 line-item ratios; foundations (990-PF) scored separately
 kind        = "model"

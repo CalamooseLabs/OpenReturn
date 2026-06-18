@@ -35,6 +35,35 @@ rebuild (the same contract as scores and the search index). An org that has file
 both a 990 and a 990-PF (in different years) classifies as a **foundation** —
 990-PF dominates.
 
+## Foundation vs. nonprofit scoring
+
+Foundations and nonprofits file **different returns** (990-PF vs. 990), so they are
+scored by **different models** and ranked as **separate populations**:
+
+- **Nonprofits** are scored by the MinistryWatch stack — four ratio base models →
+  a Financial composite → the **Overall Score super-composite (v30)** — all scoped
+  `applies_to = "nonprofit"`.
+- **Foundations** are scored by the **Foundation stewardship base model (v40)**,
+  scoped `applies_to = "foundation"`, which reads the 990-PF "Analysis of Revenue
+  and Expenses" + balance-sheet amounts (charitable distribution rate and grant
+  payout share) instead of the 990 functional-expense lines.
+
+A model's [`applies_to`](scoring/models.md#per-type-scoping-applies_to) decides
+which orgs it runs against (matched to `org_type`); the batch scorer skips the
+inapplicable population and removes any stale scores. Each org therefore has a
+**single overall score from the model for its type**: v30 for a nonprofit, v40 for
+a foundation.
+
+**Rankings and leaderboards are within-type.** `GET /scores/ranking?ein=…` ranks an
+org only against others of its own `org_type` — a foundation competes among the
+~119k foundations, a nonprofit among the ~528k nonprofits — never across the two.
+`GET /scores/leaderboard` takes a `type=foundation` / `type=nonprofit` filter to
+page one population. See [Scoring Models → Ranking](scoring/models.md#ranking-leaderboards).
+
+> 990-PF grant → recipient links still require `openreturn resolve` (see
+> [A foundation's grants](#a-foundations-grants-and-who-funds-a-nonprofit) below) —
+> scoring and ranking don't depend on it.
+
 ## Sector (NTEE major group)
 
 `org_type` says *what kind of filer* an org is; **sector** says *what field it

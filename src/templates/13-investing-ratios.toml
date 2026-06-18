@@ -10,7 +10,7 @@
 # benchmarks below are an absolute approximation.
 
 [model]
-version     = 13
+version     = "13"
 type        = "financial"
 applies_to  = "nonprofit"   # 990 line-item ratios; foundations (990-PF) scored separately
 kind        = "model"

@@ -11,7 +11,7 @@
 # Weights are illustrative and adjustable in production.
 
 [model]
-version     = 20
+version     = "20"
 type        = "financial"
 applies_to  = "nonprofit"   # 990 line-item ratios; foundations (990-PF) scored separately
 kind        = "composite"

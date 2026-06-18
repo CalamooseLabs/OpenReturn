@@ -48,6 +48,18 @@ class FinancialsRouter(Router):
         return {"error": "missing query param: ein"}
       return {"ein": ein, "conflicts": self.db.financials.conflicts(ein)}
 
+    @self.get('/conflict-orgs', permission='data:read')
+    def conflict_orgs(query_params: dict, body: Any, headers: HTTPMessage):
+      """Corpus-wide conflicts inbox: orgs that currently have ≥1 unresolved
+      conflict, each with its conflict count, paginated (limit capped at 200)."""
+      limit, err = self._qp_int_or_error(query_params, 'limit', default=50, field='limit')
+      if err:
+        return err
+      offset, err = self._qp_int_or_error(query_params, 'offset', default=0, field='offset')
+      if err:
+        return err
+      return self.db.financials.orgs_with_conflicts(limit, offset)
+
     @self.post('/observations', permission='data:write')
     def record(query_params: dict, body: Any, headers: HTTPMessage):
       """Record a source's values for an org-year. Body: {ein, fiscal_year,

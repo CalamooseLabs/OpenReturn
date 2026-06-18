@@ -266,9 +266,19 @@ For an administrator without shell access, three `upload:write` routes front the
 |---|---|
 | `GET /upload/ingested` | What has been grabbed and ingested. `grabbed` is the URL-ingest ledger (the [`ingested_zip`](#managing-ingested-archives) records — source URL, byte size, filings stored, timestamp); `archives` summarizes **every** source ZIP seen in the `filing` table (so locally-ingested and uploaded archives appear too); `ingest_running` reflects a live background ingest. |
 | `POST /upload/discover` | Dry run. Body `{url?}` (defaults to the IRS Form 990 downloads page) → the list of `.zip` archives reachable there, each flagged `ingested`. No downloads, no DB writes — wraps `sources.discover_zip_urls`. |
-| `POST /upload/grab` | Body `{url, force?}` → starts a **detached background ingest** of that URL (a direct `.zip` or an index page). Returns immediately; poll `GET /upload/ingested` for progress. |
+| `POST /upload/grab` | Body `{url, force?, schedule?}` → starts a **detached background ingest** of that URL (a direct `.zip` or an index page). Returns immediately; poll `GET /upload/ingested` for progress. |
 
-`POST /upload/grab` launches the same job as the CLI — `openreturn ingest --background --restart-server <url>` — so the bulk load takes the exclusive lock cleanly: **the job briefly stops and restarts this API server** around the ingest (a ~12 s grace lets the triggering response return first). The page tolerates the restart window (it shows "API not responding — refresh in a moment"). The route is **refused** when:
+`POST /upload/grab` launches the same job as the CLI — `openreturn ingest --background --restart-server <url>` — so the bulk load takes the exclusive lock cleanly: **the job briefly stops and restarts this API server** around the ingest (a ~12 s grace lets the triggering response return first). The page tolerates the restart window (it shows "API not responding — refresh in a moment").
+
+**Scheduling a grab.** The body accepts an optional **`schedule`** so an admin can
+queue the (potentially hours-long) load for off-peak — the same `WHEN` syntax as
+[`ingest --schedule`](#scheduling-an-ingest): a clock time (`01:00`), a relative
+delay (`+2h`), or an absolute datetime (`YYYY-MM-DD HH:MM`). Omitted (or `"now"`)
+starts immediately. A user-supplied future time *is* the delay (it replaces the
+~12 s grace). A bad value is rejected up front (`{"error": "invalid schedule: …"}`).
+The OpenReturn-UI grab form exposes this as a **"When" picker that defaults to
+Tonight 1:00 AM**, so the server is only disrupted overnight. The route is
+**refused** when:
 
 - a background ingest is already running (`ingest.pid` live), or
 - the server is **systemd-managed** — there the ingest can't safely restart the unit, so use the CLI (`openreturn ingest <url>`) / `systemctl` instead (see [Running Ingest Safely](#running-ingest-safely)).
@@ -287,6 +297,12 @@ openreturn ocr return.pdf --ein 364348917 --year 2024
 ```
 or `POST /upload/pdf?ein=…&year=…` (`upload:write`) with the PDF as
 `multipart/form-data`.
+
+Unlike a ZIP bulk ingest, OCR writes its observations through **normal inserts** and
+does **not** take the exclusive lock, so one PDF per request is safe to run at any
+ordinary time. It is, however, **refused while a background bulk ingest holds the DB
+lock** (`{"error": "A bulk ingest is running; OCR is unavailable until it
+finishes."}`) — wait for the ingest to finish, then retry.
 
 The OCR engine is the bundled **`tesseract`** binary (plus `pdftoppm` from poppler
 to rasterize pages) — shelled out to via subprocess, so the Python side stays

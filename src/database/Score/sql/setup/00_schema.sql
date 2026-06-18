@@ -32,7 +32,10 @@ INSERT OR IGNORE INTO model_kind (code, name, description) VALUES
 
 CREATE TABLE IF NOT EXISTS score_model (
   model_id INTEGER PRIMARY KEY AUTOINCREMENT,
-  version INTEGER NOT NULL UNIQUE,
+  -- A version is an opaque STRING identifier (e.g. '1', '1.1', '2026.06.14') —
+  -- see models.valid_version. Stored verbatim; the engine keys model dicts and
+  -- the 'model:<version>' child-ref token on it.
+  version TEXT NOT NULL UNIQUE,
   description TEXT,
   model_type TEXT REFERENCES model_type (code),
   -- 'computed' = factors evaluated from formulas; 'manual' = factors graded by a

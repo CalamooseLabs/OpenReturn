@@ -343,6 +343,11 @@ class UploadRouter(Router):
       import ocr as ocr_mod
       if not ocr_mod.ocr_available():
         return {"error": "OCR engine unavailable on this server (tesseract/pdftoppm)"}
+      # OCR writes via normal INSERTs and must not compete with a bulk ingest for
+      # the exclusive DB lock — refuse while a background ingest is running.
+      import daemon
+      if daemon.running_daemon():
+        return {"error": "A bulk ingest is running; OCR is unavailable until it finishes."}
       ein = self._qp(query_params, 'ein')
       year, yerr = self._qp_int_or_error(query_params, 'year', field='year')
       if not ein or year is None:
@@ -437,13 +442,21 @@ class UploadRouter(Router):
       The ingest needs the exclusive DB lock, so the launched job uses
       ``--restart-server``: it briefly stops and restarts this API server around
       the load. Refused when the server is systemd-managed (use the CLI there) or
-      when a background ingest is already running."""
+      when a background ingest is already running.
+
+      Optional ``schedule`` in the body delays the start to a given time
+      (``HH:MM`` clock, ``+2h`` relative, or ``YYYY-MM-DD HH:MM`` absolute);
+      omitted / empty / ``"now"`` runs immediately."""
       import daemon
       import ingest as ingest_mod
       import sources
       url = (body or {}).get('url') if isinstance(body, dict) else None
       url = (url or self._qp(query_params, 'url') or "").strip()
       force = bool((body or {}).get('force')) if isinstance(body, dict) else False
+      schedule = ((body or {}).get('schedule') if isinstance(body, dict) else None) or ""
+      schedule = schedule.strip()
+      if schedule.lower() == "now":
+        schedule = ""
       if not sources.is_url(url):
         return {"error": "Provide an http(s):// URL to grab."}
       if daemon.running_daemon():
@@ -451,12 +464,21 @@ class UploadRouter(Router):
       if ingest_mod._systemd_active():
         return {"error": "This server is managed by systemd; trigger ingest from the CLI "
                          "(openreturn ingest <url>) so it can coordinate with systemctl."}
+      # A user-supplied schedule (clock time / relative / absolute) is validated up
+      # front so a bad value fails the request instead of the detached job.
+      if schedule:
+        try:
+          ingest_mod._parse_schedule(schedule)
+        except ValueError as e:
+          return {"error": f"invalid schedule: {e}"}
 
       cli = Path(__file__).parents[2] / "cli.py"
-      # +12s schedule: lets this HTTP response (and the launching process) return
-      # before the job stops the server to take the DB lock.
+      # The schedule gives this HTTP response (and the launching process) time to
+      # return before the job stops the server to take the DB lock. A user-supplied
+      # schedule replaces the +12s grace (a future "01:00" already implies a delay).
+      sched_arg = schedule or "+12s"
       cmd = [sys.executable, str(cli), "ingest", "--background",
-             "--restart-server", "--schedule", "+12s", url]
+             "--restart-server", "--schedule", sched_arg, url]
       if force:
         cmd.insert(cmd.index(url), "--force")
       actor = self._principal(headers)
@@ -468,7 +490,9 @@ class UploadRouter(Router):
       if proc.returncode != 0:
         return {"error": "Failed to start background ingest.",
                 "detail": (proc.stderr or proc.stdout or "").strip()[-500:]}
-      self.db.audit.record(actor, "ingest.grab", "ingest", url, {"force": force})
+      self.db.audit.record(actor, "ingest.grab", "ingest", url,
+                           {"force": force, "schedule": schedule or "now"})
       return {"status": "started", "source": url, "force": force,
+              "schedule": schedule or "now",
               "note": "The API server will briefly restart to load this archive. "
                       "Poll GET /upload/ingested for progress."}

@@ -1743,8 +1743,8 @@
                     "type": "string"
                   },
                   "model_version": {
-                    "type": "integer",
-                    "default": 1
+                    "type": "string",
+                    "default": "1"
                   }
                 }
               }
@@ -1768,7 +1768,7 @@
                           "type": "string"
                         },
                         "model_version": {
-                          "type": "integer"
+                          "type": "string"
                         }
                       }
                     },
@@ -1833,7 +1833,7 @@
                           "type": "string"
                         },
                         "model_version": {
-                          "type": "integer"
+                          "type": "string"
                         },
                         "history": {
                           "type": "array",
@@ -1900,8 +1900,8 @@
             "required": false,
             "description": "Model version to rank by",
             "schema": {
-              "type": "integer",
-              "default": 1
+              "type": "string",
+              "default": "1"
             }
           },
           {
@@ -2008,7 +2008,7 @@
                       "type": "object",
                       "properties": {
                         "model_version": {
-                          "type": "integer"
+                          "type": "string"
                         },
                         "year": {
                           "type": [
@@ -2096,8 +2096,8 @@
             "required": false,
             "description": "",
             "schema": {
-              "type": "integer",
-              "default": 1
+              "type": "string",
+              "default": "1"
             }
           },
           {
@@ -2124,7 +2124,7 @@
                           "type": "string"
                         },
                         "model_version": {
-                          "type": "integer"
+                          "type": "string"
                         },
                         "year": {
                           "type": [
@@ -2391,8 +2391,8 @@
             "required": false,
             "description": "",
             "schema": {
-              "type": "integer",
-              "default": 1
+              "type": "string",
+              "default": "1"
             }
           }
         ],
@@ -2632,8 +2632,8 @@
             "required": false,
             "description": "",
             "schema": {
-              "type": "integer",
-              "default": 1
+              "type": "string",
+              "default": "1"
             }
           }
         ],
@@ -2691,8 +2691,8 @@
                     "type": "integer"
                   },
                   "model_version": {
-                    "type": "integer",
-                    "default": 1
+                    "type": "string",
+                    "default": "1"
                   }
                 }
               }
@@ -4395,7 +4395,7 @@
                       "type": "object",
                       "properties": {
                         "version": {
-                          "type": "integer"
+                          "type": "string"
                         },
                         "model_id": {
                           "type": "integer"
@@ -5495,6 +5495,90 @@
         }
       }
     },
+    "/financials/conflict-orgs": {
+      "get": {
+        "tags": [
+          "Financials"
+        ],
+        "summary": "Corpus-wide conflicts inbox \u2014 orgs with \u22651 unresolved conflict (data:read)",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "description": "",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "total": {
+                          "type": "integer"
+                        },
+                        "limit": {
+                          "type": "integer"
+                        },
+                        "offset": {
+                          "type": "integer"
+                        },
+                        "organizations": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "ein": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "conflict_count": {
+                                "type": "integer"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
     "/financials/observations": {
       "post": {
         "tags": [
@@ -5978,7 +6062,7 @@
           "Upload"
         ],
         "summary": "Start a background ingest from a URL",
-        "description": "Launches a detached ingest of a `.zip` archive or index page. The job briefly restarts this API server to take the DB lock; refused under systemd or while another ingest runs.",
+        "description": "Launches a detached ingest of a `.zip` archive or index page. The job briefly restarts this API server to take the DB lock; refused under systemd or while another ingest runs. An optional `schedule` (`HH:MM`, `+2h`, or `YYYY-MM-DD HH:MM`; omitted/`now` runs immediately) delays the start.",
         "requestBody": {
           "required": true,
           "content": {
@@ -5994,6 +6078,10 @@
                   },
                   "force": {
                     "type": "boolean"
+                  },
+                  "schedule": {
+                    "type": "string",
+                    "description": "Delay the start: HH:MM, +2h, or YYYY-MM-DD HH:MM. Omitted/empty/'now' runs immediately."
                   }
                 }
               }
@@ -6018,6 +6106,9 @@
                         },
                         "force": {
                           "type": "boolean"
+                        },
+                        "schedule": {
+                          "type": "string"
                         },
                         "note": {
                           "type": "string"
@@ -6446,7 +6537,7 @@
             "type": "string"
           },
           "model_version": {
-            "type": "integer"
+            "type": "string"
           },
           "filing_id": {
             "type": "string"
@@ -6568,7 +6659,7 @@
         "type": "object",
         "properties": {
           "model_version": {
-            "type": "integer"
+            "type": "string"
           },
           "model_type": {
             "type": [
@@ -6652,7 +6743,7 @@
           },
           "version": {
             "type": [
-              "integer",
+              "string",
               "null"
             ]
           },
@@ -7058,7 +7149,7 @@
             ]
           },
           "model_version": {
-            "type": "integer"
+            "type": "string"
           },
           "model_type": {
             "type": [

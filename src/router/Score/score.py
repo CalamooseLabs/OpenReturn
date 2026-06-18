@@ -21,7 +21,7 @@ class ScoreRouter(Router):
 
     @self.get('/factors', permission='score:read')
     def get_factors(query_params: dict, body: Any, headers: HTTPMessage):
-      version = self._qp_int(query_params, 'version', default=1)
+      version = self._qp(query_params, 'version') or '1'
       model = self.db.scores.get_model(version)
       return {
         "model_version": version,
@@ -81,9 +81,7 @@ class ScoreRouter(Router):
       ein = self._qp(query_params, 'ein')
       if not ein:
         return {"error": "missing query param: ein"}
-      version, err = self._qp_int_or_error(query_params, 'version', default=1, field='version')
-      if err:
-        return err
+      version = self._qp(query_params, 'version') or '1'
       return {"ein": ein, "model_version": version,
               "history": self.db.scores.list_score_history(ein, version)}
 
@@ -93,9 +91,7 @@ class ScoreRouter(Router):
       a subset: ``sector`` (NTEE code), ``state`` (2-letter), ``city``, ``county``
       (FIPS), ``list`` (list_id), ``type`` (org_type), ``grantmaker`` (1/0). ``model``
       = model version (default 1). Paginated (``limit``/``offset``)."""
-      model, err = self._qp_int_or_error(query_params, 'model', default=1, field='model')
-      if err:
-        return err
+      model = self._qp(query_params, 'model') or '1'
       year, e2 = self._qp_int_or_error(query_params, 'year', default=None, field='year')
       if e2:
         return e2
@@ -121,9 +117,7 @@ class ScoreRouter(Router):
       ein = self._qp(query_params, 'ein')
       if not ein:
         return {"error": "missing query param: ein"}
-      model, err = self._qp_int_or_error(query_params, 'model', default=1, field='model')
-      if err:
-        return err
+      model = self._qp(query_params, 'model') or '1'
       year, e2 = self._qp_int_or_error(query_params, 'year', default=None, field='year')
       if e2:
         return e2
@@ -160,7 +154,7 @@ class ScoreRouter(Router):
       if err:
         return err
       try:
-        model_version = int(data.get('model_version', 1))
+        model_version = str(data.get('model_version', '1'))
         score_id = self.db.scores.create_score(data['filing_id'], model_version)
       except ValueError as e:
         return {"error": str(e)}
@@ -213,7 +207,7 @@ class ScoreRouter(Router):
         return err
       try:
         year = int(data['year'])
-        model_version = int(data.get('model_version', 1))
+        model_version = str(data.get('model_version', '1'))
         result = self.engine.calculate(data['ein'], year, model_version)
       except ValueError as e:
         return {"error": str(e)}
@@ -241,7 +235,7 @@ class ScoreRouter(Router):
       filing's numbers substituted in, every variable, and where each field input
       is grabbed from (form / part / section / line / xml_path). Read-only — does
       not persist a score. Accepts filing_id, or ein + year; version defaults 1."""
-      version = self._qp_int(query_params, 'version', default=1)
+      version = self._qp(query_params, 'version') or '1'
       filing_id = self._qp(query_params, 'filing_id')
       if filing_id:
         filing = self.db.filings.get_filing(filing_id)

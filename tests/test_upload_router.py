@@ -192,6 +192,64 @@ class TestGrab(unittest.TestCase):
         self.assertIn("error", out)
         self.assertIn("bad args", out["detail"])
 
+    def test_default_schedule_uses_12s_grace(self):
+        proc = MagicMock(returncode=0, stdout="", stderr="")
+        with patch("daemon.running_daemon", return_value=None), \
+             patch("ingest._systemd_active", return_value=False), \
+             patch("subprocess.run", return_value=proc) as run:
+            out = _call(self.router, "POST", "/upload/grab",
+                        body={"url": "https://x/01A.zip"})
+        cmd = run.call_args[0][0]
+        # No user schedule → the hardcoded +12s grace.
+        self.assertIn("--schedule", cmd)
+        self.assertEqual(cmd[cmd.index("--schedule") + 1], "+12s")
+        self.assertEqual(out["schedule"], "now")
+
+    def test_user_schedule_passed_and_echoed(self):
+        proc = MagicMock(returncode=0, stdout="", stderr="")
+        with patch("daemon.running_daemon", return_value=None), \
+             patch("ingest._systemd_active", return_value=False), \
+             patch("subprocess.run", return_value=proc) as run:
+            out = _call(self.router, "POST", "/upload/grab",
+                        body={"url": "https://x/01A.zip", "schedule": "01:00"})
+        self.assertEqual(out["status"], "started")
+        self.assertEqual(out["schedule"], "01:00")
+        cmd = run.call_args[0][0]
+        # The user's schedule replaces the +12s grace, and the url stays last.
+        self.assertIn("--schedule", cmd)
+        self.assertEqual(cmd[cmd.index("--schedule") + 1], "01:00")
+        self.assertEqual(cmd[-1], "https://x/01A.zip")
+
+    def test_invalid_schedule_does_not_launch(self):
+        with patch("daemon.running_daemon", return_value=None), \
+             patch("ingest._systemd_active", return_value=False), \
+             patch("subprocess.run") as run:
+            out = _call(self.router, "POST", "/upload/grab",
+                        body={"url": "https://x/01A.zip", "schedule": "not-a-time"})
+        self.assertIn("error", out)
+        self.assertIn("invalid schedule", out["error"])
+        run.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# POST /upload/pdf — lock-guard against a running bulk ingest
+# ---------------------------------------------------------------------------
+
+class TestPdfLockGuard(unittest.TestCase):
+
+    def setUp(self):
+        self.router, _ = _make_router()
+
+    def test_refused_while_ingest_running(self):
+        import ocr as ocr_mod
+        with patch.object(ocr_mod, "ocr_available", return_value=True), \
+             patch("daemon.running_daemon", return_value={"pid": 99}):
+            out = _call(self.router, "POST", "/upload/pdf",
+                        query_params=_qp(ein="123456789", year="2023"),
+                        body=b"")
+        self.assertIn("error", out)
+        self.assertIn("bulk ingest", out["error"])
+
 
 if __name__ == "__main__":
     unittest.main()

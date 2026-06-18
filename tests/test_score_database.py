@@ -659,7 +659,7 @@ class TestGetScore(ScoreDbTestCase):
 
     def test_model_version_is_1(self):
         result = self.db.scores.get_score(self.score_id)
-        self.assertEqual(result["model_version"], 1)
+        self.assertEqual(result["model_version"], '1')
 
     def test_total_score_is_none_before_finalization(self):
         result = self.db.scores.get_score(self.score_id)
@@ -792,7 +792,7 @@ class TestScoreDatabaseIntegration(ScoreDbTestCase):
 
         result = self.db.scores.get_score(score_id)
         self.assertEqual(result["ein"], self.EIN_ALPHA)
-        self.assertEqual(result["model_version"], 1)
+        self.assertEqual(result["model_version"], '1')
         self.assertAlmostEqual(result["total_score"], total)
         self.assertEqual(len(result["factors"]), 14)
 
@@ -1116,7 +1116,7 @@ class TestCompareScores(ScoreDbTestCase):
     def test_model_version_is_1(self):
         self.db.scores.create_score(self.filing_alpha)
         row = self.db.scores.compare_scores(self.EIN_ALPHA, 2023)[0]
-        self.assertEqual(row["model_version"], 1)
+        self.assertEqual(row["model_version"], '1')
 
     def test_total_score_is_none_before_finalization(self):
         self.db.scores.create_score(self.filing_alpha)

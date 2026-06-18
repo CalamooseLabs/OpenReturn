@@ -179,6 +179,83 @@ class TestConflictAndCanonical(unittest.TestCase):
         self.assertFalse(self.db.financials.set_canonical('123456789', 2023, 'cy_rev', 99999))
 
 
+class TestOrgsWithConflicts(unittest.TestCase):
+    """The corpus-wide conflicts inbox: only orgs with ≥1 unresolved conflict
+    (diverging non-NULL observations, no manual canonical) appear, with a per-org
+    conflict count, paginated."""
+
+    def setUp(self):
+        self.db = OpenReturnDB(path=':memory:')
+
+    def tearDown(self):
+        self.db.close()
+
+    def _names(self, **kw):
+        return {o['ein'] for o in self.db.financials.orgs_with_conflicts(**kw)['organizations']}
+
+    def test_conflicting_org_appears_with_count(self):
+        # Org A: two diverging cy_rev observations for one year → one conflict.
+        _add_990(self.db, ein='111111111', year=2023, values={'cy_rev': 1000})
+        self.db.financials.derive_from_990('111111111')
+        self.db.financials.record_observations(
+            '111111111', 2023, 'manual_990', {'cy_rev': 1200}, actor=_actor())
+        out = self.db.financials.orgs_with_conflicts()
+        self.assertEqual(out['total'], 1)
+        org = next(o for o in out['organizations'] if o['ein'] == '111111111')
+        self.assertEqual(org['conflict_count'], 1)
+        self.assertEqual(org['name'], 'Org')
+
+    def test_sole_and_agreeing_observations_are_not_conflicts(self):
+        # Org B has a sole-source value; Org C has two AGREEING observations.
+        # Neither is a conflict, so the inbox stays empty.
+        _add_990(self.db, ein='222222222', year=2023, values={'cy_rev': 500})
+        self.db.financials.derive_from_990('222222222')
+        _add_990(self.db, ein='333333333', year=2023, values={'cy_rev': 700})
+        self.db.financials.derive_from_990('333333333')
+        self.db.financials.record_observations(
+            '333333333', 2023, 'audited_statement', {'cy_rev': 700}, actor=_actor())
+        out = self.db.financials.orgs_with_conflicts()
+        self.assertEqual(out['total'], 0)
+        self.assertEqual(out['organizations'], [])
+
+    def test_resolved_conflict_drops_out_of_inbox(self):
+        # A diverging fact a human has resolved (manual canonical) is no longer a
+        # conflict and must not appear.
+        _add_990(self.db, ein='444444444', year=2023, values={'cy_rev': 1000})
+        self.db.financials.derive_from_990('444444444')
+        out = self.db.financials.record_observations(
+            '444444444', 2023, 'manual_990', {'cy_rev': 1200}, actor=_actor())
+        self.assertEqual(self.db.financials.orgs_with_conflicts()['total'], 1)
+        self.db.financials.set_canonical(
+            '444444444', 2023, 'cy_rev', out['observations'][0]['observation_id'], actor=_actor())
+        self.assertEqual(self.db.financials.orgs_with_conflicts()['total'], 0)
+
+    def test_pagination_and_ordering_by_count(self):
+        # Org X has two conflicting facts (count 2), org Y has one (count 1).
+        # Ordered by conflict_count desc, so X is first; limit/offset page.
+        _add_990(self.db, ein='555555555', year=2023, values={'cy_rev': 1000, 'prog': 800})
+        self.db.financials.derive_from_990('555555555')
+        self.db.financials.record_observations(
+            '555555555', 2023, 'manual_990', {'cy_rev': 1200, 'prog': 900}, actor=_actor())
+        _add_990(self.db, ein='666666666', year=2023, values={'cy_rev': 50})
+        self.db.financials.derive_from_990('666666666')
+        self.db.financials.record_observations(
+            '666666666', 2023, 'manual_990', {'cy_rev': 60}, actor=_actor())
+        out = self.db.financials.orgs_with_conflicts()
+        self.assertEqual(out['total'], 2)
+        self.assertEqual(out['organizations'][0]['ein'], '555555555')
+        self.assertEqual(out['organizations'][0]['conflict_count'], 2)
+        self.assertEqual(out['organizations'][1]['conflict_count'], 1)
+        # Page through: limit 1, offset 1 → just the second org.
+        page = self.db.financials.orgs_with_conflicts(limit=1, offset=1)
+        self.assertEqual(page['total'], 2)
+        self.assertEqual([o['ein'] for o in page['organizations']], ['666666666'])
+
+    def test_limit_capped_at_200(self):
+        out = self.db.financials.orgs_with_conflicts(limit=9999)
+        self.assertEqual(out['limit'], 200)
+
+
 class TestNon990Scoring(unittest.TestCase):
     def test_audited_only_org_is_scoreable(self):
         db = OpenReturnDB(path=':memory:')
@@ -320,6 +397,17 @@ class TestFinancialsRouter(unittest.TestCase):
                          'values': {'cy_rev': 1200}}, principal=_actor())
         out = self._call('GET', '/financials/conflicts', query_params={'ein': ['123456789']})
         self.assertEqual(len(out['conflicts']), 1)
+
+    def test_conflict_orgs_route(self):
+        self.assertEqual(self.router.routes['GET']['/financials/conflict-orgs']._permission,
+                         'data:read')
+        self._call('POST', '/financials/observations',
+                   body={'ein': '123456789', 'fiscal_year': 2023, 'source': 'manual_990',
+                         'values': {'cy_rev': 1200}}, principal=_actor())
+        out = self._call('GET', '/financials/conflict-orgs')
+        self.assertEqual(out['total'], 1)
+        self.assertEqual(out['organizations'][0]['ein'], '123456789')
+        self.assertEqual(out['organizations'][0]['conflict_count'], 1)
 
     def test_record_requires_fields(self):
         self.assertIn('error', self._call('POST', '/financials/observations',

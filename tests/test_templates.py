@@ -27,12 +27,12 @@ class TestCatalogLoader(unittest.TestCase):
         self.assertEqual(set(summaries), set(codes))
         comp = summaries['20-financial-composite']
         self.assertEqual(comp['kind'], 'composite')
-        self.assertEqual(comp['version'], 20)
+        self.assertEqual(comp['version'], '20')
         self.assertGreater(comp['factor_count'], 0)
 
     def test_get_template_and_toml(self):
         d = catalog.get_template('10-operating-ratios')
-        self.assertEqual(d['model']['version'], 10)
+        self.assertEqual(d['model']['version'], '10')
         self.assertIn('factor', d)
         self.assertTrue(catalog.get_template_toml('10-operating-ratios').startswith('#'))
 
@@ -95,7 +95,7 @@ class TestTemplatesRouter(unittest.TestCase):
         codes = {t['code'] for t in self._call('/templates')['templates']}
         self.assertIn('20-financial-composite', codes)
         det = self._call('/templates/detail', code='20-financial-composite')
-        self.assertEqual(det['definition']['model']['version'], 20)
+        self.assertEqual(det['definition']['model']['version'], '20')
 
     def test_detail_requires_and_validates_code(self):
         self.assertIn('error', self._call('/templates/detail'))
@@ -112,7 +112,7 @@ class TestTemplateRoundTrip(unittest.TestCase):
                 res = models_cli.register_model(db, catalog.get_template(code), actor=actor)
                 self.assertIn('version', res)
             versions = {m['version'] for m in db.scores.list_models()}
-            self.assertTrue({10, 11, 12, 13, 20, 30} <= versions)
+            self.assertTrue({'10', '11', '12', '13', '20', '30'} <= versions)
         finally:
             db.close()
 

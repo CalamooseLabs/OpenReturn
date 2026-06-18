@@ -140,7 +140,7 @@ class TestRankingRoutes(unittest.TestCase):
         self.assertEqual([r['ein'] for r in out['leaderboard']], ['100000001', '100000002', '100000004'])
 
     def test_leaderboard_bad_param(self):
-        self.assertIn('error', self._get('/scores/leaderboard', model='x'))
+        self.assertIn('error', self._get('/scores/leaderboard', limit='x'))
 
     def test_ranking_route(self):
         out = self._get('/scores/ranking', ein='100000001', model='1')

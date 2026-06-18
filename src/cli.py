@@ -196,7 +196,7 @@ def main() -> int:
                          help='(Re)score every organization (required for a full recompute)')
     score_p.add_argument('--org', action='append', metavar='EIN',
                          help='Limit to specific organization EIN(s); repeatable')
-    score_p.add_argument('--version', type=int, action='append', metavar='V',
+    score_p.add_argument('--version', type=str, action='append', metavar='V',
                          help='Limit to specific model version(s); repeatable (default: all computed)')
 
     # ── ocr ────────────────────────────────────────────────────────────────────

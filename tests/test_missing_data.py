@@ -20,7 +20,7 @@ from models import validate_toml
 
 
 def _toml(inputs, *, missing_data=None):
-    m = {'version': 2}
+    m = {'version': '2'}
     if missing_data is not None:
         m['missing_data'] = missing_data
     return {'model': m, 'factor': [{'name': 'PE', 'weight': 1.0, 'formula_type': 'ratio',
@@ -102,7 +102,7 @@ class TestStrategies(unittest.TestCase):
         self.assertEqual(eng._resolve_input_filled('factor:x', 'newest', {}, {}, {}, fill),
                          (None, None, False))
         # a model:<v> input fills from its year series
-        fill2 = _FillCtx({}, {10: {2019: 0.5, 2022: 0.9}}, 2020, None)
+        fill2 = _FillCtx({}, {'10': {2019: 0.5, 2022: 0.9}}, 2020, None)
         self.assertEqual(eng._resolve_input_filled('model:10', 'newest', {}, {}, {}, fill2),
                          (0.9, 2022, True))
         # malformed model ref → no series → no fill

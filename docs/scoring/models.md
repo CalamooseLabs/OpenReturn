@@ -52,17 +52,26 @@ fresh, just two endpoints over the existing scores.
 
 - **`GET /scores/leaderboard?model=&year=&…`** — a ranked, paginated page
   (`RANK()` window; ties share a rank), globally or within a **subset**: sector,
-  region (`state` / `city` / `county`), `type`, `grantmaker`, or the members of an
-  org `list`. Ranks each org's **latest scored** year (or a fixed `?year=` for
-  cross-org comparability).
+  region (`state` / `city` / `county`), **`type`** (org_type — pass
+  `type=foundation` or `type=nonprofit` to keep the two populations apart),
+  `grantmaker`, or the members of an org `list`. Ranks each org's **latest scored**
+  year (or a fixed `?year=` for cross-org comparability).
 - **`GET /scores/ranking?ein=&model=`** — one org's standing across dimensions at
-  once: global plus its **own** sector / state / city / county, each as
-  `{rank, of, percentile, total_score}`.
+  once: its **own org_type** (overall) plus its own sector / state / city / county,
+  each as `{rank, of, percentile, total_score}`.
 
-The per-org rank is a `1 + COUNT(scores greater within the same subset)` primitive,
-so it equals that org's position in the same-subset leaderboard (a test-asserted
-invariant) without materializing the whole board. See
-[the API reference](../api.md#get-scoresleaderboard) for the full parameter list.
+**Rankings are within-type.** `GET /scores/ranking` ranks an org **only against
+others of its own `org_type`** — a foundation ranks among foundations, a nonprofit
+among nonprofits — so the `global`/overall dimension means "overall *within your
+type*". (To rank a fixed population on the leaderboard, use the `type=` filter.) The
+per-org rank is a `1 + COUNT(scores greater within the same subset)` primitive, so
+it equals that org's position in the same-subset leaderboard (a test-asserted
+invariant) without materializing the whole board; the multi-dimension call
+materializes the model's latest-score-per-org set once into an indexed temp table,
+which keeps the org-detail page fast at full-corpus scale. See
+[the API reference](../api.md#get-scoresleaderboard) for the full parameter list and
+[Foundations & Grants](../foundations.md#foundation-vs-nonprofit-scoring) for the
+two populations.
 
 ## CLI
 
@@ -103,9 +112,14 @@ the HTTP and CLI create paths run the same validation as `register_model` (see b
 
 ## TOML Format
 
+A model's `version` is a **string identifier** — one or more dot-separated integer
+segments (e.g. `"1"`, `"1.1"`, `"2026.06.14"`). Quote it in TOML (a bare `version = 1`
+is a number and is rejected). Children are referenced by the same string via
+`model:<version>` (e.g. `model:1.1`).
+
 ```toml
 [model]
-version     = 1
+version     = "1"
 description = "Initial financial health model"   # optional
 
 [[factor]]
@@ -149,7 +163,7 @@ Each model declares a **type** (its subject area) and a **mode** (how its factor
 
 ```toml
 [model]
-version = 5
+version = "5"
 type    = "governance"   # category — must be a seeded model_type code
 mode    = "manual"       # "computed" (default) or "manual"
 description = "Board governance review"
@@ -165,6 +179,34 @@ description = "Board governance review"
 | `christ_centeredness` | Mission and faith alignment |
 
 To add a new category, insert a row into the `model_type` table (seeded in `Score/sql/setup`). `type` defaults to unset; pre-existing models are treated as `financial`.
+
+### Per-type scoping (`applies_to`)
+
+A model can declare **which kind of org it scores** — because a private foundation
+(990-PF) and a public charity (990) are financially different filings, they are
+scored by different models. The `[model].applies_to` field is one of:
+
+```toml
+[model]
+version    = "40"
+applies_to = "foundation"     # "nonprofit" | "foundation" | "both" (default)
+```
+
+| `applies_to` | The model is applied to… |
+|--------------|--------------------------|
+| `both` (default) | every org |
+| `foundation` | only orgs classified `org_type = foundation` (990-PF filers) |
+| `nonprofit` | every org that is **not** a foundation (nonprofit / other / unclassified) |
+
+The batch scorer (`openreturn score` / the ingest finalize) applies a model to an
+org only if `applies_to` matches the org's [`org_type`](../foundations.md#classification-org_type--is_grantmaker).
+A rescore still **deletes** the org's scores for *every* targeted model, but only
+**writes** scores for the applicable ones — so a model that no longer applies to an
+org leaves no stale scores behind. The shipped MinistryWatch stack (versions
+1 / 10–13 / 20 / 30) is scoped to **nonprofit**; the
+[Foundation stewardship model](#foundation-stewardship-990-pf) (v40) is scoped to
+**foundation**. See [Foundations & Grants](../foundations.md#foundation-vs-nonprofit-scoring)
+for the end-to-end picture.
 
 `mode` is either:
 
@@ -186,7 +228,7 @@ A `composite`/`super_composite` factor references a child by **`model:<version>`
 ```toml
 # A composite: weight several base models into one score.
 [model]
-version = 20
+version = "20"
 type    = "financial"
 kind    = "composite"
 
@@ -217,13 +259,28 @@ benchmark_hi = 1.0
 
 `openreturn score --rebuild` scores every kind in one pass; `POST /scores/calculate` for a composite computes its children on the fly for that filing. `GET /scores/kinds` lists the available kinds. The bundled [template catalog](../../src/templates/) (`GET /templates`, `openreturn templates list`) ships a worked MinistryWatch-style stack (four ratio models → a Financial composite → an Overall Score super-composite) as **prefill guides** — see [Templates & the model builder](#templates--the-model-builder).
 
+### Foundation stewardship (990-PF)
+
+The MinistryWatch stack scores **nonprofits**; private foundations file a 990-PF
+and are scored by a separate, foundation-scoped base model — `40-foundation-stewardship`
+([`applies_to = "foundation"`](#per-type-scoping-applies_to)), also in the template
+catalog. It reads the [990-PF concepts](#financial-concept-keys) and has two factors:
+
+| Factor | Formula | Measures |
+|--------|---------|----------|
+| Charitable Distribution Ratio | `pf_charitable_disb / pf_total_assets` | the ~5% annual payout view — charitable disbursements as a share of assets |
+| Grant Payout Share | `pf_grants_paid / pf_charitable_disb` | how much of charitable spending flows out as actual grants |
+
+Because it's a base `model` (not a composite), a foundation's overall standing is
+this model's `total_score`. Create it from the template like any other model.
+
 ## Manual (Graded) Models
 
 A manual model's factors have no formula or inputs. Instead each factor declares a `scale` that says how the grader's entered value maps to `[0, 1]`, and `formula_description` carries the **guidance** shown to the grader:
 
 ```toml
 [model]
-version = 5
+version = "5"
 type    = "governance"
 mode    = "manual"
 
@@ -339,6 +396,18 @@ sources — see [Financial Data](../financials.md)), not the 990 field directly.
 | `invest_val` | Other investments (EOY) |
 | `accts_pay` | Accounts payable & accrued expenses (EOY) |
 
+**990-PF (private-foundation) concepts.** Foundations file a 990-PF with its own
+"Analysis of Revenue and Expenses" and balance-sheet groups (not the 990
+functional-expense lines), so foundation-scoped models read these instead:
+
+| Key | Form 990-PF field (derivation source) |
+|-----|----------------|
+| `pf_charitable_disb` | Total charitable disbursements (`AnalysisOfRevenueAndExpenses`) |
+| `pf_grants_paid` | Contributions & grants paid |
+| `pf_total_exp` | Total expenses (revenue & expenses) |
+| `pf_total_assets` | Total assets (EOY, balance sheet) |
+| `pf_net_assets` | Net assets / fund balances (EOY) |
+
 ### Other input types
 
 | Syntax | Example | Resolves to |
@@ -369,7 +438,7 @@ A model-level default applies to every input that doesn't set its own `missing`:
 
 ```toml
 [model]
-version      = 20
+version      = "20"
 missing_data = "newest"     # default fallback for all inputs in this model
 ```
 

@@ -16,7 +16,7 @@ from models import validate_toml, cmd_register, cmd_list
 # ---------------------------------------------------------------------------
 
 def _valid_model(version=2, description=None) -> dict:
-    m = {'version': version}
+    m = {'version': str(version)}
     if description:
         m['description'] = description
     return m
@@ -563,7 +563,7 @@ class TestCmdRegisterDryRun(unittest.TestCase):
     def _write_toml(self, data: dict, tmp_dir: str) -> str:
         import tomllib
         # Write TOML manually since tomllib is read-only; construct minimal TOML text
-        lines = [f'[model]', f'version = {data["model"]["version"]}']
+        lines = [f'[model]', f'version = "{data["model"]["version"]}"']
         if 'description' in data.get('model', {}):
             lines.append(f'description = "{data["model"]["description"]}"')
         for f in data.get('factor', []):
@@ -681,7 +681,7 @@ class TestCmdRegisterWrite(unittest.TestCase):
     def _write_toml(self, version=2, factors=None):
         lines = [
             '[model]',
-            f'version = {version}',
+            f'version = "{version}"',
             'description = "Test model"',
         ]
         for f in (factors or [_valid_factor()]):
@@ -760,7 +760,7 @@ class TestCmdRegisterSkipExisting(unittest.TestCase):
         self._db_path = os.path.join(self._tmp, 'test.db')
         self._toml_path = os.path.join(self._tmp, 'model.toml')
         lines = [
-            '[model]', 'version = 3', 'description = "Skip test"', '',
+            '[model]', 'version = "3"', 'description = "Skip test"', '',
             '[[factor]]', 'name = "Test Factor"', 'weight = 1.0',
             'formula_type = "ratio"', 'inputs = ["prog", "total_exp"]',
             'direction = "higher"', 'benchmark_lo = 0.0', 'benchmark_hi = 1.0',
@@ -908,7 +908,7 @@ class TestRegisterModel(unittest.TestCase):
     """register_model — the shared core of the CLI + admin create paths."""
 
     def _defn(self, version=88, **model):
-        return {"model": {"version": version, **model},
+        return {"model": {"version": str(version), **model},
                 "factor": [{"name": "PE", "weight": 1.0, "formula_type": "ratio",
                             "inputs": ["prog", "total_exp"], "direction": "higher",
                             "benchmark_lo": 0.0, "benchmark_hi": 1.0}]}
@@ -924,7 +924,7 @@ class TestRegisterModel(unittest.TestCase):
 
     def test_creates_and_audits(self):
         res = self.register(self.db, self._defn(88))
-        self.assertEqual(res['version'], 88)
+        self.assertEqual(res['version'], '88')
         self.assertIsNotNone(self.db.scores.get_model(88))
         self.assertTrue(self.db.audit.list_log(entity_type='score_model', entity_id='88'))
 

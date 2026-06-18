@@ -114,19 +114,21 @@ class TestScoreHistoryRoute(unittest.TestCase):
             {"year": 2021, "total_score": 0.8, "imputed": False, "score_id": 1, "source_year": None},
             {"year": 2022, "total_score": 0.8, "imputed": True, "score_id": 2, "source_year": 2021}]
         out = _call(self.router, "GET", "/scores/history", _qp(ein="111111111"))
-        self.db.scores.list_score_history.assert_called_once_with("111111111", 1)
-        self.assertEqual(out["model_version"], 1)
+        self.db.scores.list_score_history.assert_called_once_with("111111111", '1')
+        self.assertEqual(out["model_version"], '1')
         self.assertEqual(len(out["history"]), 2)
         self.assertTrue(out["history"][1]["imputed"])
 
     def test_history_honors_version(self):
         self.db.scores.list_score_history.return_value = []
         _call(self.router, "GET", "/scores/history", _qp(ein="111111111", version="30"))
-        self.db.scores.list_score_history.assert_called_once_with("111111111", 30)
+        self.db.scores.list_score_history.assert_called_once_with("111111111", '30')
 
-    def test_history_rejects_bad_version(self):
+    def test_history_arbitrary_version_passed_through(self):
+        # Versions are opaque strings: any value is passed to the DB verbatim.
         out = _call(self.router, "GET", "/scores/history", _qp(ein="1", version="abc"))
-        self.assertIn("error", out)
+        self.db.scores.list_score_history.assert_called_once_with("1", "abc")
+        self.assertNotIn("error", out)
 
 
 # ---------------------------------------------------------------------------
@@ -159,27 +161,27 @@ class TestGetFactors(unittest.TestCase):
 
     def test_default_version_is_1(self):
         self._call()
-        self.db.scores.get_factors.assert_called_once_with(1)
+        self.db.scores.get_factors.assert_called_once_with('1')
 
     def test_default_model_version_in_response_is_1(self):
         result = self._call()
-        self.assertEqual(result["model_version"], 1)
+        self.assertEqual(result["model_version"], '1')
 
     def test_explicit_version_passed_to_db(self):
         self._call(version="2")
-        self.db.scores.get_factors.assert_called_once_with(2)
+        self.db.scores.get_factors.assert_called_once_with('2')
 
     def test_explicit_version_reflected_in_response(self):
         result = self._call(version="2")
-        self.assertEqual(result["model_version"], 2)
+        self.assertEqual(result["model_version"], '2')
 
-    def test_non_digit_version_falls_back_to_1(self):
+    def test_arbitrary_version_used_verbatim(self):
         self._call(version="abc")
-        self.db.scores.get_factors.assert_called_once_with(1)
+        self.db.scores.get_factors.assert_called_once_with("abc")
 
     def test_missing_version_falls_back_to_1(self):
         self._call()
-        self.db.scores.get_factors.assert_called_once_with(1)
+        self.db.scores.get_factors.assert_called_once_with("1")
 
     def test_returns_factors_from_db(self):
         self.db.scores.get_factors.return_value = [FACTOR_STUB]
@@ -339,19 +341,19 @@ class TestCreateScore(unittest.TestCase):
 
     def test_default_model_version_is_1(self):
         result = self._call({"filing_id": "test-filing-uuid"})
-        self.assertEqual(result["model_version"], 1)
+        self.assertEqual(result["model_version"], '1')
 
     def test_calls_create_score_with_default_version(self):
         self._call({"filing_id": "test-filing-uuid"})
-        self.db.scores.create_score.assert_called_once_with("test-filing-uuid", 1)
+        self.db.scores.create_score.assert_called_once_with("test-filing-uuid", '1')
 
     def test_explicit_model_version_passed_to_db(self):
         self._call({"filing_id": "test-filing-uuid", "model_version": 2})
-        self.db.scores.create_score.assert_called_once_with("test-filing-uuid", 2)
+        self.db.scores.create_score.assert_called_once_with("test-filing-uuid", '2')
 
     def test_explicit_model_version_in_response(self):
         result = self._call({"filing_id": "test-filing-uuid", "model_version": 2})
-        self.assertEqual(result["model_version"], 2)
+        self.assertEqual(result["model_version"], '2')
 
     def test_missing_filing_id_returns_error(self):
         result = self._call({"model_version": 1})
@@ -664,7 +666,7 @@ class TestCalculateScore(unittest.TestCase):
         from unittest.mock import patch
         with patch.object(self.router.engine, 'calculate', return_value={"score": 0.8}) as mock_calc:
             result = self._call({"ein": "111111111", "year": 2023})
-        mock_calc.assert_called_once_with("111111111", 2023, 1)
+        mock_calc.assert_called_once_with("111111111", 2023, '1')
 
     def test_value_error_returns_error_dict(self):
         from unittest.mock import patch
@@ -682,7 +684,7 @@ class TestCalculateScore(unittest.TestCase):
         from unittest.mock import patch
         with patch.object(self.router.engine, 'calculate', return_value={"score": 0.5}) as mock_calc:
             self._call({"ein": "111111111", "year": 2023, "model_version": 2})
-        mock_calc.assert_called_once_with("111111111", 2023, 2)
+        mock_calc.assert_called_once_with("111111111", 2023, '2')
 
     def test_year_cast_to_int(self):
         from unittest.mock import patch
@@ -837,18 +839,18 @@ class TestDebugRoute(unittest.TestCase):
 
     def test_ein_year_calls_engine_debug(self):
         result = self._call(ein="111111111", year="2023")
-        self.router.engine.debug.assert_called_once_with("111111111", 2023, 1)
+        self.router.engine.debug.assert_called_once_with("111111111", 2023, '1')
         self.assertEqual(result["ok"], True)
 
     def test_version_passed_through(self):
         self._call(ein="111111111", year="2023", version="2")
-        self.router.engine.debug.assert_called_once_with("111111111", 2023, 2)
+        self.router.engine.debug.assert_called_once_with("111111111", 2023, '2')
 
     def test_filing_id_resolves_to_ein_year(self):
         self.db.filings.get_filing.return_value = {"ein": "222222222", "year": 2021}
         self._call(filing_id="abc-uuid")
         self.db.filings.get_filing.assert_called_once_with("abc-uuid")
-        self.router.engine.debug.assert_called_once_with("222222222", 2021, 1)
+        self.router.engine.debug.assert_called_once_with("222222222", 2021, '1')
 
     def test_filing_id_not_found(self):
         self.db.filings.get_filing.return_value = None

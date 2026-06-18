@@ -344,6 +344,43 @@ class FinancialsDatabase(Database):
     """Facts where sources disagree and no one has chosen yet (the to-resolve list)."""
     return [f for f in self.get_org_financials(ein)["facts"] if f["conflict"]]
 
+  def orgs_with_conflicts(self, limit: int = 50, offset: int = 0) -> dict:
+    """Corpus-wide "conflicts inbox": orgs that currently have ≥1 unresolved
+    conflict, each with its conflict count, paginated. A conflict (per
+    :meth:`conflicts` / :meth:`get_org_financials`) is a fact whose observations
+    diverge — ≥2 distinct non-NULL values — and which a human has not resolved
+    (the canonical row's ``chosen_by`` is NULL or 'auto'). Built set-based: group
+    observations into facts, keep facts with ≥2 distinct non-NULL values that are
+    unresolved, then count distinct conflicting facts per org. ``limit`` is capped
+    at 200."""
+    limit = max(1, min(int(limit), 200))
+    offset = max(0, int(offset))
+    # A fact is a (org, year, concept). It is a conflict when its observations hold
+    # ≥2 distinct non-NULL values and its canonical pick is unresolved (chosen_by
+    # NULL or 'auto'). Count the conflicting facts per org, then page.
+    conflict_facts = (
+      "SELECT o.organization_id AS ein "
+      "FROM financial_observation o "
+      "LEFT JOIN financial_canonical c ON c.organization_id = o.organization_id "
+      "  AND c.fiscal_year = o.fiscal_year AND c.concept_code = o.concept_code "
+      "WHERE o.value IS NOT NULL "
+      "GROUP BY o.organization_id, o.fiscal_year, o.concept_code "
+      "HAVING COUNT(DISTINCT o.value) > 1 "
+      "  AND COALESCE(MAX(c.chosen_by), 'auto') IN ('auto')")
+    total = self.cursor.execute(
+      f"SELECT COUNT(*) FROM (SELECT DISTINCT ein FROM ({conflict_facts}))").fetchone()[0]
+    rows = self.cursor.execute(
+      f"SELECT cf.ein, org.name, COUNT(*) AS conflict_count "
+      f"FROM ({conflict_facts}) cf "
+      f"LEFT JOIN organization org ON org.ein = cf.ein "
+      f"GROUP BY cf.ein "
+      f"ORDER BY conflict_count DESC, cf.ein "
+      f"LIMIT ? OFFSET ?", (limit, offset)).fetchall()
+    return {
+      "total": total, "limit": limit, "offset": offset,
+      "organizations": [{"ein": r[0], "name": r[1], "conflict_count": r[2]} for r in rows],
+    }
+
   # ── 990 derivation ────────────────────────────────────────────────────────────
 
   def derive_from_990(self, ein: str, *, source_code: str = 'irs_990_xml',

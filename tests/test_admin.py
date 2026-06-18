@@ -109,18 +109,18 @@ class TestAdminRouter(unittest.TestCase):
         self.assertIn('error', out)
 
     def test_create_model_from_definition(self):
-        defn = {"model": {"version": 77, "type": "financial"},
+        defn = {"model": {"version": "77", "type": "financial"},
                 "factor": [{"name": "PE", "weight": 1.0, "formula_type": "ratio",
                             "inputs": ["prog", "total_exp"], "direction": "higher",
                             "benchmark_lo": 0.0, "benchmark_hi": 1.0}]}
         out = self._call('POST', '/admin/models', {'definition': defn})
-        self.assertEqual(out['version'], 77)
-        self.assertIn(77, {m['version'] for m in self._call('GET', '/admin/models')['models']})
+        self.assertEqual(out['version'], '77')
+        self.assertIn('77', {m['version'] for m in self._call('GET', '/admin/models')['models']})
         log = self.db.audit.list_log(entity_type='score_model', entity_id='77')
         self.assertEqual(log[0]['actor_label'], 'root')
 
     def test_create_model_dry_run_and_errors(self):
-        defn = {"model": {"version": 78},
+        defn = {"model": {"version": "78"},
                 "factor": [{"name": "PE", "weight": 1.0, "formula_type": "ratio",
                             "inputs": ["prog", "total_exp"], "direction": "higher",
                             "benchmark_lo": 0.0, "benchmark_hi": 1.0}]}

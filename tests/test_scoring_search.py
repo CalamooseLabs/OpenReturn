@@ -110,7 +110,7 @@ class TestIngestScoringHook(unittest.TestCase):
             db = OpenReturnDB(path=str(Path(td) / "OpenReturn.db"))
             score = db.scores.get_score_by_ein_year("123456789", 2023)
             self.assertIsNotNone(score)              # the seeded v1 model was scored
-            self.assertEqual(score["model_version"], 1)
+            self.assertEqual(score["model_version"], '1')
             self.assertGreater(score["total_score"], 0)   # real financial fields → non-zero
             db.close()
 

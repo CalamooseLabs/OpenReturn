@@ -91,7 +91,7 @@ class ScoreDatabase(Database):
     self.cursor.execute("CREATE INDEX IF NOT EXISTS idx_org_score_model ON organization_score (model_id)")
     self.connection.commit()
 
-  def get_model_id(self, version: int = 1) -> int:
+  def get_model_id(self, version: str = "1") -> int:
     row = self.cursor.execute(
       "SELECT model_id FROM score_model WHERE version = ?", (version,)
     ).fetchone()
@@ -99,7 +99,7 @@ class ScoreDatabase(Database):
       raise ValueError(f"Score model version {version} not found")
     return row[0]
 
-  def get_factors(self, model_version: int = 1) -> list[dict]:
+  def get_factors(self, model_version: str = "1") -> list[dict]:
     rows = self.cursor.execute(
       """
       SELECT sf.factor_id, sf.name, sf.weight, sf.formula_type, sf.inputs,
@@ -140,7 +140,7 @@ class ScoreDatabase(Database):
     ).fetchone()
     return self._factor_row(row) if row else None
 
-  def get_model(self, version: int = 1) -> dict | None:
+  def get_model(self, version: str = "1") -> dict | None:
     """Model header — version, description, category type, scoring mode, and kind."""
     row = self.cursor.execute(
       "SELECT version, description, model_type, scoring_mode, "
@@ -258,7 +258,7 @@ class ScoreDatabase(Database):
     ).fetchone()
     return row[0] if row else 0.0
 
-  def create_score(self, filing_id: str, model_version: int = 1) -> int:
+  def create_score(self, filing_id: str, model_version: str = "1") -> int:
     """``filing_id`` is the public filing uuid; resolved to the integer
     filing.filing_id that organization_score stores."""
     model_id = self.get_model_id(model_version)
@@ -313,7 +313,7 @@ class ScoreDatabase(Database):
       for r in rows
     ]
 
-  def list_score_history(self, ein: str, model_version: int) -> list[dict]:
+  def list_score_history(self, ein: str, model_version: str) -> list[dict]:
     """One model's full score series for an org, oldest→newest — the MinistryWatch-
     style multi-year view. Each year carries ``imputed`` and, for an imputed year,
     the donor ``source_year`` of its filled factors (the earliest such donor)."""
@@ -393,7 +393,7 @@ class ScoreDatabase(Database):
       ") ")
     return cte, [*iparams, *params]
 
-  def rank_leaderboard(self, model_version: int = 1, *, year=None,
+  def rank_leaderboard(self, model_version: str = "1", *, year=None,
                        limit: int = 50, offset: int = 0, **subset) -> dict:
     """Rank orgs by ``model_version``'s latest scored total_score (or a fixed
     ``year``), within the optional subset. Ties share a rank (RANK()); pagination is
@@ -412,7 +412,7 @@ class ScoreDatabase(Database):
             "leaderboard": [{"rank": r[4], "ein": r[0], "name": r[1],
                              "total_score": r[2], "year": r[3]} for r in rows]}
 
-  def rank_org(self, ein: str, model_version: int = 1, *, year=None, **subset) -> dict:
+  def rank_org(self, ein: str, model_version: str = "1", *, year=None, **subset) -> dict:
     """One org's rank within a subset for a model — the COUNT-greater primitive:
     ``rank = 1 + (# scores strictly greater within the subset)``, with the subset size
     and percentile. ``rank``/``percentile`` are None when the org isn't in the subset
@@ -430,7 +430,7 @@ class ScoreDatabase(Database):
     pct = round(100.0 * (of - rank) / (of - 1), 1) if of > 1 else 100.0
     return {"ein": ein, "rank": rank, "of": of, "percentile": pct, "total_score": my}
 
-  def rank_org_dimensions(self, ein: str, model_version: int = 1, *, year=None) -> dict | None:
+  def rank_org_dimensions(self, ein: str, model_version: str = "1", *, year=None) -> dict | None:
     """An org's rank for a model across **its own org_type (overall) + sector /
     state / city / county**, all *within that org_type* — one call for an org-detail
     page. None if the org doesn't exist.
@@ -538,7 +538,7 @@ class ScoreDatabase(Database):
       return None
     return self.get_score(row[0])
 
-  def get_score_id_for(self, ein: str, year: int, model_version: int) -> int | None:
+  def get_score_id_for(self, ein: str, year: int, model_version: str) -> int | None:
     """Most-recent score_id for an EIN + year under a specific model version."""
     row = self.cursor.execute(
       """

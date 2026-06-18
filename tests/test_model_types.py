@@ -184,7 +184,7 @@ class TestDebugManual(unittest.TestCase):
 
 class TestManualTomlValidation(unittest.TestCase):
 
-    BASE = {'model': {'version': 5, 'type': 'governance', 'mode': 'manual'},
+    BASE = {'model': {'version': '5', 'type': 'governance', 'mode': 'manual'},
             'factor': [{'name': 'A', 'weight': 1.0, 'scale': 'percent',
                         'formula_description': 'rate it'}]}
 
@@ -214,18 +214,18 @@ class TestManualTomlValidation(unittest.TestCase):
         self.assertTrue(any('formula_type' in i for i in self._issues(d)))
 
     def test_bad_mode(self):
-        d = {'model': {'version': 5, 'mode': 'wibble'}, 'factor': self.BASE['factor']}
+        d = {'model': {'version': '5', 'mode': 'wibble'}, 'factor': self.BASE['factor']}
         self.assertTrue(any('mode' in i for i in self._issues(d)))
 
     def test_computed_model_unaffected(self):
-        d = {'model': {'version': 6},
+        d = {'model': {'version': '6'},
              'factor': [{'name': 'X', 'weight': 1.0, 'formula_type': 'ratio',
                          'inputs': ['prog', 'total_exp'], 'direction': 'higher',
                          'benchmark_lo': 0.0, 'benchmark_hi': 1.0}]}
         self.assertEqual(self._issues(d), [])
 
     def test_computed_factor_with_scale_rejected(self):
-        d = {'model': {'version': 6},
+        d = {'model': {'version': '6'},
              'factor': [{'name': 'X', 'weight': 1.0, 'formula_type': 'ratio',
                          'inputs': ['prog', 'total_exp'], 'direction': 'higher',
                          'benchmark_lo': 0.0, 'benchmark_hi': 1.0, 'scale': 'percent'}]}

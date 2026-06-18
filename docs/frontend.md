@@ -123,13 +123,37 @@ paginated page; add any subset filter to rank *within* it —
 `?sector=E`, `?state=TX`, `?county=48453`, `?type=foundation`, `?list=<id>`,
 `?grantmaker=1` — or `?year=2023` to rank a fixed year instead of each org's latest.
 For one org's standing on its page, `GET /scores/ranking?ein=…&model=30` returns its
-rank in global + its own sector / state / city / county at once (each
+rank in overall + its own sector / state / city / county at once (each
 `{rank, of, percentile}`). Works the same for base, composite, and super-composite
 models. See [Scoring Models → Ranking](scoring/models.md#ranking-leaderboards).
 
-**Conflict-resolution UI** (data stewardship): `GET /financials/conflicts?ein=…`
-lists facts where sources disagree; `POST /financials/canonical { ein, fiscal_year,
-concept, observation_id }` picks the value the models use.
+**Nonprofit ↔ foundation toggle** (dashboards / leaderboards): the two populations
+are scored and ranked separately (see
+[Foundations & Grants → scoring](foundations.md#foundation-vs-nonprofit-scoring)),
+so a dashboard's type toggle maps to **two things at once** — the `type=` filter
+*and* the per-type overall model version:
+
+| Toggle (`?type=`) | Leaderboard call | Overall model |
+|-------------------|------------------|---------------|
+| `nonprofit` | `GET /scores/leaderboard?model=30&type=nonprofit` | super-composite **v30** |
+| `foundation` | `GET /scores/leaderboard?model=40&type=foundation` | base **v40** |
+
+`GET /scores/ranking?ein=…&model=…` is already within-type (an org ranks only against
+its own `org_type`), so just pass the matching model version for the org you're
+showing — v30 for a nonprofit, v40 for a foundation.
+
+**Conflict-resolution UI** (`/conflicts`, data stewardship): a two-level screen for
+picking the canonical value when sources disagree (needs `data:read` to view,
+`data:write` to resolve).
+1. **Inbox / index** — `GET /financials/conflict-orgs?limit=&offset=` →
+   `{ total, limit, offset, organizations: [{ ein, name, conflict_count }] }`: every
+   org with ≥1 unresolved conflict, most-conflicted first (paginated, `limit` capped
+   at 200).
+2. **Per-org view** — `GET /financials/conflicts?ein=…` lists the facts where
+   sources disagree (each with the competing observations).
+3. **Resolve** — `POST /financials/canonical { ein, fiscal_year, concept,
+   observation_id }` picks the observation the models will use; the response is the
+   org's refreshed financials.
 
 **Model builder** (requires `user:admin`): `GET /templates` lists the prefill
 catalog; `GET /templates/detail?code=…` returns a `{model, factor}` definition to
@@ -144,9 +168,13 @@ children from these); `POST /admin/models { definition, dry_run? }` validates
 what's been grabbed and ingested (the URL ledger + a `filing`-table archive
 summary + whether an ingest is live); `POST /upload/discover { url? }` previews the
 `.zip` archives at a URL (default the IRS downloads page); `POST /upload/grab
-{ url, force? }` starts a detached background ingest of that URL. The grab briefly
-restarts the API server to take the DB lock, so tolerate a short "API not
-responding" window and poll `/upload/ingested`. See
+{ url, force?, schedule? }` starts a detached background ingest of that URL. The grab
+briefly restarts the API server to take the DB lock, so tolerate a short "API not
+responding" window and poll `/upload/ingested`. Pass an optional **`schedule`** to
+queue it off-peak — a clock time (`01:00`), a relative delay (`+2h`), or an absolute
+`YYYY-MM-DD HH:MM`; omitted/`"now"` runs immediately. The UI's grab form is a
+**"When" picker defaulting to Tonight 1:00 AM**, so the server restart happens
+overnight. See
 [Ingest → Grabbing from the IRS website](ingest.md#grabbing-from-the-irs-website-admin).
 
 ## Permissions by area

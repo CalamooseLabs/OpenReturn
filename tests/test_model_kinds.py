@@ -102,10 +102,10 @@ class TestAppliesToScoping(unittest.TestCase):
             "WHERE f.organization_id = ?", (ein,)).fetchall()}
 
     def test_nonprofit_scored_only_by_nonprofit_model(self):
-        self.assertEqual(self._versions_for('111111111'), {10})
+        self.assertEqual(self._versions_for('111111111'), {'10'})
 
     def test_foundation_scored_only_by_foundation_model(self):
-        self.assertEqual(self._versions_for('222222222'), {40})
+        self.assertEqual(self._versions_for('222222222'), {'40'})
 
     def test_rescope_clears_stale_scores(self):
         # Flip the nonprofit model to foundation-only and rescore: the nonprofit's
@@ -117,7 +117,7 @@ class TestAppliesToScoping(unittest.TestCase):
 
 
 def _toml(kind='model', factors=None, mode='computed', version=2):
-    model = {'version': version, 'kind': kind}
+    model = {'version': str(version), 'kind': kind}
     if mode != 'computed':
         model['mode'] = mode
     return {'model': model, 'factor': factors or []}
@@ -137,7 +137,7 @@ def _errors(issues):
 class TestValidateKind(unittest.TestCase):
 
     def test_base_model_default_kind_ok(self):
-        data = {'model': {'version': 2}, 'factor': [_f('A', ['prog', 'total_exp'])]}
+        data = {'model': {'version': '2'}, 'factor': [_f('A', ['prog', 'total_exp'])]}
         self.assertEqual(_errors(models_cli.validate_toml(data)), [])
 
     def test_valid_composite(self):
@@ -179,7 +179,7 @@ class TestValidateKind(unittest.TestCase):
         for bad in ['model:abc', 'model:0', 'model:-1', 'model:']:
             data = _toml('composite', [_f('A', [bad], ft='sum')])
             errs = _errors(models_cli.validate_toml(data))
-            self.assertTrue(any("'model:' reference must be a positive integer" in e for e in errs),
+            self.assertTrue(any("'model:' reference must be a version string" in e for e in errs),
                             f"expected rejection for {bad!r}")
 
     def test_composite_allows_factor_and_literal_with_model(self):
@@ -197,10 +197,14 @@ class TestValidateKind(unittest.TestCase):
         self.assertTrue(any('must be a quoted' in e for e in errs), errs)
         self.assertFalse(any('unknown input key' in e for e in errs), errs)
 
-    def test_leading_zero_model_token_rejected(self):
-        data = _toml('composite', [_f('A', ['model:01'], ft='sum')])
-        errs = _errors(models_cli.validate_toml(data))
-        self.assertTrue(any("'model:' reference must be a positive integer" in e for e in errs), errs)
+    def test_dotted_and_leading_zero_model_tokens_accepted(self):
+        # Versions are opaque strings now: dotted (model:1.1) and leading-zero /
+        # date-style (model:01) tokens are well-formed references.
+        for ok in ['model:1.1', 'model:01', 'model:2026.06.14']:
+            data = _toml('composite', [_f('A', [ok], ft='sum')])
+            errs = _errors(models_cli.validate_toml(data))
+            self.assertFalse(any("'model:' reference" in e for e in errs),
+                             f"expected {ok!r} accepted, got {errs}")
 
 
 # ── DB layer ───────────────────────────────────────────────────────────────────
@@ -224,8 +228,8 @@ class TestModelKindDB(unittest.TestCase):
         _add_model(self.db, 20, [('F', 1.0, 'sum', ['model:1'], 'higher', 0.0, 1.0)],
                    kind='composite')
         kinds = {m['version']: m['model_kind'] for m in self.db.scores.list_computed_models()}
-        self.assertEqual(kinds[1], 'model')
-        self.assertEqual(kinds[20], 'composite')
+        self.assertEqual(kinds['1'], 'model')
+        self.assertEqual(kinds['20'], 'composite')
 
 
 # ── engine: cross-model scoring ────────────────────────────────────────────────
@@ -273,9 +277,9 @@ class TestCompositeScoring(unittest.TestCase):
             "JOIN score_model sm ON sm.model_id = os.model_id").fetchall()
         totals = {v: t for v, t in rows}
         # All four (plus seeded v1) scored in one batch, composite/super resolved.
-        self.assertAlmostEqual(totals[10], 0.8)
-        self.assertAlmostEqual(totals[20], 0.8)
-        self.assertAlmostEqual(totals[30], 0.8)
+        self.assertAlmostEqual(totals['10'], 0.8)
+        self.assertAlmostEqual(totals['20'], 0.8)
+        self.assertAlmostEqual(totals['30'], 0.8)
 
     def test_scoring_composite_subset_pulls_in_children(self):
         # `--version 20` (composite only) must still compute its children, else
@@ -284,16 +288,16 @@ class TestCompositeScoring(unittest.TestCase):
         rows = dict(self.db.cursor.execute(
             "SELECT sm.version, os.total_score FROM organization_score os "
             "JOIN score_model sm ON sm.model_id = os.model_id").fetchall())
-        self.assertAlmostEqual(rows[20], 0.8)        # composite scored correctly
-        self.assertIn(10, rows)                       # child pulled in + scored
-        self.assertAlmostEqual(rows[10], 0.8)
+        self.assertAlmostEqual(rows['20'], 0.8)        # composite scored correctly
+        self.assertIn('10', rows)                       # child pulled in + scored
+        self.assertAlmostEqual(rows['10'], 0.8)
 
     def test_debug_surfaces_model_variable(self):
         report = self.eng.debug('123456789', 2023, 20)
         self.assertEqual(report['model_kind'], 'composite')
         var = report['factors'][0]['variables'][0]
         self.assertEqual(var['kind'], 'model')
-        self.assertEqual(var['references'], 10)
+        self.assertEqual(var['references'], '10')
         self.assertAlmostEqual(var['value'], 0.8)
 
 
@@ -342,7 +346,7 @@ class TestEngineOrderingHelpers(unittest.TestCase):
     def test_model_refs_extracts_versions(self):
         factors = [{'inputs': json.dumps(['model:10', 'factor:x', '0.5'])},
                    {'inputs': json.dumps(['model:11', 'model:10'])}]
-        self.assertEqual(self.eng._model_refs(factors), {10, 11})
+        self.assertEqual(self.eng._model_refs(factors), {'10', '11'})
 
     def test_order_versions_topological(self):
         prepared = {
@@ -393,10 +397,10 @@ class TestRegisterCrossModel(unittest.TestCase):
             factor = ('[[factor]]\nname="A"\nweight=1.0\nformula_type="ratio"\n'
                       'inputs=["prog","total_exp"]\ndirection="higher"\n'
                       'benchmark_lo=0.0\nbenchmark_hi=1.0\n')
-        self._register(f'[model]\nversion={version}\nkind="{kind}"\n{extra}\n{factor}')
+        self._register(f'[model]\nversion="{version}"\nkind="{kind}"\n{extra}\n{factor}')
 
     def _composite_referencing(self, ref, version=20, kind='composite'):
-        return (f'[model]\nversion={version}\nkind="{kind}"\n\n'
+        return (f'[model]\nversion="{version}"\nkind="{kind}"\n\n'
                 f'[[factor]]\nname="C"\nweight=1.0\nformula_type="sum"\n'
                 f'inputs=["model:{ref}"]\ndirection="higher"\n'
                 f'benchmark_lo=0.0\nbenchmark_hi=1.0\n')
@@ -488,7 +492,7 @@ class TestShippedModelTomls(unittest.TestCase):
         for factor in data['factor']:
             for inp in factor.get('inputs', []):
                 if isinstance(inp, str) and inp.startswith('model:'):
-                    out.add(int(inp[len('model:'):]))
+                    out.add(inp[len('model:'):])
         return out
 
     def test_all_validate(self):

@@ -1,5 +1,6 @@
 import argparse
 import json
+import re
 import sys
 
 try:
@@ -13,6 +14,21 @@ from scoring.engine import (_PATHS as _VALID_INPUTS, FORMULA_TYPES,
                             FORMULA_INPUT_COUNTS, _FACTOR_PREFIX, _MODEL_PREFIX,
                             valid_strategy, parse_inputs)
 from scoring.graph import find_cycle
+
+# A version is an opaque STRING identifier: one or more dot-separated integer
+# segments (e.g. '1', '1.1', '10', '2026.06.14'). Stored verbatim, used as a
+# dict key in the scoring engine and as the 'model:<version>' child-ref token.
+# Segments may carry leading zeros (date-style '2026.06.14'); the value must not
+# be all-zero.
+_VERSION_RE = re.compile(r'^[0-9]+(\.[0-9]+)*$')
+
+
+def valid_version(v) -> bool:
+    """True if ``v`` is a well-formed, non-all-zero version string."""
+    if not isinstance(v, str) or not _VERSION_RE.match(v):
+        return False
+    return any(int(seg) for seg in v.split('.'))
+
 
 _MODEL_KEYS  = {'version', 'description', 'type', 'mode', 'kind', 'missing_data', 'applies_to'}
 _FACTOR_KEYS = {'name', 'weight', 'formula_type', 'inputs', 'direction',
@@ -118,8 +134,9 @@ def validate_toml(data: dict) -> list[str]:
         issues.append("ERROR: [model] missing required field: version")
     else:
         v = model['version']
-        if not isinstance(v, int) or v <= 0:
-            issues.append(f"ERROR: [model].version must be a positive integer, got: {v!r}")
+        if not valid_version(v):
+            issues.append(f"ERROR: [model].version must be a version string like "
+                          f"'1', '1.1', or '2026.06.14' (quote it in TOML), got: {v!r}")
 
     mode = model.get('mode', 'computed')
     if mode not in _MODES:
@@ -251,11 +268,11 @@ def validate_toml(data: dict) -> list[str]:
                                 f"models ('{inp}'); set [model].kind = 'composite' or "
                                 f"'super_composite'")
                         ref = inp[len(_MODEL_PREFIX):]
-                        # Canonical positive integer, no leading zeros (model:01).
-                        if not ref.isdigit() or int(ref) <= 0 or ref != str(int(ref)):
+                        # The referenced version: a well-formed version string.
+                        if not valid_version(ref):
                             issues.append(
-                                f"ERROR: {prefix}: 'model:' reference must be a positive "
-                                f"integer version, got: '{inp}'")
+                                f"ERROR: {prefix}: 'model:' reference must be a version "
+                                f"string like 'model:1' or 'model:1.1', got: '{inp}'")
                         else:
                             model_ref_count += 1
                     elif isinstance(inp, str):
@@ -380,11 +397,11 @@ def register_model(db, data: dict, *, actor=None, skip_existing: bool = False,
     if kind in _CHILD_KIND:
         want_kind = _CHILD_KIND[kind]
         refs = sorted({
-            int(k[len(_MODEL_PREFIX):])
+            k[len(_MODEL_PREFIX):]
             for factor in data['factor']
             for k in parse_inputs(factor.get('inputs') or [])[0]
             if isinstance(k, str) and k.startswith(_MODEL_PREFIX)
-            and k[len(_MODEL_PREFIX):].isdigit()
+            and valid_version(k[len(_MODEL_PREFIX):])
         })
         ref_errors = []
         for ref in refs:

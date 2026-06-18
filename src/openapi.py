@@ -217,7 +217,7 @@ def _schemas() -> dict:
             "properties": {
                 "score_id": {"type": "integer"},
                 "ein": {"type": "string"},
-                "model_version": {"type": "integer"},
+                "model_version": {"type": "string"},
                 "filing_id": {"type": "string"},
                 "year": {"type": "integer"},
                 "total_score": {"type": ["number", "null"]},
@@ -251,7 +251,7 @@ def _schemas() -> dict:
         "ModelFactors": {
             "type": "object",
             "properties": {
-                "model_version": {"type": "integer"},
+                "model_version": {"type": "string"},
                 "model_type": {"type": ["string", "null"]},
                 "scoring_mode": {"type": "string", "enum": ["computed", "manual"]},
                 "model_kind": {"type": "string",
@@ -277,7 +277,7 @@ def _schemas() -> dict:
                 "kind": {"type": "string",
                          "enum": ["model", "composite", "super_composite"]},
                 "type": {"type": ["string", "null"]},
-                "version": {"type": ["integer", "null"]},
+                "version": {"type": ["string", "null"]},
                 "factor_count": {"type": "integer"},
             },
         },
@@ -426,7 +426,7 @@ def _schemas() -> dict:
                 "year": {"type": "integer"},
                 "filing_id": {"type": "string"},
                 "form_code": {"type": ["string", "null"]},
-                "model_version": {"type": "integer"},
+                "model_version": {"type": "string"},
                 "model_type": {"type": ["string", "null"]},
                 "model_kind": {"type": "string",
                                "enum": ["model", "composite", "super_composite"]},
@@ -837,13 +837,13 @@ def _paths() -> dict:
                 "requestBody": _body({
                     "type": "object", "required": ["filing_id"],
                     "properties": {"filing_id": {"type": "string"},
-                                   "model_version": {"type": "integer", "default": 1}},
+                                   "model_version": {"type": "string", "default": "1"}},
                 }),
                 "responses": _responses({
                     "type": "object",
                     "properties": {"score_id": {"type": "integer"},
                                    "filing_id": {"type": "string"},
-                                   "model_version": {"type": "integer"}}}),
+                                   "model_version": {"type": "string"}}}),
             },
         },
         "/scores/history": {
@@ -857,7 +857,7 @@ def _paths() -> dict:
                 "responses": _responses({
                     "type": "object",
                     "properties": {"ein": {"type": "string"},
-                                   "model_version": {"type": "integer"},
+                                   "model_version": {"type": "string"},
                                    "history": {"type": "array", "items": {
                                        "type": "object",
                                        "properties": {
@@ -877,7 +877,7 @@ def _paths() -> dict:
                                "city / county / list / type / grantmaker). Ties share a rank. "
                                "Works for base, composite, and super-composite models.",
                 "parameters": [
-                    _q("model", "integer", default=1, desc="Model version to rank by"),
+                    _q("model", "string", default="1", desc="Model version to rank by"),
                     _q("year", "integer", desc="Rank a fixed tax year (default: each org's latest)"),
                     _q("sector"), _q("state"), _q("city"),
                     _q("county", desc="County FIPS"), _q("type", desc="org_type"),
@@ -888,7 +888,7 @@ def _paths() -> dict:
                 "responses": _responses({
                     "type": "object",
                     "properties": {
-                        "model_version": {"type": "integer"}, "year": {"type": ["integer", "null"]},
+                        "model_version": {"type": "string"}, "year": {"type": ["integer", "null"]},
                         "total": {"type": "integer"}, "limit": {"type": "integer"},
                         "offset": {"type": "integer"},
                         "leaderboard": {"type": "array", "items": {
@@ -905,12 +905,12 @@ def _paths() -> dict:
                 "summary": "One org's rank for a model, by dimension",
                 "description": "The org's rank (and percentile) in global + its own sector / "
                                "state / city / county, for `model` (version). `ein` required.",
-                "parameters": [_q("ein", required=True), _q("model", "integer", default=1),
+                "parameters": [_q("ein", required=True), _q("model", "string", default="1"),
                                _q("year", "integer")],
                 "responses": _responses({
                     "type": "object",
                     "properties": {
-                        "ein": {"type": "string"}, "model_version": {"type": "integer"},
+                        "ein": {"type": "string"}, "model_version": {"type": "string"},
                         "year": {"type": ["integer", "null"]},
                         "dimensions": {"type": "object",
                                        "description": "global / sector / state / city / county → "
@@ -952,7 +952,7 @@ def _paths() -> dict:
         "/scores/factors": {
             "get": {
                 "tags": ["Scores"], "summary": "Factor definitions for a model version",
-                "parameters": [_q("version", "integer", default=1)],
+                "parameters": [_q("version", "string", default="1")],
                 "responses": _responses(_ref("ModelFactors")),
             },
         },
@@ -981,7 +981,7 @@ def _paths() -> dict:
                     _q("ein", desc="With year — the filing to trace"),
                     _q("year", "integer"),
                     _q("filing_id", desc="Filing UUID — alternative to ein+year"),
-                    _q("version", "integer", default=1),
+                    _q("version", "string", default="1"),
                 ],
                 "responses": _responses(_ref("ScoreDebug")),
             },
@@ -993,7 +993,7 @@ def _paths() -> dict:
                 "requestBody": _body({
                     "type": "object", "required": ["ein", "year"],
                     "properties": {"ein": {"type": "string"}, "year": {"type": "integer"},
-                                   "model_version": {"type": "integer", "default": 1}},
+                                   "model_version": {"type": "string", "default": "1"}},
                 }),
                 "responses": _responses(_ref("Score")),
             },
@@ -1323,7 +1323,7 @@ def _paths() -> dict:
                 }),
                 "responses": _responses({
                     "type": "object",
-                    "properties": {"version": {"type": "integer"},
+                    "properties": {"version": {"type": "string"},
                                    "model_id": {"type": "integer"},
                                    "factors": {"type": "integer"},
                                    "kind": {"type": "string"}}}),
@@ -1450,6 +1450,20 @@ def _paths() -> dict:
                         "ein": {"type": "string"},
                         "conflicts": {"type": "array", "items": _ref("FinancialFact")}}})},
         },
+        "/financials/conflict-orgs": {
+            "get": {"tags": ["Financials"],
+                    "summary": "Corpus-wide conflicts inbox — orgs with ≥1 unresolved conflict (data:read)",
+                    "parameters": [_q("limit", "integer"), _q("offset", "integer")],
+                    "responses": _responses({"type": "object", "properties": {
+                        "total": {"type": "integer"},
+                        "limit": {"type": "integer"},
+                        "offset": {"type": "integer"},
+                        "organizations": {"type": "array", "items": {
+                            "type": "object",
+                            "properties": {"ein": {"type": "string"},
+                                           "name": {"type": "string"},
+                                           "conflict_count": {"type": "integer"}}}}}})},
+        },
         "/financials/observations": {
             "post": {"tags": ["Financials"],
                      "summary": "Record a source's values for an org-year (data:write)",
@@ -1567,17 +1581,24 @@ def _paths() -> dict:
                 "summary": "Start a background ingest from a URL",
                 "description": "Launches a detached ingest of a `.zip` archive or index page. "
                                "The job briefly restarts this API server to take the DB lock; "
-                               "refused under systemd or while another ingest runs.",
+                               "refused under systemd or while another ingest runs. An optional "
+                               "`schedule` (`HH:MM`, `+2h`, or `YYYY-MM-DD HH:MM`; omitted/`now` "
+                               "runs immediately) delays the start.",
                 "requestBody": _body({
                     "type": "object", "required": ["url"],
                     "properties": {"url": {"type": "string"},
-                                   "force": {"type": "boolean"}},
+                                   "force": {"type": "boolean"},
+                                   "schedule": {"type": "string",
+                                                "description": "Delay the start: HH:MM, +2h, or "
+                                                               "YYYY-MM-DD HH:MM. Omitted/empty/'now' "
+                                                               "runs immediately."}},
                 }),
                 "responses": _responses({
                     "type": "object",
                     "properties": {"status": {"type": "string"},
                                    "source": {"type": "string"},
                                    "force": {"type": "boolean"},
+                                   "schedule": {"type": "string"},
                                    "note": {"type": "string"}}}),
             },
         },

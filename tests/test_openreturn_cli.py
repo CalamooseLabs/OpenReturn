@@ -340,7 +340,7 @@ class TestCliDispatch(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             toml_path = os.path.join(td, 'model.toml')
             Path(toml_path).write_text(
-                "[model]\nversion = 1\n\n[[factor]]\n"
+                "[model]\nversion = \"1\"\n\n[[factor]]\n"
                 "name = \"A\"\nweight = 1.0\nformula_type = \"ratio\"\n"
                 "inputs = [\"cy_rev\", \"total_exp\"]\ndirection = \"higher\"\n"
                 "benchmark_lo = 0.0\nbenchmark_hi = 1.0\n"

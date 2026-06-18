@@ -57,6 +57,11 @@ class SchemaDatabase(Database):
     ("idx_grant_edge_ein",         "grant_edge (recipient_ein)"),
     ("idx_related_org_appearance", "related_org (appearance_id)"),
     ("idx_related_org_ein",        "related_org (related_ein)"),
+    # Org-anchored graph reads (grants_made/received, get_filing_graph) join the
+    # edge tables by filing_id — without these the join full-scans each table.
+    ("idx_grant_edge_filing",      "grant_edge (filing_id)"),
+    ("idx_person_role_filing",     "person_role (filing_id)"),
+    ("idx_related_org_filing",     "related_org (filing_id)"),
   ]
 
   def drop_ingest_indexes(self) -> None:

@@ -41,6 +41,13 @@ python3 src/cli.py migrate --db /var/lib/openreturn/OpenReturn.db
 
 `init` is idempotent — it skips inserts if the database already exists and is populated. `migrate` tracks applied migrations in a `migration` table and never re-runs the same migration.
 
+Rebuild the query planner's statistics after a large manual change (a bulk ingest already does this at finalize, and the server runs `PRAGMA optimize` on startup; an incrementally-updated DB can otherwise pick a table scan over an index on the ranking/search joins):
+
+```bash
+python3 src/cli.py analyze            # ANALYZE + PRAGMA optimize
+python3 src/cli.py analyze --db /var/lib/openreturn/OpenReturn.db
+```
+
 ## Running the Server
 
 ```bash

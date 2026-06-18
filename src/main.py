@@ -151,6 +151,10 @@ def cmd_serve(args) -> int:
         # routes declare the permission each requires. None disables enforcement.
         authenticator=db.users.authenticate if args.auth else None,
         cors_origins=getattr(args, 'cors_origin', None),
+        # Request thread pool. The frontend BFF fans out ~7 concurrent calls per
+        # page, so size for a few simultaneous page loads; each worker holds one
+        # SQLite read connection.
+        max_workers=min(32, (os.cpu_count() or 4) * 4),
     )
     app.include_router(upload_router)
     app.include_router(AuthRouter(db=db))
@@ -176,6 +180,12 @@ def cmd_serve(args) -> int:
       "auth": bool(args.auth), "debug": bool(args.debug),
       "started_at": datetime.now().isoformat(timespec="seconds"),
     })
+    # Refresh planner stats (cheap; PRAGMA optimize only re-analyzes tables that
+    # need it) so an incrementally-updated DB still picks the right indexes, then
+    # give each request thread its own SQLite connection for the threaded server.
+    db.connection.execute("PRAGMA optimize")
+    db.enable_threadlocal()
+
     try:
       app.run()
     finally:

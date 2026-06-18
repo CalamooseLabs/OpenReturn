@@ -9,8 +9,47 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from http.client import HTTPMessage
 from urllib.parse import urlparse, parse_qs
 from typing import Callable, TypeAlias, Any
+from concurrent.futures import ThreadPoolExecutor
 
 from router import Router
+
+
+class PooledHTTPServer(HTTPServer):
+  """An HTTPServer that dispatches each request to a FIXED-SIZE thread pool.
+
+  ``ThreadingHTTPServer`` spawns a brand-new thread per request, so the DB layer's
+  per-thread SQLite connections (``base.py``) would accumulate one connection per
+  request for the server's whole life — an unbounded fd/memory leak. A bounded
+  pool reuses a small set of worker threads, so the connection count is capped at
+  ``max_workers`` and each connection is reused across requests. WAL still lets
+  those connections read concurrently, so a slow query on one request no longer
+  blocks every other client (the original single-threaded head-of-line problem).
+  """
+
+  def __init__(self, server_address, handler, *, max_workers: int = 16):
+    super().__init__(server_address, handler)
+    self._pool = ThreadPoolExecutor(
+      max_workers=max_workers, thread_name_prefix="openreturn-req")
+
+  def process_request(self, request, client_address):
+    # Hand the accepted socket to a pooled worker instead of a fresh thread.
+    self._pool.submit(self._run_request, request, client_address)
+
+  def _run_request(self, request, client_address):
+    try:
+      self.finish_request(request, client_address)
+    except Exception:                       # mirror socketserver's handling
+      self.handle_error(request, client_address)
+    finally:
+      self.shutdown_request(request)
+
+  def server_close(self):
+    super().server_close()
+    # Drain in-flight requests before returning (wait=True), so their per-thread
+    # connections are idle when the coordinator's close() releases them. (This
+    # explicit join is why we don't rely on ThreadingMixIn's block_on_close — it
+    # isn't in our MRO; the pool, not socketserver, owns the worker threads.)
+    self._pool.shutdown(wait=True)
 
 QueryParams: TypeAlias = dict[str, list[str]]
 Body: TypeAlias = dict[str, Any] | str | None
@@ -76,10 +115,13 @@ def _404_html(method: str, path: str) -> str:
 
 class Server:
   def __init__(self, host: str = 'localhost', port: int = 8080, debug: bool = False,
-               authenticator=None, cors_origins=None):
+               authenticator=None, cors_origins=None, max_workers: int = 16):
     self.host = host
     self.port = port
     self.debug = debug
+    # Size of the request thread pool (caps concurrent requests AND the number of
+    # per-thread SQLite connections the DB layer opens).
+    self.max_workers = max(1, max_workers)
     # Allowed CORS origins. Default ['*'] (safe — auth is header-based, not
     # cookie-based). A specific list restricts to those origins (echoed back).
     self.cors_origins = list(cors_origins) if cors_origins else ['*']
@@ -383,7 +425,13 @@ class Server:
 
   def run(self):
     handler = self._create_handler()
-    self.server = HTTPServer((self.host, self.port), handler)
+    # A bounded thread pool handles requests concurrently (WAL lets the per-thread
+    # connections read in parallel), so a slow query on one request no longer
+    # blocks every other client — without leaking a connection per request the way
+    # a thread-per-request server would. The DB layer gives each pool worker its
+    # own SQLite connection (db.enable_threadlocal in cmd_serve).
+    self.server = PooledHTTPServer(
+      (self.host, self.port), handler, max_workers=self.max_workers)
 
     try:
       raw = version("openreturn")

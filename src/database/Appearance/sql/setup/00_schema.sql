@@ -129,3 +129,9 @@ CREATE INDEX IF NOT EXISTS idx_grant_edge_ein         ON grant_edge (recipient_e
 CREATE INDEX IF NOT EXISTS idx_related_org_appearance ON related_org (appearance_id);
 CREATE INDEX IF NOT EXISTS idx_related_org_ein        ON related_org (related_ein);
 CREATE INDEX IF NOT EXISTS idx_party_ein             ON party (ein);
+-- Org-anchored graph reads (grants_made / grants_received / get_filing_graph)
+-- start from an org's filings and join the edge tables by filing_id; without
+-- these the join degrades to a full scan of each edge table at corpus scale.
+CREATE INDEX IF NOT EXISTS idx_grant_edge_filing     ON grant_edge (filing_id);
+CREATE INDEX IF NOT EXISTS idx_person_role_filing    ON person_role (filing_id);
+CREATE INDEX IF NOT EXISTS idx_related_org_filing    ON related_org (filing_id);

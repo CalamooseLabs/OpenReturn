@@ -153,5 +153,93 @@ class TestRankingRoutes(unittest.TestCase):
         self.assertIn('error', self._get('/scores/ranking', ein='999999999'))
 
 
+class TestRankingCache(unittest.TestCase):
+    """The org_score_latest fast-path: it must produce results IDENTICAL to the
+    live fallback (clearing the cache forces the fallback), reflect the latest
+    year, and preserve the rank==leaderboard-position invariant."""
+
+    def setUp(self):
+        self.db = OpenReturnDB(path=':memory:')
+        _seed(self.db, _ROWS)
+        self.db.scores.rebuild_score_latest()
+        self.db.connection.commit()
+
+    def tearDown(self):
+        self.db.close()
+
+    def _clear_cache(self):
+        self.db.cursor.execute("DELETE FROM org_score_latest")
+        self.db.connection.commit()
+
+    def test_cache_populated_one_row_per_org(self):
+        n = self.db.cursor.execute("SELECT COUNT(*) FROM org_score_latest").fetchone()[0]
+        self.assertEqual(n, len(_ROWS))
+
+    def test_cache_denormalizes_dims(self):
+        row = self.db.cursor.execute(
+            "SELECT total_score, sector_code, state_code FROM org_score_latest "
+            "WHERE ein = ?", ('100000001',)).fetchone()
+        self.assertAlmostEqual(row[0], 0.90)
+        self.assertEqual(row[1], 'E')
+        self.assertEqual(row[2], 'TX')
+
+    def test_leaderboard_cache_equals_fallback(self):
+        cached = self.db.scores.rank_leaderboard(1)
+        cached_tx = self.db.scores.rank_leaderboard(1, state='TX')
+        self._clear_cache()
+        self.assertEqual(cached, self.db.scores.rank_leaderboard(1))
+        self.assertEqual(cached_tx, self.db.scores.rank_leaderboard(1, state='TX'))
+
+    def test_rank_org_cache_equals_fallback(self):
+        cached = {e: self.db.scores.rank_org(e, 1) for e, *_ in _ROWS}
+        cached_tx = {e: self.db.scores.rank_org(e, 1, state='TX') for e, *_ in _ROWS}
+        self._clear_cache()
+        for e, *_ in _ROWS:
+            self.assertEqual(cached[e], self.db.scores.rank_org(e, 1))
+            self.assertEqual(cached_tx[e], self.db.scores.rank_org(e, 1, state='TX'))
+
+    def test_dimensions_cache_equals_fallback(self):
+        cached = self.db.scores.rank_org_dimensions('100000001', 1)
+        self._clear_cache()
+        self.assertEqual(cached, self.db.scores.rank_org_dimensions('100000001', 1))
+
+    def test_rank_equals_leaderboard_position_via_cache(self):
+        # The test-asserted invariant, now through the cache path.
+        board = self.db.scores.rank_leaderboard(1, limit=500)["leaderboard"]
+        pos = {r["ein"]: r["rank"] for r in board}
+        for e, *_ in _ROWS:
+            self.assertEqual(self.db.scores.rank_org(e, 1)["rank"], pos[e])
+
+    def test_cache_reflects_latest_year(self):
+        # A newer filing restates the org's latest score; a rebuild must update it.
+        _score(self.db, '100000004', 2024, 0.99)
+        self.db.scores.rebuild_score_latest()
+        self.db.connection.commit()
+        row = self.db.cursor.execute(
+            "SELECT total_score, year FROM org_score_latest WHERE ein = ?",
+            ('100000004',)).fetchone()
+        self.assertAlmostEqual(row[0], 0.99)
+        self.assertEqual(row[1], 2024)
+
+    def test_surgical_rebuild_updates_only_target(self):
+        _score(self.db, '100000002', 2024, 0.99)
+        self.db.scores.rebuild_score_latest(eins=['100000002'])
+        self.db.connection.commit()
+        updated = self.db.cursor.execute(
+            "SELECT total_score FROM org_score_latest WHERE ein = ?",
+            ('100000002',)).fetchone()[0]
+        self.assertAlmostEqual(updated, 0.99)
+        # An untouched org keeps its row.
+        other = self.db.cursor.execute(
+            "SELECT total_score FROM org_score_latest WHERE ein = ?",
+            ('100000001',)).fetchone()[0]
+        self.assertAlmostEqual(other, 0.90)
+
+    def test_purge_invalidates_cache(self):
+        self.db.scores.delete_all_filings()
+        n = self.db.cursor.execute("SELECT COUNT(*) FROM org_score_latest").fetchone()[0]
+        self.assertEqual(n, 0)
+
+
 if __name__ == '__main__':
     unittest.main()

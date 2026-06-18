@@ -60,6 +60,25 @@ def cmd_migrate(args) -> int:
     return 0
 
 
+def cmd_analyze(args) -> int:
+    """Rebuild the query planner's statistics (ANALYZE + PRAGMA optimize).
+
+    A bulk ingest runs this at finalize, but a DB that has only been updated
+    incrementally never gets fresh statistics — and without them SQLite may pick
+    a full table scan over an index on mid-sized tables (10–100x slower on the
+    multi-index ranking/search joins). Run after a large manual change, or
+    periodically. The server also runs PRAGMA optimize on startup.
+    """
+    db = _open_db(args)
+    print(f"\n{_B}Analyzing database…{_R}")
+    db.connection.execute("ANALYZE")
+    db.connection.execute("PRAGMA optimize")
+    db.connection.commit()
+    db.close()
+    print(f"{_B}{_GRN}Statistics rebuilt.{_R}\n")
+    return 0
+
+
 def _db_targets(path: str) -> list[Path]:
     """The database file plus its WAL/SHM sidecars."""
     return [Path(path), Path(path + '-wal'), Path(path + '-shm')]

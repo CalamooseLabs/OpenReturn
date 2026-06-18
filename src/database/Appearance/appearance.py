@@ -230,15 +230,26 @@ class AppearanceDatabase(Database):
     appearance resolves to a party with this EIN (990-PF, after ``openreturn
     resolve``), joined to the grantor filer org."""
     ein = self._db.orgs.try_normalize_ein(ein)
+    # The match is "recipient_ein is this org (Schedule-I) OR the grantee
+    # appearance resolves to a party with this EIN (990-PF)". Those two arms live
+    # on different tables, so a single `WHERE a = ? OR b = ?` can't use an index
+    # and full-scans grant_edge. Instead collect the matching grant ids via a
+    # UNION of two index-driven branches, then fetch by primary key. UNION dedupes
+    # a grant that matches both arms (distinct grants keep distinct grant_ids).
     rows = self.cursor.execute(
       "SELECT f.year, f.organization_id, o.name, g.grant_kind, "
       "       g.cash_amount, g.noncash_amount, g.purpose_txt "
       "FROM grant_edge g "
       "JOIN filing f ON f.filing_id = g.filing_id "
       "LEFT JOIN organization o ON o.ein = f.organization_id "
-      "LEFT JOIN party_appearance pa ON pa.appearance_id = g.appearance_id "
-      "LEFT JOIN party p ON p.party_id = pa.resolved_party_id "
-      "WHERE g.recipient_ein = ? OR p.ein = ? "
+      "WHERE g.grant_id IN ("
+      "    SELECT grant_id FROM grant_edge WHERE recipient_ein = ?"
+      "    UNION"
+      "    SELECT g2.grant_id FROM party p"
+      "      JOIN party_appearance pa ON pa.resolved_party_id = p.party_id"
+      "      JOIN grant_edge g2 ON g2.appearance_id = pa.appearance_id"
+      "    WHERE p.ein = ?"
+      ") "
       "ORDER BY f.year DESC, g.cash_amount DESC", (ein, ein)).fetchall()
     grants = [{"year": r[0], "grantor_ein": r[1], "grantor": r[2] or r[1],
                "grant_kind": r[3], "cash_amount": r[4], "noncash_amount": r[5],

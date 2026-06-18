@@ -49,7 +49,8 @@ class TestOpenConnection(unittest.TestCase):
         with patch.object(db_base, '_HAS_CIPHER', True), \
              patch.object(db_base, '_sqlcipher', mock_cipher):
             result = db_base._open_connection(':memory:')
-        mock_cipher.connect.assert_called_once_with(':memory:')
+        mock_cipher.connect.assert_called_once_with(
+            ':memory:', check_same_thread=True)
         mock_conn.execute.assert_called_once_with("PRAGMA key='testpassword'")
         self.assertIs(result, mock_conn)
 

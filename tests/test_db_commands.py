@@ -87,6 +87,53 @@ class TestCmdInit(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# cmd_analyze
+# ---------------------------------------------------------------------------
+
+class TestCmdAnalyze(unittest.TestCase):
+
+    def setUp(self):
+        self.db = OpenReturnDB(path=":memory:")
+
+    def tearDown(self):
+        self.db.close()
+
+    def _run(self):
+        args = _make_args(db=":memory:")
+        with patch('db.OpenReturnDB', return_value=self.db), \
+             patch.object(self.db, 'close'):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                result = db_mod.cmd_analyze(args)
+        return result, buf.getvalue()
+
+    def test_returns_zero(self):
+        result, _ = self._run()
+        self.assertEqual(result, 0)
+
+    def test_prints_rebuilt(self):
+        _, out = self._run()
+        self.assertIn("rebuilt", out.lower())
+
+    def test_runs_analyze(self):
+        # ANALYZE populates the sqlite_stat1 stats table for the seeded reference
+        # tables (which have indexes + rows), so its presence confirms it ran.
+        self._run()
+        names = {r[0] for r in self.db.connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        self.assertIn("sqlite_stat1", names)
+
+    def test_closes_db(self):
+        mock_db = MagicMock()
+        args = _make_args(db=":memory:")
+        with patch('db.OpenReturnDB', return_value=mock_db):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                db_mod.cmd_analyze(args)
+        mock_db.close.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
 # cmd_migrate — list flag
 # ---------------------------------------------------------------------------
 

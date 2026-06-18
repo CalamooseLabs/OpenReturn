@@ -31,6 +31,10 @@ def main() -> int:
     migrate_p.add_argument('--db', default=None, help='Path to OpenReturn.db (defaults to ./OpenReturn.db)')
     migrate_p.add_argument('--list', action='store_true', help='List migrations and their status without applying')
 
+    # ── db analyze ─────────────────────────────────────────────────────────────
+    analyze_p = sub.add_parser('analyze', help='Rebuild query-planner statistics (ANALYZE + optimize)')
+    analyze_p.add_argument('--db', default=None, help='Path to OpenReturn.db (defaults to ./OpenReturn.db)')
+
     # ── serve ────────────────────────────────────────────────────────────────
     serve_p = sub.add_parser('serve', help='Start the API server')
     serve_p.add_argument('--debug',   action='store_true', help='Verbose request/response logging')
@@ -248,6 +252,10 @@ def main() -> int:
     if args.command == 'init':
         from db import cmd_init
         return cmd_init(args) or 0
+
+    if args.command == 'analyze':
+        from db import cmd_analyze
+        return cmd_analyze(args) or 0
 
     if args.command == 'migrate':
         from db import cmd_migrate

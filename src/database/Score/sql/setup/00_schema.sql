@@ -112,4 +112,47 @@ CREATE INDEX IF NOT EXISTS idx_org_score_filing ON organization_score (filing_id
 
 CREATE INDEX IF NOT EXISTS idx_org_score_model ON organization_score (model_id);
 
+-- Leaderboard / ranking: the final RANK()/ORDER BY total_score within a model and
+-- the "count scores greater" rank primitive both read (model_id, total_score).
+CREATE INDEX IF NOT EXISTS idx_org_score_model_total ON organization_score (model_id, total_score);
+
 CREATE INDEX IF NOT EXISTS idx_score_factor_value_score ON organization_score_factor (score_id);
+
+-- ── Ranking cache ───────────────────────────────────────────────────────────
+-- Materialized "latest scored row per org, per model" with the ranking
+-- dimensions denormalized. Leaderboards and per-org ranks otherwise re-run a
+-- window function over EVERY scored row of the model on every request (5M+ rows
+-- at corpus scale → 5–13 s); reading this one-row-per-org table instead makes
+-- them indexed lookups. It is a DERIVED CACHE — rebuilt from organization_score
+-- whenever scores change (ScoringEngine.rebuild → db.scores.rebuild_score_latest,
+-- run at ingest finalize and by `openreturn score`), exactly like the FTS and
+-- org-classification caches. A fixed-`year` query (not the latest) and any model
+-- whose cache hasn't been built yet fall back to the live window query, so this
+-- is purely an accelerator — never a source of truth.
+CREATE TABLE IF NOT EXISTS org_score_latest (
+  model_id     INTEGER NOT NULL REFERENCES score_model (model_id) ON DELETE CASCADE,
+  ein          TEXT NOT NULL,
+  total_score  REAL NOT NULL,
+  year         INTEGER,
+  org_type     TEXT,
+  sector_code  TEXT,
+  state_code   TEXT,
+  city         TEXT,
+  county_fips  TEXT,
+  is_grantmaker INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (model_id, ein)
+);
+
+-- Ranking access paths. rank_org_dimensions counts within (model, org_type) and,
+-- per dimension, additionally filters sector/state/city/county — so each gets a
+-- composite index ending in total_score (the COUNT-greater range), or the count
+-- would scan the whole (model, org_type) slice (~500k rows) per dimension. The
+-- board index puts ein in the index in the leaderboard's exact ORDER BY
+-- (total_score DESC, ein) so a page needs no separate sort; its (model_id,
+-- total_score) prefix also serves the global COUNT / COUNT-greater primitive.
+CREATE INDEX IF NOT EXISTS idx_osl_model_type_score ON org_score_latest (model_id, org_type, total_score);
+CREATE INDEX IF NOT EXISTS idx_osl_type_sector      ON org_score_latest (model_id, org_type, sector_code, total_score);
+CREATE INDEX IF NOT EXISTS idx_osl_type_state       ON org_score_latest (model_id, org_type, state_code, total_score);
+CREATE INDEX IF NOT EXISTS idx_osl_type_city        ON org_score_latest (model_id, org_type, city, total_score);
+CREATE INDEX IF NOT EXISTS idx_osl_type_county      ON org_score_latest (model_id, org_type, county_fips, total_score);
+CREATE INDEX IF NOT EXISTS idx_osl_model_board      ON org_score_latest (model_id, total_score DESC, ein);

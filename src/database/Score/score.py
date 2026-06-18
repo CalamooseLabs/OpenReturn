@@ -340,8 +340,109 @@ class ScoreDatabase(Database):
 
   # ── ranking (query-time; no stored ranks) ────────────────────────────────
   # Rank orgs by a model's latest scored total_score, globally or within a subset
-  # (sector / state / city / county / list / org_type / grantmaker). One window-fn
-  # leaderboard + a COUNT-greater primitive for a single org's place in a subset.
+  # (sector / state / city / county / list / org_type / grantmaker). The fast path
+  # reads the org_score_latest cache (one indexed row per org); a fixed-`year`
+  # query or a not-yet-built cache falls back to the live window query below.
+
+  def _model_id_for_version(self, model_version) -> int | None:
+    row = self.cursor.execute(
+      "SELECT model_id FROM score_model WHERE version = ?", (str(model_version),)
+    ).fetchone()
+    return row[0] if row else None
+
+  def _score_latest_ready(self, model_id: int) -> bool:
+    """True if the org_score_latest cache holds rows for this model. When it
+    doesn't (a legacy DB whose cache hasn't been rebuilt yet), callers fall back
+    to the live window query — so the cache is purely an accelerator."""
+    return self.cursor.execute(
+      "SELECT 1 FROM org_score_latest WHERE model_id = ? LIMIT 1", (model_id,)
+    ).fetchone() is not None
+
+  @staticmethod
+  def _cache_subset(*, sector=None, state=None, city=None, county=None,
+                    org_type=None, grantmaker=None, list_id=None):
+    """(clauses, params) for the subset predicate against the org_score_latest
+    cache's own denormalized columns (alias ``s``) — no org/address join needed.
+    Mirrors ``_rank_subset``."""
+    cl, p = [], []
+    pairs = [
+      (sector, "s.sector_code = ?", sector),
+      (state, "s.state_code = ?", str(state).strip().upper() if state else None),
+      (city, "s.city = ? COLLATE NOCASE", str(city).strip() if city else None),
+      (county, "s.county_fips = ?", county),
+      (org_type, "s.org_type = ?", org_type),
+      (grantmaker is not None, "s.is_grantmaker = ?", 1 if grantmaker else 0),
+      (list_id is not None,
+       "EXISTS (SELECT 1 FROM org_list_member ml WHERE ml.org_ein = s.ein AND ml.list_id = ?)",
+       list_id),
+    ]
+    for present, clause, param in pairs:
+      if present:
+        cl.append(clause)
+        p.append(param)
+    return cl, p
+
+  def rebuild_score_latest(self, model_ids=None, eins=None) -> int:
+    """(Re)build the org_score_latest ranking cache — the latest scored row per
+    (model, org), with ranking dims denormalized. ``model_ids`` limits to specific
+    models (default: every model with scores); ``eins`` limits to specific orgs
+    (default: a full rebuild). No commit (the caller batches). Returns rows
+    written. The windowed "latest per org" scan runs ONCE here instead of on every
+    ranking request."""
+    cur = self.cursor
+    mids = None if model_ids is None else [int(m) for m in model_ids]
+    if mids is not None and not mids:
+      return 0
+    mid_in = ("", []) if mids is None else (
+      " AND os.model_id IN (%s)" % ",".join("?" * len(mids)), list(mids))
+
+    # INSERT...SELECT over the windowed "latest scored row per (model, org)".
+    # {midw}/{einw} narrow the source scan; {midw} also matches the model filter
+    # of the DELETE that precedes each insert so the cache is replaced, not grown.
+    insert_tmpl = (
+      "WITH latest AS ("
+      " SELECT os.model_id AS model_id, os.total_score AS total_score,"
+      " f.organization_id AS ein, f.year AS year,"
+      " ROW_NUMBER() OVER (PARTITION BY os.model_id, f.organization_id"
+      "   ORDER BY f.year DESC, os.scored_at DESC) AS rn"
+      " FROM organization_score os JOIN filing f ON f.filing_id = os.filing_id"
+      " WHERE os.total_score IS NOT NULL{midw}{einw}"
+      ") INSERT INTO org_score_latest"
+      " (model_id, ein, total_score, year, org_type, sector_code, state_code,"
+      "  city, county_fips, is_grantmaker)"
+      " SELECT l.model_id, l.ein, l.total_score, l.year, o.org_type, o.sector_code,"
+      " a.state_code, a.city, a.county_fips, o.is_grantmaker"
+      " FROM latest l JOIN organization o ON o.ein = l.ein"
+      " LEFT JOIN address a ON a.uuid = o.business_address_id"
+      " WHERE l.rn = 1"
+    )
+
+    written = 0
+    if eins is None:
+      if mids is None:
+        cur.execute("DELETE FROM org_score_latest")
+      else:
+        cur.execute("DELETE FROM org_score_latest WHERE model_id IN (%s)"
+                    % ",".join("?" * len(mids)), list(mids))
+      cur.execute(insert_tmpl.format(midw=mid_in[0], einw=""), mid_in[1])
+      written = max(cur.rowcount, 0)
+    else:
+      eins = [self._db.orgs.try_normalize_ein(e) for e in eins]
+      for i in range(0, len(eins), 800):
+        chunk = eins[i:i + 800]
+        qs = ",".join("?" * len(chunk))
+        where = "ein IN (%s)" % qs
+        dparams = list(chunk)
+        if mids is not None:
+          where += " AND model_id IN (%s)" % ",".join("?" * len(mids))
+          dparams += list(mids)
+        cur.execute("DELETE FROM org_score_latest WHERE " + where, dparams)
+        cur.execute(
+          insert_tmpl.format(midw=mid_in[0],
+                             einw=" AND f.organization_id IN (%s)" % qs),
+          [*mid_in[1], *chunk])
+        written += max(cur.rowcount, 0)
+    return written
 
   @staticmethod
   def _rank_subset(*, sector=None, state=None, city=None, county=None,
@@ -398,15 +499,35 @@ class ScoreDatabase(Database):
     """Rank orgs by ``model_version``'s latest scored total_score (or a fixed
     ``year``), within the optional subset. Ties share a rank (RANK()); pagination is
     deterministic (secondary sort by ein). Returns the page + the subset ``total``."""
-    cl, p = self._rank_subset(**subset)
-    cte, params = self._rank_cte(model_version, year, cl, p)
     limit, offset = max(1, min(limit, 500)), max(offset, 0)
-    rows = self.cursor.execute(
-      cte + "SELECT ein, name, total_score, year, "
-            "RANK() OVER (ORDER BY total_score DESC) AS rank "
-            "FROM sub ORDER BY total_score DESC, ein LIMIT ? OFFSET ?",
-      [*params, limit, offset]).fetchall()
-    total = self.cursor.execute(cte + "SELECT COUNT(*) FROM sub", params).fetchone()[0]
+    mid = self._model_id_for_version(model_version)
+    if year is None and mid is not None and self._score_latest_ready(mid):
+      cl, p = self._cache_subset(**subset)
+      where = "s.model_id = ?" + "".join(" AND " + c for c in cl)
+      params = [mid, *p]
+      # Window + LIMIT over the cache FIRST (the board index streams it and stops
+      # at the page), THEN join organization for names on just those rows — a
+      # JOIN inside the windowed query would force materializing the whole subset.
+      rows = self.cursor.execute(
+        "SELECT t.ein, o.name, t.total_score, t.year, t.rank FROM ("
+        " SELECT s.ein AS ein, s.total_score AS total_score, s.year AS year,"
+        " RANK() OVER (ORDER BY s.total_score DESC) AS rank"
+        f" FROM org_score_latest s WHERE {where}"
+        " ORDER BY s.total_score DESC, s.ein LIMIT ? OFFSET ?"
+        ") t JOIN organization o ON o.ein = t.ein "
+        "ORDER BY t.total_score DESC, t.ein",
+        [*params, limit, offset]).fetchall()
+      total = self.cursor.execute(
+        f"SELECT COUNT(*) FROM org_score_latest s WHERE {where}", params).fetchone()[0]
+    else:
+      cl, p = self._rank_subset(**subset)
+      cte, cparams = self._rank_cte(model_version, year, cl, p)
+      rows = self.cursor.execute(
+        cte + "SELECT ein, name, total_score, year, "
+              "RANK() OVER (ORDER BY total_score DESC) AS rank "
+              "FROM sub ORDER BY total_score DESC, ein LIMIT ? OFFSET ?",
+        [*cparams, limit, offset]).fetchall()
+      total = self.cursor.execute(cte + "SELECT COUNT(*) FROM sub", cparams).fetchone()[0]
     return {"model_version": model_version, "year": year, "total": total,
             "limit": limit, "offset": offset,
             "leaderboard": [{"rank": r[4], "ein": r[0], "name": r[1],
@@ -417,16 +538,34 @@ class ScoreDatabase(Database):
     ``rank = 1 + (# scores strictly greater within the subset)``, with the subset size
     and percentile. ``rank``/``percentile`` are None when the org isn't in the subset
     (e.g. unscored, or filtered out)."""
-    cl, p = self._rank_subset(**subset)
-    cte, params = self._rank_cte(model_version, year, cl, p)
     ein = self._db.orgs.try_normalize_ein(ein)
-    my, of = self.cursor.execute(
-      cte + "SELECT (SELECT total_score FROM sub WHERE ein = ?), (SELECT COUNT(*) FROM sub)",
-      [*params, ein]).fetchone()
-    if my is None:
-      return {"ein": ein, "rank": None, "of": of, "percentile": None, "total_score": None}
-    rank = self.cursor.execute(
-      cte + "SELECT 1 + COUNT(*) FROM sub WHERE total_score > ?", [*params, my]).fetchone()[0]
+    mid = self._model_id_for_version(model_version)
+    if year is None and mid is not None and self._score_latest_ready(mid):
+      cl, p = self._cache_subset(**subset)
+      where = "s.model_id = ?" + "".join(" AND " + c for c in cl)
+      params = [mid, *p]
+      # `my` is read from WITHIN the subset, so an org filtered out → rank None.
+      my_row = self.cursor.execute(
+        f"SELECT s.total_score FROM org_score_latest s WHERE {where} AND s.ein = ?",
+        [*params, ein]).fetchone()
+      my = my_row[0] if my_row else None
+      of = self.cursor.execute(
+        f"SELECT COUNT(*) FROM org_score_latest s WHERE {where}", params).fetchone()[0]
+      if my is None:
+        return {"ein": ein, "rank": None, "of": of, "percentile": None, "total_score": None}
+      rank = self.cursor.execute(
+        f"SELECT 1 + COUNT(*) FROM org_score_latest s WHERE {where} AND s.total_score > ?",
+        [*params, my]).fetchone()[0]
+    else:
+      cl, p = self._rank_subset(**subset)
+      cte, cparams = self._rank_cte(model_version, year, cl, p)
+      my, of = self.cursor.execute(
+        cte + "SELECT (SELECT total_score FROM sub WHERE ein = ?), (SELECT COUNT(*) FROM sub)",
+        [*cparams, ein]).fetchone()
+      if my is None:
+        return {"ein": ein, "rank": None, "of": of, "percentile": None, "total_score": None}
+      rank = self.cursor.execute(
+        cte + "SELECT 1 + COUNT(*) FROM sub WHERE total_score > ?", [*cparams, my]).fetchone()[0]
     pct = round(100.0 * (of - rank) / (of - 1), 1) if of > 1 else 100.0
     return {"ein": ein, "rank": rank, "of": of, "percentile": pct, "total_score": my}
 
@@ -439,16 +578,56 @@ class ScoreDatabase(Database):
     nonprofit only against nonprofits (the ``global`` dimension is "overall within
     your type"). This both implements the foundation/nonprofit separation and lets
     the page resolve all five dimensions from a SINGLE materialization of the model's
-    latest-score-per-org set (a temp table), instead of re-running the windowed
-    leaderboard CTE ~10x — which made the page hang at full-corpus scale."""
+    latest-score-per-org set, instead of re-running the windowed leaderboard CTE
+    ~10x. The fast path reads the precomputed org_score_latest cache directly; a
+    fixed-`year` query or a not-yet-built cache falls back to building that set in
+    a per-request temp table (the old behaviour)."""
     ein = self._db.orgs.try_normalize_ein(ein)
     org = self._db.orgs.get_organization(ein)
     if org is None:
       return None
     addr = org.get('address') or {}
     org_type = org.get('org_type')
-
     cur = self.cursor
+
+    # ── fast path: read the org_score_latest cache (one indexed row per org) ──
+    mid = self._model_id_for_version(model_version)
+    if year is None and mid is not None and self._score_latest_ready(mid):
+      type_clause, type_args = (("s.org_type = ?", [org_type]) if org_type is not None
+                                else ("s.org_type IS NULL", []))
+      my_row = cur.execute(
+        f"SELECT s.total_score FROM org_score_latest s "
+        f"WHERE s.model_id = ? AND {type_clause} AND s.ein = ?",
+        [mid, *type_args, ein]).fetchone()
+      my = my_row[0] if my_row else None
+
+      def _crank(extra_clause=None, extra_args=None):
+        clauses = ["s.model_id = ?", type_clause] + ([extra_clause] if extra_clause else [])
+        args = [mid, *type_args, *(extra_args or [])]
+        where = " AND ".join(clauses)
+        of = cur.execute(
+          f"SELECT COUNT(*) FROM org_score_latest s WHERE {where}", args).fetchone()[0]
+        if my is None:
+          return {"ein": ein, "rank": None, "of": of, "percentile": None, "total_score": None}
+        rank = cur.execute(
+          f"SELECT 1 + COUNT(*) FROM org_score_latest s WHERE {where} AND s.total_score > ?",
+          [*args, my]).fetchone()[0]
+        pct = round(100.0 * (of - rank) / (of - 1), 1) if of > 1 else 100.0
+        return {"ein": ein, "rank": rank, "of": of, "percentile": pct, "total_score": my}
+
+      dims = {"global": _crank()}
+      if org.get('sector_code'):
+        dims["sector"] = _crank("s.sector_code = ?", [org['sector_code']])
+      if addr.get('state'):
+        dims["state"] = _crank("s.state_code = ?", [str(addr['state']).strip().upper()])
+      if addr.get('city'):
+        dims["city"] = _crank("s.city = ? COLLATE NOCASE", [str(addr['city']).strip()])
+      if addr.get('county_fips'):
+        dims["county"] = _crank("s.county_fips = ?", [addr['county_fips']])
+      return {"ein": ein, "model_version": model_version, "year": year,
+              "org_type": org_type, "dimensions": dims}
+
+    # ── fallback: build the latest-per-org set in a per-request temp table ──
     cur.execute("DROP TABLE IF EXISTS _rank_set")
     inner_year, params = "", [model_version]
     if year is not None:
@@ -602,10 +781,30 @@ class ScoreDatabase(Database):
       f"(SELECT filing_id FROM filing WHERE {where})", params).fetchone()[0]
     return {"filings": f, "values": v, "scores": s}
 
+  def _invalidate_score_latest(self, eins) -> None:
+    """Drop ranking-cache rows for the given orgs (chunked for the param limit).
+    They reappear at the next score rebuild; until then they rank as unscored —
+    which is correct after their scores are gone, and better than a stale rank."""
+    eins = list(dict.fromkeys(eins))
+    for i in range(0, len(eins), 800):
+      chunk = eins[i:i + 800]
+      self.cursor.execute(
+        "DELETE FROM org_score_latest WHERE ein IN (%s)" % ",".join("?" * len(chunk)),
+        chunk)
+
   def _purge(self, where: str, params: tuple) -> dict:
     counts = self._purge_counts(where, params)
-    # reported_data AND organization_score both cascade off filing.filing_id.
-    self.cursor.execute(f"DELETE FROM filing WHERE {where}", params)
+    # reported_data AND organization_score both cascade off filing.filing_id, but
+    # the org_score_latest ranking cache keys on score_model (no cascade) — so
+    # drop its rows for the affected orgs too, or they'd keep a stale rank.
+    if where.strip() == "1=1":
+      self.cursor.execute("DELETE FROM org_score_latest")
+      self.cursor.execute("DELETE FROM filing WHERE 1=1")
+    else:
+      affected = [r[0] for r in self.cursor.execute(
+        f"SELECT DISTINCT organization_id FROM filing WHERE {where}", params).fetchall()]
+      self.cursor.execute(f"DELETE FROM filing WHERE {where}", params)
+      self._invalidate_score_latest(affected)
     self.connection.commit()
     return counts
 

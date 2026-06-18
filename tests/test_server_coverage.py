@@ -156,7 +156,7 @@ class TestHelperFunctions(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# 2. Server.run() — mock HTTPServer to avoid blocking
+# 2. Server.run() — mock PooledHTTPServer (the class run() instantiates) to avoid blocking
 # ---------------------------------------------------------------------------
 
 class TestServerRun(unittest.TestCase):
@@ -168,7 +168,7 @@ class TestServerRun(unittest.TestCase):
         return instance
 
     def test_run_completes_on_keyboard_interrupt(self):
-        with patch('server.server.HTTPServer') as MockHTTP:
+        with patch('server.server.PooledHTTPServer') as MockHTTP:
             MockHTTP.return_value = self._make_mock_httpd()
             srv = Server(host='127.0.0.1', port=0)
             # Should not raise
@@ -176,7 +176,7 @@ class TestServerRun(unittest.TestCase):
         MockHTTP.assert_called_once()
 
     def test_run_calls_serve_forever(self):
-        with patch('server.server.HTTPServer') as MockHTTP:
+        with patch('server.server.PooledHTTPServer') as MockHTTP:
             instance = self._make_mock_httpd()
             MockHTTP.return_value = instance
             srv = Server(host='127.0.0.1', port=0)
@@ -184,7 +184,7 @@ class TestServerRun(unittest.TestCase):
         instance.serve_forever.assert_called_once()
 
     def test_run_calls_server_close_in_finally(self):
-        with patch('server.server.HTTPServer') as MockHTTP:
+        with patch('server.server.PooledHTTPServer') as MockHTTP:
             instance = self._make_mock_httpd()
             MockHTTP.return_value = instance
             srv = Server(host='127.0.0.1', port=0)
@@ -193,7 +193,7 @@ class TestServerRun(unittest.TestCase):
 
     def test_run_with_debug_true_prints_debug_tag(self):
         captured = io.StringIO()
-        with patch('server.server.HTTPServer') as MockHTTP:
+        with patch('server.server.PooledHTTPServer') as MockHTTP:
             MockHTTP.return_value = self._make_mock_httpd()
             srv = Server(host='127.0.0.1', port=0, debug=True)
             with patch('sys.stdout', captured):
@@ -203,7 +203,7 @@ class TestServerRun(unittest.TestCase):
 
     def test_run_with_key_validator_prints_auth_tag(self):
         captured = io.StringIO()
-        with patch('server.server.HTTPServer') as MockHTTP:
+        with patch('server.server.PooledHTTPServer') as MockHTTP:
             MockHTTP.return_value = self._make_mock_httpd()
             srv = Server(host='127.0.0.1', port=0, authenticator=lambda k: _prin())
             with patch('sys.stdout', captured):
@@ -213,7 +213,7 @@ class TestServerRun(unittest.TestCase):
 
     def test_run_with_debug_and_key_validator(self):
         captured = io.StringIO()
-        with patch('server.server.HTTPServer') as MockHTTP:
+        with patch('server.server.PooledHTTPServer') as MockHTTP:
             MockHTTP.return_value = self._make_mock_httpd()
             srv = Server(host='127.0.0.1', port=0, debug=True, authenticator=lambda k: _prin())
             with patch('sys.stdout', captured):
@@ -225,7 +225,7 @@ class TestServerRun(unittest.TestCase):
     def test_run_version_dev_when_package_not_found(self):
         """PackageNotFoundError branch → _version = 'dev'."""
         captured = io.StringIO()
-        with patch('server.server.HTTPServer') as MockHTTP:
+        with patch('server.server.PooledHTTPServer') as MockHTTP:
             MockHTTP.return_value = self._make_mock_httpd()
             with patch('server.server.version', side_effect=server_module.PackageNotFoundError):
                 srv = Server(host='127.0.0.1', port=0)
@@ -237,7 +237,7 @@ class TestServerRun(unittest.TestCase):
     def test_run_version_parsed_when_package_found(self):
         """version() returns a string → it appears in banner."""
         captured = io.StringIO()
-        with patch('server.server.HTTPServer') as MockHTTP:
+        with patch('server.server.PooledHTTPServer') as MockHTTP:
             MockHTTP.return_value = self._make_mock_httpd()
             with patch('server.server.version', return_value='1.2.3'):
                 srv = Server(host='127.0.0.1', port=0)

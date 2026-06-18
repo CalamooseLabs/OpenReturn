@@ -38,7 +38,9 @@ The project maintains **100% statement coverage**. PRs that reduce coverage shou
 | `tests/test_score_database.py` | `src/database/Score/score.py` |
 | `tests/test_scoring_search.py` | post-ingest scoring hook + `src/scores.py` CLI + batch `ScoringEngine.rebuild` + `db.orgs` search/address |
 | `tests/test_expanded_forms.py` | `src/database/Schema/sql/populate/*.sql` (990-EZ/N/PF/T schema) |
-| `tests/test_db_commands.py` | `src/db.py` (`init`, `migrate`, `reset`) |
+| `tests/test_db_commands.py` | `src/db.py` (`init`, `migrate`, `reset`, `analyze`) |
+| `tests/test_threading.py` | `src/database/base.py` (per-thread connections) + `src/server/server.py` (`PooledHTTPServer` bounds + closes connections) |
+| `tests/test_ranking.py` | `src/database/Score/score.py` ranking (live window + the `org_score_latest` cache fast-path, cache↔fallback equivalence) |
 | `tests/test_cli.py` | `src/ingest.py` (directory **and** URL paths) |
 | `tests/test_ingest_manage.py` | `src/ingest.py` (forget/purge/list management flags) + `src/database/Score/score.py` purge + `src/database/Ingest/ingest.py` |
 | `tests/test_status.py` | `src/status.py` |

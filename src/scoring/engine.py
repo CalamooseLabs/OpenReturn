@@ -454,6 +454,17 @@ class ScoringEngine:
         self.db.commit()
         if progress:
             progress(total, total, scores)
+        # Refresh the ranking cache (org_score_latest: latest-score-per-org with
+        # ranking dims) for the models just scored, so leaderboards and per-org
+        # ranks stay fast AND current. Full rebuild → whole cache; a touched-set
+        # ingest → just those orgs. Wrapped so a cache hiccup never fails scoring.
+        try:
+            self.db.scores.rebuild_score_latest(
+                model_ids=[m['model_id'] for m in prepared],
+                eins=None if full else eins)
+            self.db.commit()
+        except Exception:  # noqa: BLE001 — the cache is an accelerator, not truth
+            pass
         return {"orgs": total, "scores": scores, "models": len(prepared)}
 
     def _topo_sort(self, factors: list[dict]) -> list[dict]:

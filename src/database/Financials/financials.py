@@ -38,6 +38,12 @@ _CONCEPT_META: dict[str, tuple[str, str]] = {
 # low-confidence OCR observation auto-becomes canonical, so surface it).
 _REVIEW_CONFIDENCE = 0.80
 
+# The source code for hand-entered values. A fact has AT MOST ONE manual
+# observation: editing a manual value updates it in place; editing a non-manual
+# (990 / OCR / audited) value mints this manual observation alongside the
+# originals (which are kept for provenance). See edit_value.
+_MANUAL_SOURCE = 'manual_990'
+
 
 def _to_float(raw):
   try:
@@ -305,6 +311,71 @@ class FinancialsDatabase(Database):
                           {'observation_id': observation_id}, commit=False)
     self.connection.commit()
     return True
+
+  def edit_value(self, ein: str, fiscal_year: int, concept_code: str, value, *,
+                 actor=None, note=None) -> dict:
+    """Hand-edit a fact's value and make it the canonical (selected) value.
+
+    Manual data is editable IN PLACE; everything else is preserved:
+      * a manual observation already exists for this fact → UPDATE its value
+        (the sole relaxation of the observation write-once rule);
+      * else → INSERT a new manual observation (the original 990 / OCR / audited
+        readings are kept for provenance).
+    In both cases the manual observation becomes canonical (``chosen_by`` = actor),
+    so scoring reads the edited value (after a re-score → ``recompute_needed``).
+    Audited. Returns ``{observation_id, created, value, recompute_needed}``."""
+    if concept_code not in self._concept_codes():
+      raise ValueError(f"unknown concept: {concept_code}")
+    val = _to_float(value)
+    if val is None:
+      raise ValueError("value must be a number")
+    label = actor.label if actor is not None else 'manual'
+    existing = self.cursor.execute(
+      "SELECT observation_id FROM financial_observation WHERE organization_id = ? "
+      "AND fiscal_year = ? AND concept_code = ? AND source_code = ? "
+      "ORDER BY observation_id LIMIT 1",
+      (ein, fiscal_year, concept_code, _MANUAL_SOURCE)).fetchone()
+    if existing:
+      obs_id = existing[0]
+      # In-place update of the manual reading. No trigger fires on UPDATE
+      # (trg_fobs_recanonical is AFTER DELETE only), so the canonical mirror is
+      # re-synced by the UPSERT below.
+      self.cursor.execute(
+        "UPDATE financial_observation SET value = ?, raw_value = ?, entered_by = ?, "
+        "entered_at = datetime('now'), note = COALESCE(?, note) WHERE observation_id = ?",
+        (val, str(value), label, note, obs_id))
+      created = False
+    else:
+      # First manual edit of this fact → add a manual observation alongside the
+      # existing readings (a fresh manual document anchors its provenance).
+      filing_id = self._ensure_filing_anchor(ein, fiscal_year)
+      document_id = self.create_document(ein, fiscal_year, _MANUAL_SOURCE,
+                                         kind='manual', filing_id=filing_id,
+                                         actor=actor, note=note)
+      self.cursor.execute(
+        "INSERT INTO financial_observation (organization_id, fiscal_year, concept_code, "
+        "source_code, document_id, value, raw_value, confidence, entered_by, note) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 1.0, ?, ?)",
+        (ein, fiscal_year, concept_code, _MANUAL_SOURCE, document_id, val,
+         str(value), label, note))
+      obs_id = self.cursor.lastrowid
+      created = True
+    # The edited manual value becomes canonical (chosen_by=actor → resolved).
+    self.cursor.execute(
+      "INSERT INTO financial_canonical (organization_id, fiscal_year, concept_code, "
+      "observation_id, value, chosen_by) VALUES (?, ?, ?, ?, ?, ?) "
+      "ON CONFLICT(organization_id, fiscal_year, concept_code) DO UPDATE SET "
+      "observation_id = excluded.observation_id, value = excluded.value, "
+      "chosen_by = excluded.chosen_by, chosen_at = datetime('now')",
+      (ein, fiscal_year, concept_code, obs_id, val, label))
+    self._db.audit.record(actor, 'create' if created else 'update', 'financial_value',
+                          f"{ein}:{fiscal_year}:{concept_code}",
+                          {'value': val, 'manual_observation': obs_id, 'created': created},
+                          commit=False)
+    self.connection.commit()
+    return {"observation_id": obs_id, "created": created, "value": val,
+            "ein": ein, "fiscal_year": fiscal_year, "concept_code": concept_code,
+            "recompute_needed": True}
 
   # ── reads: per-fact, per-org, conflicts ──────────────────────────────────────
 

@@ -232,6 +232,39 @@ class AdminRouter(Router):
       except (ValueError, KeyError, TypeError) as e:
         return {"error": str(e) or "invalid model definition"}
 
+    @self.post('/models/archive', permission='user:admin')
+    def archive_model_route(query_params: dict, body: Any, headers: HTTPMessage):
+      """Archive (retire) or un-archive a model. ``{version, archived?}`` —
+      ``archived`` defaults true. Archiving excludes it from scoring + the pickers
+      (reversible, non-destructive); blocked if a live composite depends on it.
+      Audited via ``archive_model``."""
+      data, err = self._require_fields(body, 'version')
+      if err:
+        return err
+      archived = data.get('archived', True)
+      from models import archive_model
+      try:
+        return archive_model(
+          self.db, data['version'], archived=bool(archived),
+          actor=self._principal(headers))
+      except (ValueError, KeyError, TypeError) as e:
+        return {"error": str(e) or "could not archive model"}
+
+    @self.post('/models/delete', permission='user:admin')
+    def delete_model_route(query_params: dict, body: Any, headers: HTTPMessage):
+      """Hard-delete a model. ``{version}``. Blocked if another model depends on it
+      OR if it has stored scores (archive it instead — the HTTP route never forces).
+      Audited via ``delete_model``."""
+      data, err = self._require_fields(body, 'version')
+      if err:
+        return err
+      from models import delete_model
+      try:
+        return delete_model(
+          self.db, data['version'], actor=self._principal(headers))
+      except (ValueError, KeyError, TypeError) as e:
+        return {"error": str(e) or "could not delete model"}
+
   def _set_active(self, body, active, headers):
     data, err = self._require_fields(body, 'username')
     if err:

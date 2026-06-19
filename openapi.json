@@ -4558,6 +4558,141 @@
         }
       }
     },
+    "/admin/models/archive": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Archive (retire) or un-archive a scoring model (user:admin)",
+        "description": "Sets the model's `archived` flag. Archiving excludes it from batch scoring + the pickers (reversible, keeps its scores); blocked if a live composite depends on it. `archived` defaults true; pass false to un-archive. Audited.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "version"
+                ],
+                "properties": {
+                  "version": {
+                    "type": "string",
+                    "description": "Model version"
+                  },
+                  "archived": {
+                    "type": "boolean",
+                    "description": "true to archive (default), false to un-archive"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "version": {
+                          "type": "string"
+                        },
+                        "archived": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/admin/models/delete": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Delete a scoring model (user:admin)",
+        "description": "Hard-deletes a model. Blocked if another model references it (delete those first) OR if it has stored scores \u2014 archive it instead (this route never force-deletes scores). Audited.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "version"
+                ],
+                "properties": {
+                  "version": {
+                    "type": "string",
+                    "description": "Model version"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "version": {
+                          "type": "string"
+                        },
+                        "deleted": {
+                          "type": "boolean"
+                        },
+                        "scores_deleted": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
     "/admin/users": {
       "get": {
         "tags": [
@@ -5847,6 +5982,90 @@
                           "items": {
                             "$ref": "#/components/schemas/FinancialFact"
                           }
+                        }
+                      }
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/financials/value": {
+      "post": {
+        "tags": [
+          "Financials"
+        ],
+        "summary": "Hand-edit a fact's value and make it canonical (data:write)",
+        "description": "Edits the selected value for a fact. A non-manual fact (990/OCR/audited) mints a new manual observation (the originals are kept for provenance); an existing manual value is updated in place. Scores go stale, so the result flags `recompute_needed`. Audited.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "ein",
+                  "fiscal_year",
+                  "concept",
+                  "value"
+                ],
+                "properties": {
+                  "ein": {
+                    "type": "string"
+                  },
+                  "fiscal_year": {
+                    "type": "integer"
+                  },
+                  "concept": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "number"
+                  },
+                  "note": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "observation_id": {
+                          "type": "integer"
+                        },
+                        "created": {
+                          "type": "boolean"
+                        },
+                        "value": {
+                          "type": "number"
+                        },
+                        "recompute_needed": {
+                          "type": "boolean"
                         }
                       }
                     },

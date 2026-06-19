@@ -1366,6 +1366,45 @@ def _paths() -> dict:
                                    "recompute_needed": {"type": "boolean"}}}),
             },
         },
+        "/admin/models/archive": {
+            "post": {
+                "tags": ["Admin"],
+                "summary": "Archive (retire) or un-archive a scoring model (user:admin)",
+                "description": "Sets the model's `archived` flag. Archiving excludes it "
+                               "from batch scoring + the pickers (reversible, keeps its "
+                               "scores); blocked if a live composite depends on it. "
+                               "`archived` defaults true; pass false to un-archive. Audited.",
+                "requestBody": _body({
+                    "type": "object", "required": ["version"],
+                    "properties": {
+                        "version": {"type": "string", "description": "Model version"},
+                        "archived": {"type": "boolean",
+                                     "description": "true to archive (default), false to un-archive"}},
+                }),
+                "responses": _responses({
+                    "type": "object",
+                    "properties": {"version": {"type": "string"},
+                                   "archived": {"type": "boolean"}}}),
+            },
+        },
+        "/admin/models/delete": {
+            "post": {
+                "tags": ["Admin"],
+                "summary": "Delete a scoring model (user:admin)",
+                "description": "Hard-deletes a model. Blocked if another model references "
+                               "it (delete those first) OR if it has stored scores — archive "
+                               "it instead (this route never force-deletes scores). Audited.",
+                "requestBody": _body({
+                    "type": "object", "required": ["version"],
+                    "properties": {"version": {"type": "string", "description": "Model version"}},
+                }),
+                "responses": _responses({
+                    "type": "object",
+                    "properties": {"version": {"type": "string"},
+                                   "deleted": {"type": "boolean"},
+                                   "scores_deleted": {"type": "integer"}}}),
+            },
+        },
         "/admin/users": {
             "get": {"tags": ["Admin"], "summary": "List users (user:admin)",
                     "responses": _responses({"type": "object", "properties": {
@@ -1527,6 +1566,27 @@ def _paths() -> dict:
                      "responses": _responses({"type": "object", "properties": {
                          "ein": {"type": "string"},
                          "facts": {"type": "array", "items": _ref("FinancialFact")}}})},
+        },
+        "/financials/value": {
+            "post": {"tags": ["Financials"],
+                     "summary": "Hand-edit a fact's value and make it canonical (data:write)",
+                     "description": "Edits the selected value for a fact. A non-manual fact "
+                                    "(990/OCR/audited) mints a new manual observation (the "
+                                    "originals are kept for provenance); an existing manual "
+                                    "value is updated in place. Scores go stale, so the result "
+                                    "flags `recompute_needed`. Audited.",
+                     "requestBody": _body({
+                         "type": "object",
+                         "required": ["ein", "fiscal_year", "concept", "value"],
+                         "properties": {
+                             "ein": {"type": "string"}, "fiscal_year": {"type": "integer"},
+                             "concept": {"type": "string"}, "value": {"type": "number"},
+                             "note": {"type": "string"}}}),
+                     "responses": _responses({"type": "object", "properties": {
+                         "observation_id": {"type": "integer"},
+                         "created": {"type": "boolean"},
+                         "value": {"type": "number"},
+                         "recompute_needed": {"type": "boolean"}}})},
         },
         # ── Upload ───────────────────────────────────────────────────────────
         "/upload": {

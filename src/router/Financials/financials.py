@@ -101,3 +101,23 @@ class FinancialsRouter(Router):
       if not ok:
         return {"error": "observation not found for that org/year/concept"}
       return self.db.financials.get_org_financials(data['ein'], year)
+
+    @self.post('/value', permission='data:write')
+    def edit_value(query_params: dict, body: Any, headers: HTTPMessage):
+      """Hand-edit a fact's value and make it canonical. Body:
+      {ein, fiscal_year, concept, value, note?}. A non-manual fact mints a new
+      manual observation (originals kept); a manual fact is updated in place.
+      Scores go stale → the result flags recompute_needed."""
+      data, err = self._require_fields(body, 'ein', 'fiscal_year', 'concept', 'value')
+      if err:
+        return err
+      try:
+        year = int(data['fiscal_year'])
+      except (TypeError, ValueError):
+        return {"error": "fiscal_year must be an integer"}
+      try:
+        return self.db.financials.edit_value(
+          data['ein'], year, data['concept'], data['value'],
+          note=data.get('note'), actor=self._principal(headers))
+      except ValueError as e:
+        return {"error": str(e)}

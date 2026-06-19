@@ -55,6 +55,11 @@ CREATE TABLE IF NOT EXISTS score_model (
   -- missing a value (a per-input `missing=` overrides it). NULL/'none' = no fill
   -- (the historical behavior). See scoring/models.md for the strategy set.
   missing_data TEXT,
+  -- Soft-archive flag. An archived model is RETIRED: excluded from batch scoring
+  -- (list_computed_models) and from the model pickers/builder, but its rows + any
+  -- existing scores are retained and it can be un-archived. Reversible, unlike a
+  -- hard delete. Default 0 keeps every existing model active.
+  archived INTEGER NOT NULL DEFAULT 0,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 

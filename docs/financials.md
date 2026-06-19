@@ -59,10 +59,26 @@ GET  /financials?ein=…&year=…             # every fact: all observations, ca
 GET  /financials/conflicts?ein=…          # facts where sources disagree and no one has chosen yet
 POST /financials/observations             # record a source's values (data:write)
 POST /financials/canonical                # choose the canonical observation for a fact (data:write)
+POST /financials/value                    # hand-edit a fact's value + make it canonical (data:write)
 ```
 
 Reads require `data:read`; writes require `data:write` (granted to admin/editor;
 viewer/service read). Every write is audited.
+
+**Editing a value.** `POST /financials/value` `{ein, fiscal_year, concept, value}`
+hand-edits a fact's selected value and makes it canonical, **without ever mutating
+another source's reading**:
+
+- editing a **non-manual** fact (990 / OCR / audited) **mints a new `manual_990`
+  observation** and selects it — the original readings are kept for provenance;
+- editing a **manual** fact **updates that observation in place** (a fact has at
+  most one manual observation — the sole, deliberate relaxation of the
+  observation write-once rule; the denormalized `financial_canonical.value` mirror
+  is re-synced in the same transaction).
+
+Scores read the canonical value, so an edit returns `recompute_needed` (re-run
+`openreturn score`). The `/financials` UI exposes this as an inline editable value
+per fact in the All-facts table.
 
 **Needs-review flag.** A sole observation auto-becomes canonical even when it is a
 low-confidence reading (e.g. OCR of a 990 PDF), so each fact also carries

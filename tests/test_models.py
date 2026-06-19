@@ -1009,5 +1009,147 @@ class TestUpdateModel(unittest.TestCase):
         self.assertIsNone(self.db.scores.get_model_definition('999'))
 
 
+class TestDeleteArchiveModel(unittest.TestCase):
+    """delete_model + archive_model — the removal/retire paths and their guardrails."""
+
+    def setUp(self):
+        from database import OpenReturnDB
+        self.db = OpenReturnDB(path=':memory:')
+
+    def tearDown(self):
+        self.db.close()
+
+    def _base(self, version):
+        from models import register_model
+        register_model(self.db, {'model': _valid_model(version=version),
+                                 'factor': [_valid_factor(name='F1', weight=1.0)]})
+
+    def _composite(self, version, child):
+        from models import register_model
+        register_model(self.db, {
+            'model': {'version': str(version), 'kind': 'composite'},
+            'factor': [{'name': 'C', 'weight': 1.0, 'formula_type': 'sum',
+                        'inputs': [f'model:{child}'], 'direction': 'higher',
+                        'benchmark_lo': 0.0, 'benchmark_hi': 1.0}]})
+
+    def _add_score(self, version, ein='111000111'):
+        self.db.cursor.execute(
+            "INSERT OR IGNORE INTO organization (ein, name) VALUES (?, 'X')", (ein,))
+        uuid = f'uuid-{version}-{ein}'
+        self.db.cursor.execute(
+            "INSERT INTO filing (uuid, year, organization_id, form_code) "
+            "VALUES (?, 2023, ?, '990')", (uuid, ein))
+        fid = self.db.cursor.execute(
+            "SELECT filing_id FROM filing WHERE uuid = ?", (uuid,)).fetchone()[0]
+        mid = self.db.scores.get_model_id(str(version))
+        self.db.cursor.execute(
+            "INSERT INTO organization_score (filing_id, model_id, total_score) "
+            "VALUES (?, ?, 0.5)", (fid, mid))
+        self.db.connection.commit()
+
+    # ── delete ──────────────────────────────────────────────────────────────
+    def test_delete_unused_model(self):
+        from models import delete_model
+        self._base(88)
+        res = delete_model(self.db, '88')
+        self.assertTrue(res['deleted'])
+        self.assertIsNone(self.db.scores.get_model('88'))
+        self.assertTrue(self.db.audit.list_log(entity_type='score_model', entity_id='88'))
+
+    def test_delete_unknown_raises(self):
+        from models import delete_model
+        with self.assertRaises(ValueError):
+            delete_model(self.db, '999')
+
+    def test_delete_blocked_by_dependent(self):
+        from models import delete_model
+        self._base(2)
+        self._composite(90, 2)
+        with self.assertRaises(ValueError) as cm:
+            delete_model(self.db, '2')
+        self.assertIn('90', str(cm.exception))
+        self.assertIsNotNone(self.db.scores.get_model('2'))   # not deleted
+
+    def test_delete_blocked_by_scores_then_forced(self):
+        from models import delete_model
+        self._base(88)
+        self._add_score(88)
+        with self.assertRaises(ValueError):
+            delete_model(self.db, '88')                       # has scores, no force
+        self.assertIsNotNone(self.db.scores.get_model('88'))
+        res = delete_model(self.db, '88', force=True)
+        self.assertEqual(res['scores_deleted'], 1)
+        self.assertIsNone(self.db.scores.get_model('88'))
+
+    def test_delete_dry_run_writes_nothing(self):
+        from models import delete_model
+        self._base(88)
+        self.assertTrue(delete_model(self.db, '88', dry_run=True)['dry_run'])
+        self.assertIsNotNone(self.db.scores.get_model('88'))
+
+    # ── archive ─────────────────────────────────────────────────────────────
+    def test_archive_excludes_from_computed_and_reverses(self):
+        from models import archive_model
+        self._base(88)
+        archive_model(self.db, '88')
+        self.assertTrue(self.db.scores.get_model('88')['archived'])
+        self.assertNotIn('88', [m['version'] for m in self.db.scores.list_computed_models()])
+        archive_model(self.db, '88', archived=False)
+        self.assertFalse(self.db.scores.get_model('88')['archived'])
+        self.assertIn('88', [m['version'] for m in self.db.scores.list_computed_models()])
+
+    def test_archive_blocked_by_live_dependent(self):
+        from models import archive_model
+        self._base(2)
+        self._composite(90, 2)
+        with self.assertRaises(ValueError):
+            archive_model(self.db, '2')                       # live v90 needs it
+
+    def test_archive_allowed_when_dependent_archived(self):
+        from models import archive_model
+        self._base(2)
+        self._composite(90, 2)
+        archive_model(self.db, '90')                          # retire the composite first
+        archive_model(self.db, '2')                           # now the base is free
+        self.assertTrue(self.db.scores.get_model('2')['archived'])
+
+    def test_cannot_compose_an_archived_child(self):
+        # A live composite must not reference a retired model (it would score the
+        # child as None). register_model's composite-ref check enforces it.
+        from models import archive_model, register_model
+        self._base(2)
+        archive_model(self.db, '2')
+        with self.assertRaises(ValueError) as cm:
+            register_model(self.db, {
+                'model': {'version': '90', 'kind': 'composite'},
+                'factor': [{'name': 'C', 'weight': 1.0, 'formula_type': 'sum',
+                            'inputs': ['model:2'], 'direction': 'higher',
+                            'benchmark_lo': 0.0, 'benchmark_hi': 1.0}]})
+        self.assertIn('archived', str(cm.exception))
+
+    def test_unarchive_blocked_when_child_archived(self):
+        # Un-archiving a composite whose child is archived would make a live
+        # composite reference a retired child — blocked (the other direction of
+        # the same invariant).
+        from models import archive_model
+        self._base(2)
+        self._composite(90, 2)
+        archive_model(self.db, '90')   # archive the composite (no dependents)
+        archive_model(self.db, '2')    # now the base is free to archive
+        with self.assertRaises(ValueError) as cm:
+            archive_model(self.db, '90', archived=False)  # un-archive over archived child
+        self.assertIn('archived', str(cm.exception))
+
+    def test_find_model_dependents_is_exact(self):
+        # A query for version '7' must NOT be matched by a 'model:70' token (a naive
+        # LIKE '%model:7%' would). '7'/'70' avoid the seeded stack's versions.
+        self._base(7)
+        self._base(70)
+        self._composite(91, 70)
+        self.assertEqual(self.db.scores.find_model_dependents('7'), [])
+        self.assertEqual(
+            [d['version'] for d in self.db.scores.find_model_dependents('70')], ['91'])
+
+
 if __name__ == '__main__':
     unittest.main()

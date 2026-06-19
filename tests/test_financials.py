@@ -178,6 +178,40 @@ class TestConflictAndCanonical(unittest.TestCase):
     def test_set_canonical_rejects_foreign_observation(self):
         self.assertFalse(self.db.financials.set_canonical('123456789', 2023, 'cy_rev', 99999))
 
+    def test_edit_nonmanual_value_mints_manual_obs_and_selects_it(self):
+        # Editing the 990-derived cy_rev (=1000) creates a NEW manual observation
+        # (the 990 reading is preserved) and makes it canonical.
+        res = self.db.financials.edit_value('123456789', 2023, 'cy_rev', 1200,
+                                            actor=_actor())
+        self.assertTrue(res['created'])
+        self.assertTrue(res['recompute_needed'])
+        cy = {f['concept_code']: f for f in
+              self.db.financials.get_org_financials('123456789', 2023)['facts']}['cy_rev']
+        self.assertEqual(cy['canonical_value'], 1200.0)
+        self.assertEqual(cy['canonical_source'], 'manual_990')
+        # Both readings retained (the original 990 value + the manual edit).
+        self.assertEqual({o['value'] for o in cy['observations']}, {1000.0, 1200.0})
+        self.assertFalse(cy['conflict'])      # human-chosen → resolved
+
+    def test_edit_manual_value_updates_in_place(self):
+        self.db.financials.edit_value('123456789', 2023, 'cy_rev', 1200, actor=_actor())
+        res = self.db.financials.edit_value('123456789', 2023, 'cy_rev', 1300,
+                                            actor=_actor())
+        self.assertFalse(res['created'])      # updated the existing manual obs
+        cy = {f['concept_code']: f for f in
+              self.db.financials.get_org_financials('123456789', 2023)['facts']}['cy_rev']
+        self.assertEqual(cy['canonical_value'], 1300.0)
+        # Still exactly ONE manual observation (not a new one per edit).
+        manual = [o for o in cy['observations'] if o['source_code'] == 'manual_990']
+        self.assertEqual(len(manual), 1)
+        self.assertEqual({o['value'] for o in cy['observations']}, {1000.0, 1300.0})
+
+    def test_edit_value_rejects_unknown_concept_and_nonnumeric(self):
+        with self.assertRaises(ValueError):
+            self.db.financials.edit_value('123456789', 2023, 'bogus_concept', 5)
+        with self.assertRaises(ValueError):
+            self.db.financials.edit_value('123456789', 2023, 'cy_rev', 'not a number')
+
     def test_low_confidence_sole_observation_is_flagged_for_review(self):
         # A sole OCR reading below the threshold auto-becomes canonical but is
         # flagged for review, carrying its confidence + source.

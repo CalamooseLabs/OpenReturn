@@ -388,6 +388,9 @@ def _validate_composite_refs(db, data: dict) -> None:
         elif child.get('scoring_mode') == 'manual':
             ref_errors.append(f"references manual model version {ref}; only computed "
                               f"models can be composed")
+        elif child.get('archived'):
+            ref_errors.append(f"references archived model version {ref}; un-archive it "
+                              f"before composing it (a live composite can't read a retired child)")
         elif child.get('model_kind', 'model') != want_kind:
             ref_errors.append(f"is a '{kind}' but references version {ref}, which is a "
                               f"'{child.get('model_kind', 'model')}' (expected '{want_kind}')")
@@ -538,6 +541,83 @@ def register_model(db, data: dict, *, actor=None, skip_existing: bool = False,
             "applies_to": applies_to, "warnings": warnings}
 
 
+def delete_model(db, version, *, actor=None, force: bool = False,
+                 dry_run: bool = False) -> dict:
+    """Hard-delete a registered model — the destructive counterpart of register/
+    update. Blocked when (a) another model references it via a ``model:<version>``
+    token (delete/re-point those first) or (b) it has stored scores and ``force`` is
+    False (archive it instead, or force to also remove its scores). Raises
+    ``ValueError`` on an unknown version or a blocked delete. The cascade order
+    matters: ``organization_score.model_id`` is a RESTRICT FK, so its rows are
+    deleted first (cascading ``organization_score_factor``), then ``score_model``
+    (cascading ``score_factor`` + the ``org_score_latest`` ranking cache)."""
+    target = str(version)
+    if db.scores.get_model(target) is None:
+        raise ValueError(f"model version {target} is not registered")
+    dependents = db.scores.find_model_dependents(target)
+    if dependents:
+        names = ", ".join(f"v{d['version']} ({d['model_kind']})" for d in dependents)
+        raise ValueError(
+            f"model version {target} is referenced by {names}; delete or re-point "
+            f"those first")
+    n_scores = db.scores.model_score_count(target)
+    if n_scores and not force:
+        raise ValueError(
+            f"model version {target} has {n_scores} stored score(s); archive it "
+            f"instead, or force the delete to also remove its scores")
+    if dry_run:
+        return {"dry_run": True, "version": target, "scores": n_scores,
+                "dependents": dependents}
+    res = db.scores.delete_model_cascade(target)
+    db.audit.record(actor, 'delete', 'score_model', target,
+                    {'scores_deleted': res['scores_deleted'], 'forced': bool(force)},
+                    commit=False)
+    db.connection.commit()
+    return {"deleted": True, "version": target, "model_id": res['model_id'],
+            "scores_deleted": res['scores_deleted']}
+
+
+def archive_model(db, version, *, archived: bool = True, actor=None,
+                  dry_run: bool = False) -> dict:
+    """Archive (retire) or un-archive a model. Archiving excludes it from batch
+    scoring (``list_computed_models``) + the model pickers/builder but keeps its
+    rows + existing scores, and is reversible — unlike a hard delete. Archiving is
+    blocked when a NON-archived composite/super depends on it (it would otherwise
+    score against a retired child); un-archiving is always allowed. Raises
+    ``ValueError`` on an unknown version or a blocked archive."""
+    target = str(version)
+    if db.scores.get_model(target) is None:
+        raise ValueError(f"model version {target} is not registered")
+    if archived:
+        # Block only on LIVE dependents — an archived composite isn't being scored,
+        # so retiring its child doesn't break active scoring.
+        live = [d for d in db.scores.find_model_dependents(target) if not d['archived']]
+        if live:
+            names = ", ".join(f"v{d['version']} ({d['model_kind']})" for d in live)
+            raise ValueError(
+                f"model version {target} is used by {names}; archive or re-point "
+                f"those first")
+    else:
+        # Un-archiving makes this model live again, so its children must be live too
+        # (a live composite can't read a retired child). Enforce the invariant's
+        # other direction (the register/update path enforces it on create/edit).
+        archived_children = [
+            c for c in db.scores.model_child_versions(target)
+            if (db.scores.get_model(c) or {}).get('archived')]
+        if archived_children:
+            names = ", ".join(f"v{c}" for c in archived_children)
+            raise ValueError(
+                f"model version {target} references archived model(s) {names}; "
+                f"un-archive those first")
+    if dry_run:
+        return {"dry_run": True, "version": target, "archived": archived}
+    db.scores.set_model_archived(target, archived)
+    db.audit.record(actor, 'archive' if archived else 'unarchive', 'score_model',
+                    target, {'archived': archived}, commit=False)
+    db.connection.commit()
+    return {"version": target, "archived": archived}
+
+
 def cmd_register(args) -> None:
     with open(args.file, 'rb') as f:
         data = tomllib.load(f)
@@ -588,6 +668,47 @@ def cmd_list(args) -> None:
         print(f"  v{m['version']} {tags}{desc}  (created {m['created_at']})")
 
 
+def cmd_delete(args) -> None:
+    db = OpenReturnDB(path=args.db)
+    try:
+        result = delete_model(db, args.version, force=getattr(args, 'force', False),
+                              dry_run=args.dry_run)
+    except ValueError as e:
+        print(f"ERROR: {e}.", file=sys.stderr)
+        db.close()
+        sys.exit(1)
+    db.close()
+    if result.get('dry_run'):
+        if result['dependents']:
+            deps = ", ".join(f"v{d['version']}" for d in result['dependents'])
+            print(f"BLOCKED: model v{args.version} is referenced by {deps}.")
+        else:
+            print(f"Would delete model v{args.version} "
+                  f"({result['scores']} stored score(s)).")
+        return
+    print(f"Deleted model v{result['version']} "
+          f"({result['scores_deleted']} score(s) removed).")
+
+
+def cmd_archive(args) -> None:
+    db = OpenReturnDB(path=args.db)
+    archived = not getattr(args, 'unarchive', False)
+    try:
+        result = archive_model(db, args.version, archived=archived,
+                               dry_run=args.dry_run)
+    except ValueError as e:
+        print(f"ERROR: {e}.", file=sys.stderr)
+        db.close()
+        sys.exit(1)
+    db.close()
+    if result.get('dry_run'):
+        print(f"Would {'archive' if archived else 'un-archive'} "
+              f"model v{result['version']}.")
+    else:
+        print(f"{'Archived' if archived else 'Un-archived'} "
+              f"model v{result['version']}.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog='openreturn-models', description='Manage OpenReturn scoring models')
     parser.add_argument('--db', default=None, help='Path to OpenReturn.db (defaults to ./OpenReturn.db)')
@@ -602,12 +723,30 @@ def main() -> None:
 
     sub.add_parser('list', help='List registered scoring models')
 
+    dele = sub.add_parser('delete', help='Delete a scoring model (blocked if another model depends on it)')
+    dele.add_argument('version', help='Model version to delete')
+    dele.add_argument('--force', action='store_true',
+                      help="Also delete the model's stored scores (else a scored model must be archived)")
+    dele.add_argument('--dry-run', action='store_true', dest='dry_run',
+                      help='Report what would happen without deleting')
+
+    arch = sub.add_parser('archive', help='Archive (retire) or un-archive a scoring model')
+    arch.add_argument('version', help='Model version to archive')
+    arch.add_argument('--unarchive', action='store_true',
+                      help='Un-archive instead (re-enable scoring)')
+    arch.add_argument('--dry-run', action='store_true', dest='dry_run',
+                      help='Report what would happen without changing anything')
+
     args = parser.parse_args()
 
     if args.command == 'register':
         cmd_register(args)
     elif args.command == 'list':
         cmd_list(args)
+    elif args.command == 'delete':
+        cmd_delete(args)
+    elif args.command == 'archive':
+        cmd_archive(args)
 
 
 if __name__ == '__main__':  # pragma: no cover

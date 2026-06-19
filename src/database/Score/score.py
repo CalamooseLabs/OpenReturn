@@ -59,6 +59,9 @@ class ScoreDatabase(Database):
       "ALTER TABLE organization_score ADD COLUMN imputed INTEGER NOT NULL DEFAULT 0",
       "ALTER TABLE organization_score_factor ADD COLUMN imputed INTEGER NOT NULL DEFAULT 0",
       "ALTER TABLE organization_score_factor ADD COLUMN source_year INTEGER",
+      # Soft-archive flag (retire a model without deleting it). Default 0 keeps
+      # every legacy model active; fresh DBs get it from sql/setup.
+      "ALTER TABLE score_model ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
     ):
       try:
         self.cursor.execute(ddl)
@@ -206,11 +209,12 @@ class ScoreDatabase(Database):
     return self._factor_row(row) if row else None
 
   def get_model(self, version: str = "1") -> dict | None:
-    """Model header — version, description, category type, scoring mode, and kind."""
+    """Model header — version, description, category type, scoring mode, kind,
+    and the archived flag."""
     row = self.cursor.execute(
       "SELECT version, description, model_type, scoring_mode, "
       "COALESCE(model_kind, 'model'), created_at, missing_data, "
-      "COALESCE(applies_to, 'both') "
+      "COALESCE(applies_to, 'both'), COALESCE(archived, 0) "
       "FROM score_model WHERE version = ?",
       (version,)
     ).fetchone()
@@ -218,7 +222,8 @@ class ScoreDatabase(Database):
       return None
     return {"version": row[0], "description": row[1], "model_type": row[2],
             "scoring_mode": row[3] or "computed", "model_kind": row[4] or "model",
-            "created_at": row[5], "missing_data": row[6], "applies_to": row[7]}
+            "created_at": row[5], "missing_data": row[6], "applies_to": row[7],
+            "archived": bool(row[8])}
 
   def list_model_types(self) -> list[dict]:
     rows = self.cursor.execute(
@@ -233,28 +238,127 @@ class ScoreDatabase(Database):
     return [{"code": r[0], "name": r[1], "description": r[2]} for r in rows]
 
   def list_models(self) -> list[dict]:
+    """Every model (archived included, carrying the ``archived`` flag so the UI can
+    badge/hide them)."""
     rows = self.cursor.execute(
       "SELECT version, description, model_type, scoring_mode, "
-      "COALESCE(model_kind, 'model'), created_at, COALESCE(applies_to, 'both') "
+      "COALESCE(model_kind, 'model'), created_at, COALESCE(applies_to, 'both'), "
+      "COALESCE(archived, 0) "
       "FROM score_model ORDER BY version"
     ).fetchall()
     return [{"version": r[0], "description": r[1], "model_type": r[2],
              "scoring_mode": r[3] or "computed", "model_kind": r[4] or "model",
-             "created_at": r[5], "applies_to": r[6]} for r in rows]
+             "created_at": r[5], "applies_to": r[6], "archived": bool(r[7])}
+            for r in rows]
 
   def list_computed_models(self) -> list[dict]:
-    """Versions + model_ids + kind of every non-manual model — the set batch
-    scoring pre-computes, plus the kind so the engine can order base models before
-    composites before super-composites. (A model with no factors is still listed;
-    the engine skips it.)"""
+    """Versions + model_ids + kind of every non-manual, NON-archived model — the
+    set batch scoring pre-computes, plus the kind so the engine can order base
+    models before composites before super-composites. Archived models are retired
+    (excluded here), so a composite must not depend on one (the archive/delete
+    guardrail enforces that). (A model with no factors is still listed; the engine
+    skips it.)"""
     rows = self.cursor.execute(
       "SELECT version, model_id, COALESCE(model_kind, 'model'), missing_data, "
       "COALESCE(applies_to, 'both') "
       "FROM score_model WHERE COALESCE(scoring_mode, 'computed') != 'manual' "
+      "AND COALESCE(archived, 0) = 0 "
       "ORDER BY version"
     ).fetchall()
     return [{"version": r[0], "model_id": r[1], "model_kind": r[2],
              "missing_data": r[3], "applies_to": r[4]} for r in rows]
+
+  def find_model_dependents(self, version: str) -> list[dict]:
+    """Models whose factors reference this model via a ``model:<version>`` input
+    token — i.e. composites / super_composites that weight it. Returns
+    ``[{version, model_kind, archived}]`` (the model itself excluded). Matches the
+    token EXACTLY, so a query for version '1' is not matched by a 'model:10' token."""
+    import json
+    token = f"model:{version}"
+    rows = self.cursor.execute(
+      "SELECT m.version, COALESCE(m.model_kind, 'model'), COALESCE(m.archived, 0), f.inputs "
+      "FROM score_factor f JOIN score_model m ON m.model_id = f.model_id "
+      "WHERE m.version != ?", (version,)
+    ).fetchall()
+    deps: dict[str, dict] = {}
+    for ver, kind, archived, inputs in rows:
+      if ver in deps:
+        continue
+      try:
+        entries = json.loads(inputs) if inputs else []
+      except (ValueError, TypeError):
+        continue
+      for e in entries:
+        key = e.get('key') if isinstance(e, dict) else e
+        if key == token:
+          deps[ver] = {"version": ver, "model_kind": kind, "archived": bool(archived)}
+          break
+    return list(deps.values())
+
+  def model_child_versions(self, version: str) -> list[str]:
+    """The child model versions THIS model references via ``model:<v>`` tokens (its
+    composite children); empty for a base model. The mirror of
+    ``find_model_dependents``."""
+    import json
+    rows = self.cursor.execute(
+      "SELECT f.inputs FROM score_factor f JOIN score_model m ON m.model_id = f.model_id "
+      "WHERE m.version = ?", (version,)
+    ).fetchall()
+    out: set[str] = set()
+    for (inputs,) in rows:
+      try:
+        entries = json.loads(inputs) if inputs else []
+      except (ValueError, TypeError):
+        continue
+      for e in entries:
+        key = e.get('key') if isinstance(e, dict) else e
+        if isinstance(key, str) and key.startswith('model:'):
+          out.add(key[len('model:'):])
+    return sorted(out)
+
+  def model_score_count(self, version: str) -> int:
+    """How many ``organization_score`` rows reference this model (0 if unused or the
+    version is absent) — gates a safe hard delete."""
+    row = self.cursor.execute(
+      "SELECT COUNT(*) FROM organization_score WHERE model_id = "
+      "(SELECT model_id FROM score_model WHERE version = ?)", (version,)
+    ).fetchone()
+    return row[0] if row else 0
+
+  def set_model_archived(self, version: str, archived: bool) -> int | None:
+    """Set/clear a model's archived flag. Returns its ``model_id``, or None if no
+    such version. No commit (the caller batches)."""
+    row = self.cursor.execute(
+      "SELECT model_id FROM score_model WHERE version = ?", (version,)
+    ).fetchone()
+    if not row:
+      return None
+    self.cursor.execute(
+      "UPDATE score_model SET archived = ? WHERE version = ?",
+      (1 if archived else 0, version))
+    return row[0]
+
+  def delete_model_cascade(self, version: str) -> dict | None:
+    """Hard-delete a model and everything keyed to it. ``organization_score.model_id``
+    is a RESTRICT FK (no ON DELETE CASCADE), so its rows must go FIRST (cascading to
+    ``organization_score_factor``); deleting ``score_model`` then cascades to
+    ``score_factor`` + the ``org_score_latest`` ranking cache. Returns
+    ``{model_id, scores_deleted}`` or None if no such version. No commit (the caller
+    batches)."""
+    row = self.cursor.execute(
+      "SELECT model_id FROM score_model WHERE version = ?", (version,)
+    ).fetchone()
+    if not row:
+      return None
+    model_id = row[0]
+    n = self.cursor.execute(
+      "SELECT COUNT(*) FROM organization_score WHERE model_id = ?", (model_id,)
+    ).fetchone()[0]
+    # Scores first (RESTRICT FK) → cascades organization_score_factor.
+    self.cursor.execute("DELETE FROM organization_score WHERE model_id = ?", (model_id,))
+    # Then the model → cascades score_factor + org_score_latest.
+    self.cursor.execute("DELETE FROM score_model WHERE model_id = ?", (model_id,))
+    return {"model_id": model_id, "scores_deleted": n}
 
   def replace_org_scores(self, ein: str, model_ids: list[int], results: list) -> None:
     """Batch (re)write of one org's computed scores. Deletes the org's existing

@@ -81,6 +81,8 @@ Run from the directory where `OpenReturn.db` lives:
 openreturn models register model_v1.toml          # validate and write to DB
 openreturn models register model_v1.toml --dry-run  # validate only, no DB write
 openreturn models list                             # list all registered versions
+openreturn models archive 1                        # retire a model (reversible: --unarchive)
+openreturn models delete 1                          # delete (blocked if depended-on / scored; --force)
 
 openreturn score --rebuild                         # (re)compute all computed-model scores
 openreturn score --org 123456789                   # just one organization
@@ -109,6 +111,35 @@ worked MinistryWatch financial stack.
 A composite/super-composite template references its children by `model:<version>`, so
 create the base models first (the catalog filenames sort in dependency order). Both
 the HTTP and CLI create paths run the same validation as `register_model` (see below).
+
+### Editing, archiving & deleting
+
+A registered model can be **edited** in place (`POST /admin/models/update`,
+`openreturn models register` rewrites via the same core) — the version can't change,
+and scores stored under the old definition go stale, so the result flags
+`recompute_needed` (run `openreturn score --version <v>`).
+
+Two ways to retire a model — both `user:admin`, both audited, and both **blocked when
+another model depends on it** via a `model:<version>` token (the error lists the
+dependents; remove or re-point them first):
+
+- **Archive** (`POST /admin/models/archive` `{version, archived?}`, `openreturn models
+  archive <version> [--unarchive]`) — the safe, **reversible** retire. An archived
+  model is excluded from batch scoring and the pickers/builder but **keeps its rows and
+  its last computed scores** (so historical scores/rankings remain queryable — archive
+  retires the model, it does not erase its past). Archiving is blocked only by a
+  **live** (non-archived) dependent. **Invariant:** a live composite can never
+  reference an archived child — enforced at archive (can't retire a child a live parent
+  needs), un-archive (can't re-enable a composite whose child is still archived), and
+  register/update (can't compose an archived child). So the engine never scores a live
+  composite against a retired child.
+- **Delete** (`POST /admin/models/delete` `{version}`, `openreturn models delete
+  <version> [--force]`) — a hard delete. It is **blocked if the model has stored
+  scores** unless forced (archive it instead); the HTTP/UI route never forces, only the
+  CLI `--force` does. Deleting removes the model's `organization_score` rows first (a
+  RESTRICT foreign key), then the model — cascading its factors and the ranking-cache
+  rows. The frontend surfaces both as **Archive / Delete** controls on a model's detail
+  page (admins).
 
 ## TOML Format
 

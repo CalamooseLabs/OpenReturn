@@ -99,6 +99,9 @@ CREATE TABLE IF NOT EXISTS organization (
   website TEXT,
   main_email TEXT,
   is_favorite INTEGER NOT NULL DEFAULT 0,
+  -- Shared (team-wide) portfolio flag: a nonprofit the team is actively tracking.
+  -- Distinct from per-user follows (the watchlist). Toggled via set_in_portfolio.
+  in_portfolio INTEGER NOT NULL DEFAULT 0,
   -- Derived classification (cached; refreshed by classify_organizations at ingest):
   -- 'foundation' (ever filed 990-PF), 'nonprofit' (990/990-EZ/990-N), 'other'
   -- (e.g. 990-T only), or NULL (unknown / no IRS form). is_grantmaker is orthogonal:
@@ -118,6 +121,8 @@ CREATE TABLE IF NOT EXISTS organization (
 CREATE INDEX IF NOT EXISTS idx_organization_name ON organization (name);
 
 CREATE INDEX IF NOT EXISTS idx_organization_favorite ON organization (is_favorite);
+-- NOTE: idx_organization_portfolio is created in OrganizationDatabase._migrate_schema,
+-- not here — it must run AFTER the in_portfolio column is ALTER-added to a legacy table.
 -- NOTE: idx_organization_org_type is created in OrganizationDatabase._migrate_schema,
 -- not here — it must run AFTER the org_type column is ALTER-added to a legacy table.
 

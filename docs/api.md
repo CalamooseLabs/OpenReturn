@@ -274,6 +274,8 @@ Fetch an organization together with all its filing metadata and convenience link
   "ein": "010234567",
   "name": "ACME NONPROFIT INC",
   "is_favorite": false,
+  "in_portfolio": false,
+  "mission": "To advance literacy across the region.",
   "created_at": "2025-01-15 10:23:45",
   "updated_at": "2025-01-15 10:23:45",
   "filings": [
@@ -332,6 +334,42 @@ For `direction=received`, each grant carries `grantor_ein` / `grantor` instead o
 the recipient fields. **Note:** 990-PF grants carry no recipient EIN in the e-file
 XML, so a foundation→nonprofit link for PF grants appears only after
 `openreturn resolve`; Schedule-I grants link immediately.
+
+`mission` (on `/organizations/full`) is the organization's latest filed mission /
+activity description (from `MissionDesc` / `ActivityOrMissionDesc` / `Desc`), or
+`null` if no filing carries one. `in_portfolio` is the shared (team-wide) portfolio
+flag (see [`POST /organizations/portfolio`](#post-organizationsportfolio)).
+
+---
+
+### `GET /organizations/personnel`
+
+Officers, directors, trustees, and key employees as filed on the organization's most
+recent 990 (Part VII Section A). This is graph-derived (auto-populated from filings)
+and complements the manually-curated [People directory](#people). Empty until a 990
+with personnel has been ingested for the org.
+
+**Query parameters**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `ein` | string | yes | 9-digit EIN |
+
+**Response**
+
+```json
+{
+  "ein": "010234567",
+  "year": 2023,
+  "personnel": [
+    {"name": "Jane Doe", "title": "President", "is_officer": true,
+     "is_director_trustee": false, "is_key_employee": false, "is_highest_comp": false,
+     "is_former": false, "avg_hours_org": 40.0,
+     "reportable_comp_org": 120000.0, "reportable_comp_related": null,
+     "other_comp": 5000.0, "resolved_party_id": 42}
+  ]
+}
+```
 
 ---
 
@@ -392,6 +430,25 @@ Mark an organization as favorited (or unfavorited). The organization must alread
 `is_favorite` accepts a JSON boolean; the strings `"1"`/`"true"`/`"yes"` (and `1`) are also coerced to true, anything else to false.
 
 **Response** — the updated organization record (same shape as `GET /organizations/detail`), or `{"error": "organization not found: <ein>"}` if no organization has that EIN.
+
+---
+
+### `POST /organizations/portfolio`
+
+Requires `org:write`. Add or remove an organization from the **shared, team-wide
+portfolio** — the set of (typically nonprofit) orgs the team is actively tracking.
+Unlike the per-user [follow watchlist](#follows), the portfolio is a single shared
+flag every user sees. (The UI surfaces "Follow" on foundations and "Add to
+portfolio" on nonprofits.)
+
+**Request body**
+
+```json
+{ "ein": "010234567", "in_portfolio": true }
+```
+
+`in_portfolio` is coerced the same way as `is_favorite`. **Response** — the updated
+organization record, or `{"error": "organization not found: <ein>"}`.
 
 ---
 
@@ -1162,6 +1219,77 @@ require `follow:write`.
 | `POST /follows/unfollow` | `{ein}` — unfollow |
 
 The `following` flag on organization responses reflects this per-user state.
+
+---
+
+## Notes
+
+**Shared, team-wide notes / updates** on an organization (an activity log). Unlike
+the per-user follow watchlist, every logged-in user sees the same feed, and each
+note records its author (`author_label` + `author_user_id`) and `created_at`
+timestamp. `GET` requires `note:read`; posting/removing require `note:write`.
+
+| Method & path | Does |
+|---------------|------|
+| `GET /notes?ein=` | the org's notes, newest first |
+| `POST /notes` | `{ein, body}` — post a note (author taken from the session) |
+| `POST /notes/delete` | `{note_id}` — remove a note |
+
+```json
+{ "ein": "010234567",
+  "notes": [ {"note_id": 7, "body": "Met with the ED.", "author_user_id": 3,
+              "author_label": "alice", "created_at": "2026-06-19 14:02:11"} ] }
+```
+
+---
+
+## Giving
+
+A **shared record of gifts the team gave** to an organization — hand-entered
+"giving data" (the relationship *we gave them $X in year Y*), distinct from the
+990 grant graph. Team-wide; each gift records who entered it and when. `GET`
+requires `giving:read`; recording/removing require `giving:write`.
+
+| Method & path | Does |
+|---------------|------|
+| `GET /giving?ein=` | the org's recorded gifts + a by-year summary |
+| `POST /giving` | `{ein, amount, fiscal_year?, gift_date?, purpose?}` — record a gift |
+| `POST /giving/delete` | `{gift_id}` — remove a gift |
+
+```json
+{ "ein": "010234567",
+  "gifts": [ {"gift_id": 4, "amount": 2500.0, "fiscal_year": 2023, "gift_date": null,
+              "purpose": "General support", "created_by_label": "alice",
+              "created_at": "2026-06-19 14:05:00"} ],
+  "summary": {"gift_count": 1, "total_amount": 2500.0,
+              "by_year": [{"year": 2023, "amount": 2500.0}]} }
+```
+
+---
+
+## Model data
+
+Per-**(organization, model, year)** annotations a steward adds from the org
+profile: free-form **notes** and arbitrary **custom data fields**, scoped to one
+scoring model + fiscal year. Distinct from the org-level [Notes](#notes) feed and
+from the financial values / manual grades that feed scores. `GET` requires
+`model_data:read`; add/remove require `model_data:write`.
+
+| Method & path | Does |
+|---------------|------|
+| `GET /model-data?ein=&version=&year=` | notes + custom fields for one org/model/year |
+| `POST /model-data/note` | `{ein, version, year, body}` — add a note |
+| `POST /model-data/note/delete` | `{note_id}` — remove a note |
+| `POST /model-data/field` | `{ein, version, year, label, value?}` — add a custom field |
+| `POST /model-data/field/delete` | `{field_id}` — remove a custom field |
+
+```json
+{ "ein": "010234567", "model_version": "20", "fiscal_year": 2023,
+  "notes":  [ {"note_id": 3, "body": "2023 reflects the new board policy.",
+               "author_label": "alice", "created_at": "2026-06-19 15:00:00"} ],
+  "fields": [ {"field_id": 5, "label": "Site visit score", "value": "4/5",
+               "created_by_label": "alice", "created_at": "2026-06-19 15:01:00"} ] }
+```
 
 ---
 

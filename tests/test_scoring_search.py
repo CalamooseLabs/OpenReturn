@@ -96,7 +96,8 @@ class TestIngestScoringHook(unittest.TestCase):
             db = OpenReturnDB(path=str(Path(td) / "OpenReturn.db"))
             org = db.orgs.get_organization("123456789")
             self.assertIsNotNone(org)
-            self.assertEqual(org["address"], {"street": "1 Main St", "city": "Austin",
+            self.assertEqual(org["address"], {"street": "1 Main St", "street2": None,
+                                              "city": "Austin",
                                               "state": "TX", "zip": "78701",
                                               "county_fips": None, "county_name": None})
             # normalized: the data lives in the address table, linked by EIN

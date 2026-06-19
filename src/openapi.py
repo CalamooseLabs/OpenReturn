@@ -95,6 +95,7 @@ def _schemas() -> dict:
             "type": ["object", "null"],
             "properties": {
                 "street": {"type": ["string", "null"]},
+                "street2": {"type": ["string", "null"]},
                 "city": {"type": ["string", "null"]},
                 "state": {"type": ["string", "null"], "description": "2-letter USPS code"},
                 "zip": {"type": ["string", "null"]},
@@ -109,6 +110,12 @@ def _schemas() -> dict:
                 "ein": {"type": "string", "description": "9-digit EIN"},
                 "name": {"type": "string"},
                 "is_favorite": {"type": "boolean"},
+                "in_portfolio": {"type": "boolean",
+                                 "description": "In the shared (team-wide) portfolio "
+                                                "(distinct from the per-user follow watchlist)"},
+                "mission": {"type": ["string", "null"],
+                            "description": "Latest filed mission / activity description "
+                                           "(present on /organizations/full only)"},
                 "org_type": {"type": ["string", "null"],
                              "enum": ["foundation", "nonprofit", "other", None],
                              "description": "Derived: 'foundation' (filed 990-PF), "
@@ -728,6 +735,53 @@ def _paths() -> dict:
                 "responses": _responses(_ref("Organization")),
             },
         },
+        "/organizations/portfolio": {
+            "post": {
+                "tags": ["Organizations"],
+                "summary": "Add/remove an org from the shared portfolio (org:write)",
+                "description": ("The shared (team-wide) portfolio flag — a nonprofit the "
+                                "team is tracking. Distinct from the per-user follow watchlist."),
+                "requestBody": _body({
+                    "type": "object", "required": ["ein", "in_portfolio"],
+                    "properties": {"ein": {"type": "string"},
+                                   "in_portfolio": {"type": "boolean"}},
+                }),
+                "responses": _responses(_ref("Organization")),
+            },
+        },
+        "/organizations/personnel": {
+            "get": {
+                "tags": ["Organizations"],
+                "summary": "Officers/directors/trustees across the org's 990s (Part VII)",
+                "description": ("From the grant/people graph; complements the manual People "
+                                "directory. Returns every filing's personnel, each tagged with "
+                                "filing_year (newest first); `year` is the most recent. Empty "
+                                "until a 990 with personnel is ingested."),
+                "parameters": [_q("ein", required=True)],
+                "responses": _responses({
+                    "type": "object",
+                    "properties": {
+                        "ein": {"type": "string"},
+                        "year": {"type": ["integer", "null"]},
+                        "years": {"type": "array", "items": {"type": "integer"}},
+                        "personnel": {"type": "array", "items": {
+                            "type": "object", "properties": {
+                                "name": {"type": ["string", "null"]},
+                                "title": {"type": ["string", "null"]},
+                                "filing_year": {"type": ["integer", "null"]},
+                                "is_officer": {"type": "boolean"},
+                                "is_director_trustee": {"type": "boolean"},
+                                "is_key_employee": {"type": "boolean"},
+                                "is_highest_comp": {"type": "boolean"},
+                                "is_former": {"type": "boolean"},
+                                "avg_hours_org": {"type": ["number", "null"]},
+                                "reportable_comp_org": {"type": ["number", "null"]},
+                                "reportable_comp_related": {"type": ["number", "null"]},
+                                "other_comp": {"type": ["number", "null"]},
+                                "resolved_party_id": {"type": ["integer", "null"]}}}}},
+                }),
+            },
+        },
         # ── Filings ──────────────────────────────────────────────────────────
         "/filings": {
             "get": {
@@ -1274,6 +1328,183 @@ def _paths() -> dict:
                                                      "removed": {"type": "boolean"}}}),
             },
         },
+        # ── Notes (shared org updates) ───────────────────────────────────────
+        "/notes": {
+            "get": {
+                "tags": ["Notes"],
+                "summary": "An organization's notes / updates, newest first (note:read)",
+                "description": "Shared team-wide feed; each note records its author + timestamp.",
+                "parameters": [_q("ein", required=True)],
+                "responses": _responses({
+                    "type": "object",
+                    "properties": {
+                        "ein": {"type": "string"},
+                        "notes": {"type": "array", "items": {
+                            "type": "object", "properties": {
+                                "note_id": {"type": "integer"},
+                                "body": {"type": "string"},
+                                "author_user_id": {"type": ["integer", "null"]},
+                                "author_label": {"type": ["string", "null"]},
+                                "created_at": {"type": "string"}}}}},
+                }),
+            },
+            "post": {
+                "tags": ["Notes"], "summary": "Post a note on an organization (note:write)",
+                "requestBody": _body({
+                    "type": "object", "required": ["ein", "body"],
+                    "properties": {"ein": {"type": "string"}, "body": {"type": "string"}}}),
+                "responses": _responses({
+                    "type": "object", "properties": {
+                        "note_id": {"type": "integer"}, "body": {"type": "string"},
+                        "author_label": {"type": ["string", "null"]},
+                        "created_at": {"type": "string"}}}),
+            },
+        },
+        "/notes/delete": {
+            "post": {
+                "tags": ["Notes"], "summary": "Remove a note (note:write)",
+                "requestBody": _body({
+                    "type": "object", "required": ["note_id"],
+                    "properties": {"note_id": {"type": "integer"}}}),
+                "responses": _responses({
+                    "type": "object", "properties": {"note_id": {"type": "integer"},
+                                                     "removed": {"type": "boolean"}}}),
+            },
+        },
+        # ── Giving (hand-entered gifts the team gave) ────────────────────────
+        "/giving": {
+            "get": {
+                "tags": ["Giving"],
+                "summary": "Gifts the team recorded giving to an org (giving:read)",
+                "description": ("Hand-entered giving data (the relationship \"we gave them "
+                                "$X in year Y\"), distinct from the 990 grant graph. Returns "
+                                "the gifts + a by-year summary."),
+                "parameters": [_q("ein", required=True)],
+                "responses": _responses({
+                    "type": "object",
+                    "properties": {
+                        "ein": {"type": "string"},
+                        "gifts": {"type": "array", "items": {
+                            "type": "object", "properties": {
+                                "gift_id": {"type": "integer"},
+                                "amount": {"type": "number"},
+                                "fiscal_year": {"type": ["integer", "null"]},
+                                "gift_date": {"type": ["string", "null"]},
+                                "purpose": {"type": ["string", "null"]},
+                                "created_by_label": {"type": ["string", "null"]},
+                                "created_at": {"type": "string"}}}},
+                        "summary": {"type": "object", "properties": {
+                            "gift_count": {"type": "integer"},
+                            "total_amount": {"type": "number"},
+                            "by_year": {"type": "array", "items": {"type": "object"}}}}},
+                }),
+            },
+            "post": {
+                "tags": ["Giving"], "summary": "Record a gift to an org (giving:write)",
+                "requestBody": _body({
+                    "type": "object", "required": ["ein", "amount"],
+                    "properties": {"ein": {"type": "string"}, "amount": {"type": "number"},
+                                   "fiscal_year": {"type": "integer"},
+                                   "gift_date": {"type": "string"},
+                                   "purpose": {"type": "string"}}}),
+                "responses": _responses({
+                    "type": "object", "properties": {
+                        "gift_id": {"type": "integer"}, "amount": {"type": "number"},
+                        "fiscal_year": {"type": ["integer", "null"]},
+                        "created_at": {"type": "string"}}}),
+            },
+        },
+        "/giving/delete": {
+            "post": {
+                "tags": ["Giving"], "summary": "Remove a recorded gift (giving:write)",
+                "requestBody": _body({
+                    "type": "object", "required": ["gift_id"],
+                    "properties": {"gift_id": {"type": "integer"}}}),
+                "responses": _responses({
+                    "type": "object", "properties": {"gift_id": {"type": "integer"},
+                                                     "removed": {"type": "boolean"}}}),
+            },
+        },
+        # ── Model data (per-model/year notes + custom fields) ────────────────
+        "/model-data": {
+            "get": {
+                "tags": ["ModelData"],
+                "summary": "Notes + custom fields for one org/model/year (model_data:read)",
+                "parameters": [
+                    _q("ein", required=True),
+                    _q("version", required=True, desc="Scoring model version"),
+                    _q("year", "integer", required=True, desc="Fiscal year"),
+                ],
+                "responses": _responses({
+                    "type": "object",
+                    "properties": {
+                        "ein": {"type": "string"},
+                        "model_version": {"type": "string"},
+                        "fiscal_year": {"type": "integer"},
+                        "notes": {"type": "array", "items": {
+                            "type": "object", "properties": {
+                                "note_id": {"type": "integer"}, "body": {"type": "string"},
+                                "author_label": {"type": ["string", "null"]},
+                                "created_at": {"type": "string"}}}},
+                        "fields": {"type": "array", "items": {
+                            "type": "object", "properties": {
+                                "field_id": {"type": "integer"}, "label": {"type": "string"},
+                                "value": {"type": ["string", "null"]},
+                                "created_by_label": {"type": ["string", "null"]},
+                                "created_at": {"type": "string"}}}}},
+                }),
+            },
+        },
+        "/model-data/note": {
+            "post": {
+                "tags": ["ModelData"],
+                "summary": "Add a note to an org/model/year (model_data:write)",
+                "requestBody": _body({
+                    "type": "object", "required": ["ein", "version", "year", "body"],
+                    "properties": {"ein": {"type": "string"}, "version": {"type": "string"},
+                                   "year": {"type": "integer"}, "body": {"type": "string"}}}),
+                "responses": _responses({
+                    "type": "object", "properties": {"note_id": {"type": "integer"},
+                                                     "body": {"type": "string"}}}),
+            },
+        },
+        "/model-data/note/delete": {
+            "post": {
+                "tags": ["ModelData"], "summary": "Remove a model/year note (model_data:write)",
+                "requestBody": _body({
+                    "type": "object", "required": ["note_id"],
+                    "properties": {"note_id": {"type": "integer"}}}),
+                "responses": _responses({
+                    "type": "object", "properties": {"note_id": {"type": "integer"},
+                                                     "removed": {"type": "boolean"}}}),
+            },
+        },
+        "/model-data/field": {
+            "post": {
+                "tags": ["ModelData"],
+                "summary": "Add a custom data field to an org/model/year (model_data:write)",
+                "requestBody": _body({
+                    "type": "object", "required": ["ein", "version", "year", "label"],
+                    "properties": {"ein": {"type": "string"}, "version": {"type": "string"},
+                                   "year": {"type": "integer"}, "label": {"type": "string"},
+                                   "value": {"type": "string"}}}),
+                "responses": _responses({
+                    "type": "object", "properties": {"field_id": {"type": "integer"},
+                                                     "label": {"type": "string"},
+                                                     "value": {"type": ["string", "null"]}}}),
+            },
+        },
+        "/model-data/field/delete": {
+            "post": {
+                "tags": ["ModelData"], "summary": "Remove a custom data field (model_data:write)",
+                "requestBody": _body({
+                    "type": "object", "required": ["field_id"],
+                    "properties": {"field_id": {"type": "integer"}}}),
+                "responses": _responses({
+                    "type": "object", "properties": {"field_id": {"type": "integer"},
+                                                     "removed": {"type": "boolean"}}}),
+            },
+        },
         # ── Templates (model-builder prefill catalog) ────────────────────────
         "/templates": {
             "get": {
@@ -1738,7 +1969,8 @@ def build_spec(base_url: str | None = None) -> dict:
             {"name": "Auth"}, {"name": "Organizations"}, {"name": "Filings"},
             {"name": "Scores"}, {"name": "People"}, {"name": "Tags"},
             {"name": "Lists"}, {"name": "Admin"}, {"name": "Financials"},
-            {"name": "Follows"}, {"name": "Templates"}, {"name": "Upload"},
+            {"name": "Follows"}, {"name": "Notes"}, {"name": "Giving"},
+            {"name": "ModelData"}, {"name": "Templates"}, {"name": "Upload"},
             {"name": "Meta"},
         ],
         "paths": paths,

@@ -23,7 +23,8 @@ class OrganizationDatabase(Database):
     "o.website, o.main_email, o.created_by, o.updated_by, "
     "m.street, m.city, m.state_code, m.zipcode, "
     "o.org_type, o.is_grantmaker, "
-    "o.sector_code, s.name, a.county_fips, a.county_name")
+    "o.sector_code, s.name, a.county_fips, a.county_name, "
+    "o.in_portfolio, a.street2, m.street2")
   _ADDR_JOINS = (
     "LEFT JOIN address a ON a.uuid = o.business_address_id "
     "LEFT JOIN address m ON m.uuid = o.mailing_address_id "
@@ -74,6 +75,8 @@ class OrganizationDatabase(Database):
       ("ALTER TABLE organization ADD COLUMN main_email TEXT", "main_email"),
       ("ALTER TABLE organization ADD COLUMN created_by TEXT", "created_by"),
       ("ALTER TABLE organization ADD COLUMN updated_by TEXT", "updated_by"),
+      # Shared (team-wide) portfolio flag; see set_in_portfolio.
+      ("ALTER TABLE organization ADD COLUMN in_portfolio INTEGER NOT NULL DEFAULT 0", "in_portfolio"),
       # Derived foundation/nonprofit classification (see classify_organizations).
       ("ALTER TABLE organization ADD COLUMN org_type TEXT", "org_type"),
       ("ALTER TABLE organization ADD COLUMN is_grantmaker INTEGER NOT NULL DEFAULT 0", "is_grantmaker"),
@@ -84,6 +87,7 @@ class OrganizationDatabase(Database):
         self.cursor.execute(ddl)
     self.cursor.execute("CREATE INDEX IF NOT EXISTS idx_organization_org_type ON organization (org_type)")
     self.cursor.execute("CREATE INDEX IF NOT EXISTS idx_organization_sector ON organization (sector_code)")
+    self.cursor.execute("CREATE INDEX IF NOT EXISTS idx_organization_portfolio ON organization (in_portfolio)")
     self.connection.commit()
 
   def _ensure_search_index(self) -> None:
@@ -238,16 +242,18 @@ class OrganizationDatabase(Database):
     return fts != orgs
 
   def _row(self, r) -> dict:
-    address = ({"street": r[5], "city": r[6], "state": r[7], "zip": r[8],
+    address = ({"street": r[5], "street2": r[24], "city": r[6], "state": r[7], "zip": r[8],
                 "county_fips": r[21], "county_name": r[22]} if any(r[5:9]) else None)
-    mailing = {"street": r[13], "city": r[14], "state": r[15], "zip": r[16]} if any(r[13:17]) else None
+    mailing = ({"street": r[13], "street2": r[25], "city": r[14], "state": r[15],
+                "zip": r[16]} if any(r[13:17]) else None)
     return {"ein": r[0], "name": r[1], "is_favorite": bool(r[2]),
             "created_at": r[3], "updated_at": r[4],
             "website": r[9], "main_email": r[10],
             "created_by": r[11], "updated_by": r[12],
             "address": address, "mailing_address": mailing,
             "org_type": r[17], "is_grantmaker": bool(r[18]),
-            "sector_code": r[19], "sector_name": r[20]}
+            "sector_code": r[19], "sector_name": r[20],
+            "in_portfolio": bool(r[23])}
 
   def list_organizations(self, search: str | None = None,
                          limit: int = 50, offset: int = 0,
@@ -587,3 +593,53 @@ class OrganizationDatabase(Database):
                             {'is_favorite': bool(is_favorite)}, commit=False)
     self.connection.commit()
     return changed
+
+  def set_in_portfolio(self, ein: str, in_portfolio: bool, *, actor=None) -> bool:
+    """Mark an organization as in the (shared, team-wide) portfolio, or not, and
+    bump ``updated_at``. A nonprofit counterpart to the per-user follow watchlist.
+
+    Returns True if an organization with that EIN exists (and was updated),
+    False if no such organization is present. Audited like the other org edits."""
+    self.cursor.execute(
+      "UPDATE organization SET in_portfolio = ?, updated_at = CURRENT_TIMESTAMP "
+      "WHERE ein = ?",
+      (1 if in_portfolio else 0, ein)
+    )
+    changed = self.cursor.rowcount > 0
+    if changed:
+      self._db.audit.record(actor, 'update', 'organization', ein,
+                            {'in_portfolio': bool(in_portfolio)}, commit=False)
+    self.connection.commit()
+    return changed
+
+  # 990 mission / activity description xml_paths, most-specific first. MissionDesc
+  # is the Part III mission statement; ActivityOrMissionDesc the Part I summary;
+  # Desc a 990-EZ/program fallback. 990-EZ/PF that carry none simply return None.
+  _MISSION_PATHS = (
+    "ReturnData/IRS990/MissionDesc",
+    "ReturnData/IRS990/ActivityOrMissionDesc",
+    "ReturnData/IRS990EZ/PrimaryExemptPurposeTxt",
+    "ReturnData/IRS990/Desc",
+  )
+
+  def latest_mission(self, ein: str) -> str | None:
+    """The org's mission / activity description from its most recent filing that
+    reported one. Reads ``reported_data`` joined to ``field`` for the known
+    mission xml_paths, newest filing first, preferring the most specific path.
+    Returns None when no filing carries any of them."""
+    ein = self.try_normalize_ein(ein)
+    qs = ",".join("?" * len(self._MISSION_PATHS))
+    # Rank by (filing year desc, then path specificity) so the newest filing's
+    # most-specific mission text wins. ``ix`` orders the paths as listed above.
+    rank = " ".join(
+      f"WHEN ? THEN {i}" for i in range(len(self._MISSION_PATHS)))
+    row = self.cursor.execute(
+      f"SELECT rd.raw_value FROM reported_data rd "
+      f"JOIN field fi ON fi.field_id = rd.field_id "
+      f"JOIN filing f ON f.filing_id = rd.filing_id "
+      f"WHERE f.organization_id = ? AND fi.xml_path IN ({qs}) "
+      f"AND rd.raw_value IS NOT NULL AND TRIM(rd.raw_value) <> '' "
+      f"ORDER BY f.year DESC, CASE fi.xml_path {rank} ELSE 99 END "
+      f"LIMIT 1",
+      (ein, *self._MISSION_PATHS, *self._MISSION_PATHS)).fetchone()
+    return row[0] if row else None

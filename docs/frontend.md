@@ -191,7 +191,12 @@ quick map (full detail in [Access Control](access-control.md)):
 | Model builder (create models) | — | `user:admin` |
 | Financial data | `data:read` | `data:write` |
 | People · Tags · Lists | `*:read` | `*:write` |
-| Follows (watchlist) | `follow:read` | `follow:write` |
+| Personnel (org Part VII) | `org:read` | — |
+| Follows (per-user watchlist) | `follow:read` | `follow:write` |
+| Portfolio (shared, team-wide) | `org:read` | `org:write` |
+| Notes / updates (shared) | `note:read` | `note:write` |
+| Giving (shared gift log) | `giving:read` | `giving:write` |
+| Model-data (per model+year notes/fields) | `model_data:read` | `model_data:write` |
 | Admin (users/roles/perms) | — | `user:admin` |
 | Upload (ZIP / PDF) · grab-from-IRS (`/upload/ingested` · `/upload/discover` · `/upload/grab`) | — | `upload:write` |
 

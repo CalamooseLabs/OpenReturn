@@ -31,7 +31,7 @@ pkgs.python3Packages.buildPythonApplication {
       # Fallback if package-data didn't bundle the SQL/HTML assets: copy each
       # concern's sql tree (one folder per Database subclass) plus the views.
       for d in Schema Organization Filing ReportedData ApiKey Ingest Migration Score \
-               Appearance User Audit Financials People Tags Lists Follow; do
+               Appearance User Audit Financials People Tags Lists Follow Note Giving ModelData; do
         cp -r ${./src}/database/$d/sql $out/lib/python*/site-packages/database/$d/ 2>/dev/null || true
       done
       cp -r ${./src}/router/Upload/views $out/lib/python*/site-packages/router/Upload/ 2>/dev/null || true

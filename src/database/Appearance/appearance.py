@@ -257,6 +257,35 @@ class AppearanceDatabase(Database):
     return {"ein": ein, "direction": "received",
             "summary": self._grant_summary(grants, key="grantor_ein"), "grants": grants}
 
+  def personnel(self, ein: str) -> dict:
+    """The org's officers / directors / trustees / key employees across **all** of
+    its filings (``person_role`` ⋈ ``party_appearance``), each tagged with its
+    ``filing_year`` and ordered newest-first. ``year`` is the most recent filing
+    year with personnel (the UI defaults to showing only that year, with a toggle
+    to reveal historical rows). Used by the org-profile "Key personnel" section
+    alongside the manual People directory. Empty when no filing carries Part VII
+    personnel for the org."""
+    ein = self._db.orgs.try_normalize_ein(ein)
+    people = [
+      {"name": r[0] or r[1], "title": r[2],
+       "is_officer": bool(r[3]), "is_director_trustee": bool(r[4]),
+       "is_key_employee": bool(r[5]), "is_highest_comp": bool(r[6]),
+       "is_former": bool(r[7]), "avg_hours_org": r[8],
+       "reportable_comp_org": r[9], "reportable_comp_related": r[10],
+       "other_comp": r[11], "resolved_party_id": r[12], "filing_year": r[13]}
+      for r in self.cursor.execute(
+        "SELECT pa.person_name, pa.business_name, pr.title, pr.is_officer, "
+        "pr.is_director_trustee, pr.is_key_employee, pr.is_highest_comp, "
+        "pr.is_former, pr.avg_hours_org, pr.reportable_comp_org, "
+        "pr.reportable_comp_related, pr.other_comp, pa.resolved_party_id, f.year "
+        "FROM person_role pr JOIN party_appearance pa ON pa.appearance_id = pr.appearance_id "
+        "JOIN filing f ON f.filing_id = pr.filing_id "
+        "WHERE f.organization_id = ? "
+        "ORDER BY f.year DESC, pr.group_code, pr.occurrence_index", (ein,)).fetchall()]
+    years = sorted({p["filing_year"] for p in people}, reverse=True)
+    return {"ein": ein, "year": years[0] if years else None, "years": years,
+            "personnel": people}
+
   def graph_counts(self) -> dict:
     """Row counts for the graph tables (for status / coverage reporting)."""
     out = {}

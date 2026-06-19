@@ -345,11 +345,13 @@ class TestCreateScore(unittest.TestCase):
 
     def test_calls_create_score_with_default_version(self):
         self._call({"filing_id": "test-filing-uuid"})
-        self.db.scores.create_score.assert_called_once_with("test-filing-uuid", '1')
+        self.db.scores.create_score.assert_called_once_with(
+            "test-filing-uuid", '1', manual_only=True)
 
     def test_explicit_model_version_passed_to_db(self):
         self._call({"filing_id": "test-filing-uuid", "model_version": 2})
-        self.db.scores.create_score.assert_called_once_with("test-filing-uuid", '2')
+        self.db.scores.create_score.assert_called_once_with(
+            "test-filing-uuid", '2', manual_only=True)
 
     def test_explicit_model_version_in_response(self):
         result = self._call({"filing_id": "test-filing-uuid", "model_version": 2})

@@ -124,6 +124,19 @@ class TestGrade(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.eng.grade(sid, 1, 0.5, "nope")
 
+    def test_create_score_is_find_or_create(self):
+        # Re-creating the same (filing, model) returns the existing row (so a
+        # second factor's grade reuses it instead of hitting UNIQUE).
+        again = self.db.scores.create_score('u1', 2)
+        self.assertEqual(again, self.score_id)
+
+    def test_create_score_manual_only_rejects_computed(self):
+        _add_filing(self.db, year=2022, filing_id=2, uuid='u2')
+        with self.assertRaises(ValueError):
+            self.db.scores.create_score('u2', 1, manual_only=True)  # v1 is computed
+        # the engine compute path (no manual_only) still allows it
+        self.assertTrue(self.db.scores.create_score('u2', 1))
+
     def test_grade_rejects_foreign_factor(self):
         with self.assertRaises(ValueError):
             self.eng.grade(self.score_id, 99999, 1, "nope")

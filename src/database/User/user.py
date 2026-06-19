@@ -27,6 +27,9 @@ class UserDatabase(Database):
                      connection=db.connection, cursor=db.cursor)
     self._ensure_data_permissions()
     self._ensure_follow_permissions()
+    self._ensure_note_permissions()
+    self._ensure_giving_permissions()
+    self._ensure_model_data_permissions()
 
   def _ensure_data_permissions(self) -> None:
     """Add the data:read/data:write permissions + default grants on DBs created
@@ -60,6 +63,67 @@ class UserDatabase(Database):
       "('follow:write', 'Follow and unfollow organizations')")
     grants = {'admin': ('follow:read', 'follow:write'), 'editor': ('follow:read', 'follow:write'),
               'viewer': ('follow:read', 'follow:write'), 'service': ('follow:read',)}
+    for role, perms in grants.items():
+      for p in perms:
+        self.cursor.execute(
+          "INSERT OR IGNORE INTO role_permission (role_id, permission_id) "
+          "SELECT r.role_id, pm.permission_id FROM role r, permission pm "
+          "WHERE r.code = ? AND pm.code = ?", (role, p))
+    self.connection.commit()
+
+  def _ensure_note_permissions(self) -> None:
+    """Add the note:read/note:write permissions + default grants on DBs created
+    before they existed (guarded on note:read's presence). Notes are shared,
+    team-wide org updates. Mirrors _ensure_follow_permissions."""
+    if self.cursor.execute("SELECT 1 FROM permission WHERE code = 'note:read'").fetchone():
+      return
+    self.cursor.execute(
+      "INSERT OR IGNORE INTO permission (code, description) VALUES "
+      "('note:read', 'Read organization notes / updates'), "
+      "('note:write', 'Post and remove organization notes / updates')")
+    grants = {'admin': ('note:read', 'note:write'), 'editor': ('note:read', 'note:write'),
+              'viewer': ('note:read',), 'service': ('note:read',)}
+    for role, perms in grants.items():
+      for p in perms:
+        self.cursor.execute(
+          "INSERT OR IGNORE INTO role_permission (role_id, permission_id) "
+          "SELECT r.role_id, pm.permission_id FROM role r, permission pm "
+          "WHERE r.code = ? AND pm.code = ?", (role, p))
+    self.connection.commit()
+
+  def _ensure_giving_permissions(self) -> None:
+    """Add the giving:read/giving:write permissions + default grants on DBs created
+    before they existed (guarded on giving:read's presence). Giving rows are the
+    shared record of gifts the team gave to an org. Mirrors _ensure_follow_permissions."""
+    if self.cursor.execute("SELECT 1 FROM permission WHERE code = 'giving:read'").fetchone():
+      return
+    self.cursor.execute(
+      "INSERT OR IGNORE INTO permission (code, description) VALUES "
+      "('giving:read', 'Read recorded giving / gifts'), "
+      "('giving:write', 'Record and remove giving / gifts')")
+    grants = {'admin': ('giving:read', 'giving:write'), 'editor': ('giving:read', 'giving:write'),
+              'viewer': ('giving:read',), 'service': ('giving:read',)}
+    for role, perms in grants.items():
+      for p in perms:
+        self.cursor.execute(
+          "INSERT OR IGNORE INTO role_permission (role_id, permission_id) "
+          "SELECT r.role_id, pm.permission_id FROM role r, permission pm "
+          "WHERE r.code = ? AND pm.code = ?", (role, p))
+    self.connection.commit()
+
+  def _ensure_model_data_permissions(self) -> None:
+    """Add the model_data:read/model_data:write permissions + default grants on DBs
+    created before they existed (guarded on model_data:read's presence). Covers the
+    per-(org, model, year) notes + custom data fields. Mirrors the others."""
+    if self.cursor.execute("SELECT 1 FROM permission WHERE code = 'model_data:read'").fetchone():
+      return
+    self.cursor.execute(
+      "INSERT OR IGNORE INTO permission (code, description) VALUES "
+      "('model_data:read', 'Read per-model/year notes and custom data fields'), "
+      "('model_data:write', 'Add and remove per-model/year notes and custom data fields')")
+    grants = {'admin': ('model_data:read', 'model_data:write'),
+              'editor': ('model_data:read', 'model_data:write'),
+              'viewer': ('model_data:read',), 'service': ('model_data:read',)}
     for role, perms in grants.items():
       for p in perms:
         self.cursor.execute(

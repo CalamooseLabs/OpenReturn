@@ -155,7 +155,9 @@ class ScoreRouter(Router):
         return err
       try:
         model_version = str(data.get('model_version', '1'))
-        score_id = self.db.scores.create_score(data['filing_id'], model_version)
+        # This endpoint anchors MANUAL grades — refuse a computed model (and
+        # find-or-create so re-grading reuses the row instead of UNIQUE-erroring).
+        score_id = self.db.scores.create_score(data['filing_id'], model_version, manual_only=True)
       except ValueError as e:
         return {"error": str(e)}
       except sqlite3.IntegrityError as e:

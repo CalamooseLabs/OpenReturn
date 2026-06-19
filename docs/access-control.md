@@ -28,15 +28,17 @@ router code.
 | Role | Intended for | Grants |
 |------|--------------|--------|
 | `admin` | Administrators | every permission, incl. `user:admin` |
-| `editor` | Staff who edit data | all reads + `org/person/tag/list/score/filing` writes + `upload:write` + `follow:write` |
+| `editor` | Staff who edit data | all reads + `org/person/tag/list/score/filing/note/giving/model_data` writes + `upload:write` + `follow:write` |
 | `viewer` | Read-only users | all `*:read` + `follow:write` (their own watchlist) |
-| `service` | Programs (API keys) | restricted reads: `org/person/tag/list/filing/score/follow :read` |
+| `service` | Programs (API keys) | restricted reads: `org/person/tag/list/filing/score/follow/note/giving/model_data :read` |
 
 ### Permissions
 
 `org:read` `org:write` · `person:read` `person:write` · `tag:read` `tag:write` ·
 `list:read` `list:write` · `filing:read` `filing:write` · `score:read`
-`score:write` · `follow:read` `follow:write` · `upload:write` · `user:admin`
+`score:write` · `follow:read` `follow:write` · `note:read` `note:write` ·
+`giving:read` `giving:write` · `model_data:read` `model_data:write` · `upload:write` ·
+`user:admin`
 
 List them live with `GET /scores/types`-style discovery via the CLI: `openreturn users roles`.
 

@@ -139,7 +139,18 @@ class OrgRouter(Router):
           "data":   f"/filings/data?filing_id={f['filing_id']}",
           "lookup": f"/filings/lookup?ein={ein}&year={f['year']}",
         }
+      org['mission'] = self.db.orgs.latest_mission(ein)
       return {**org, "filings": filings}
+
+    @self.get('/personnel', permission='org:read')
+    def org_personnel(query_params: dict, body: Any, headers: HTTPMessage):
+      """Officers / directors / trustees / key employees as filed on the org's most
+      recent 990 (Part VII). Complements the manual People directory; empty until a
+      990 with personnel has been ingested for the org."""
+      ein = self._qp(query_params, 'ein')
+      if not ein:
+        return {"error": "missing query param: ein"}
+      return self.db.appearances.personnel(ein)
 
     @self.post('', permission='org:write')
     def create_organization(query_params: dict, body: Any, headers: HTTPMessage):
@@ -189,5 +200,18 @@ class OrgRouter(Router):
       raw = data['is_favorite']
       is_favorite = raw if isinstance(raw, bool) else str(raw).strip().lower() in ('1', 'true', 'yes')
       if not self.db.orgs.set_favorite(data['ein'], is_favorite, actor=self._principal(headers)):
+        return {"error": f"organization not found: {data['ein']}"}
+      return self.db.orgs.get_organization(data['ein'])
+
+    @self.post('/portfolio', permission='org:write')
+    def set_portfolio(query_params: dict, body: Any, headers: HTTPMessage):
+      """Add/remove an org from the shared (team-wide) portfolio. Body:
+      {ein, in_portfolio}. The nonprofit counterpart to the per-user follow."""
+      data, err = self._require_fields(body, 'ein', 'in_portfolio')
+      if err:
+        return err
+      raw = data['in_portfolio']
+      in_portfolio = raw if isinstance(raw, bool) else str(raw).strip().lower() in ('1', 'true', 'yes')
+      if not self.db.orgs.set_in_portfolio(data['ein'], in_portfolio, actor=self._principal(headers)):
         return {"error": f"organization not found: {data['ein']}"}
       return self.db.orgs.get_organization(data['ein'])

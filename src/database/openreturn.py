@@ -5,9 +5,12 @@ from database.Audit import AuditDatabase
 from database.Filing import FilingDatabase
 from database.Financials import FinancialsDatabase
 from database.Follow import FollowDatabase
+from database.Giving import GivingDatabase
 from database.Ingest import IngestDatabase
 from database.Lists import ListsDatabase
 from database.Migration import MigrationDatabase
+from database.ModelData import ModelDataDatabase
+from database.Note import NoteDatabase
 from database.Organization import OrganizationDatabase
 from database.People import PeopleDatabase
 from database.ReportedData import ReportedDataDatabase
@@ -64,6 +67,9 @@ class OpenReturnDB(Database):
         self.tags          = TagsDatabase(self)          # tag/org_tag → organization
         self.lists         = ListsDatabase(self)         # org_list/org_list_member → org + app_user
         self.follows       = FollowDatabase(self)        # follow → app_user + organization
+        self.notes         = NoteDatabase(self)          # org_note → organization + app_user (shared)
+        self.giving        = GivingDatabase(self)        # giving → organization + app_user (shared)
+        self.model_data    = ModelDataDatabase(self)     # model_year_note/field → organization + app_user
 
         # Shared field-metadata cache: built once here, read by reported_data.
         self._field_meta: dict[int, dict] = self.meta._build_field_meta_cache()

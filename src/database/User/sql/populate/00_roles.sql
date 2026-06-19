@@ -19,6 +19,12 @@ INSERT OR IGNORE INTO permission (code, description) VALUES
   ('upload:write', 'Upload 990 filing archives'),
   ('follow:read',  'Read the caller''s organization watchlist'),
   ('follow:write', 'Follow and unfollow organizations'),
+  ('note:read',    'Read organization notes / updates'),
+  ('note:write',   'Post and remove organization notes / updates'),
+  ('giving:read',  'Read recorded giving / gifts'),
+  ('giving:write', 'Record and remove giving / gifts'),
+  ('model_data:read',  'Read per-model/year notes and custom data fields'),
+  ('model_data:write', 'Add and remove per-model/year notes and custom data fields'),
   ('user:admin',   'Administer users and roles');
 
 INSERT OR IGNORE INTO role (code, name, description, is_builtin) VALUES
@@ -36,16 +42,17 @@ INSERT OR IGNORE INTO role_permission (role_id, permission_id)
   SELECT (SELECT role_id FROM role WHERE code = 'editor'), permission_id FROM permission
   WHERE code IN ('org:read','org:write','person:read','person:write','tag:read','tag:write',
                  'list:read','list:write','filing:read','filing:write','score:read','score:write',
-                 'upload:write','follow:read','follow:write');
+                 'upload:write','follow:read','follow:write','note:read','note:write',
+                 'giving:read','giving:write','model_data:read','model_data:write');
 
 -- viewer: all reads.
 INSERT OR IGNORE INTO role_permission (role_id, permission_id)
   SELECT (SELECT role_id FROM role WHERE code = 'viewer'), permission_id FROM permission
   WHERE code IN ('org:read','person:read','tag:read','list:read','filing:read','score:read',
-                 'follow:read','follow:write');
+                 'follow:read','follow:write','note:read','giving:read','model_data:read');
 
 -- service (API-key programs): restricted reads only.
 INSERT OR IGNORE INTO role_permission (role_id, permission_id)
   SELECT (SELECT role_id FROM role WHERE code = 'service'), permission_id FROM permission
   WHERE code IN ('org:read','person:read','tag:read','list:read','filing:read','score:read',
-                 'follow:read');
+                 'follow:read','note:read','giving:read','model_data:read');

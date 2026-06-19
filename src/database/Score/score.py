@@ -427,10 +427,31 @@ class ScoreDatabase(Database):
     ).fetchone()
     return row[0] if row else 0.0
 
-  def create_score(self, filing_id: str, model_version: str = "1") -> int:
-    """``filing_id`` is the public filing uuid; resolved to the integer
-    filing.filing_id that organization_score stores."""
-    model_id = self.get_model_id(model_version)
+  def create_score(self, filing_id: str, model_version: str = "1",
+                   *, manual_only: bool = False) -> int:
+    """Find-or-create the ``organization_score`` row for a (filing, model) and
+    return its score_id. ``filing_id`` is the public filing uuid; resolved to the
+    integer filing.filing_id that organization_score stores. Idempotent — returns
+    the existing row if one is already present (organization_score is
+    ``UNIQUE(filing_id, model_id)``), so re-grading a second factor or recomputing
+    reuses the same row instead of raising. With ``manual_only=True`` (the manual
+    grading entry point) it refuses a computed model, so a stray grade can't mint a
+    phantom score row; the engine's compute path leaves it False."""
+    row = self.cursor.execute(
+      "SELECT model_id, COALESCE(scoring_mode, 'computed') FROM score_model WHERE version = ?",
+      (model_version,)).fetchone()
+    if not row:
+      raise ValueError(f"Score model version {model_version} not found")
+    model_id, mode = row
+    if manual_only and mode != 'manual':
+      raise ValueError(
+        f"score model {model_version} is {mode}, not manual; grading applies to manual models")
+    existing = self.cursor.execute(
+      "SELECT score_id FROM organization_score "
+      "WHERE filing_id = (SELECT filing_id FROM filing WHERE uuid = ?) AND model_id = ?",
+      (filing_id, model_id)).fetchone()
+    if existing:
+      return existing[0]
     self.cursor.execute(
       "INSERT INTO organization_score (filing_id, model_id) "
       "VALUES ((SELECT filing_id FROM filing WHERE uuid = ?), ?)",

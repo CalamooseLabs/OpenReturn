@@ -23,6 +23,9 @@ from router.Lists import ListsRouter
 from router.Admin import AdminRouter
 from router.Financials import FinancialsRouter
 from router.Follow import FollowRouter
+from router.Note import NoteRouter
+from router.Giving import GivingRouter
+from router.ModelData import ModelDataRouter
 from router.Meta import MetaRouter
 from router.Templates import TemplatesRouter
 from server import Server
@@ -167,6 +170,9 @@ def cmd_serve(args) -> int:
     app.include_router(AdminRouter(db=db, secure_by_default=True))
     app.include_router(FinancialsRouter(db=db, secure_by_default=True))
     app.include_router(FollowRouter(db=db, secure_by_default=True))
+    app.include_router(NoteRouter(db=db, secure_by_default=True))
+    app.include_router(GivingRouter(db=db, secure_by_default=True))
+    app.include_router(ModelDataRouter(db=db, secure_by_default=True))
     app.include_router(TemplatesRouter(db=db, secure_by_default=True))
     app.include_router(MetaRouter())   # public: /openapi.json, /health, /version
 

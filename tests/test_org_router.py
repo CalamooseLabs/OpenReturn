@@ -83,11 +83,13 @@ class TestOrgRouterRegistration(unittest.TestCase):
             "/organizations/cities",
             "/organizations/sectors",
             "/organizations/counties",
+            "/organizations/personnel",
         }
         self.assertEqual(set(self.router.routes["GET"].keys()), expected)
 
     def test_no_unexpected_post_routes(self):
-        expected = {"/organizations", "/organizations/edit", "/organizations/favorite"}
+        expected = {"/organizations", "/organizations/edit", "/organizations/favorite",
+                    "/organizations/portfolio"}
         self.assertEqual(set(self.router.routes["POST"].keys()), expected)
 
 

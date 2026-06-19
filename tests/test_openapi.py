@@ -28,6 +28,9 @@ from router.Lists import ListsRouter
 from router.Admin import AdminRouter
 from router.Financials import FinancialsRouter
 from router.Follow import FollowRouter
+from router.Note import NoteRouter
+from router.Giving import GivingRouter
+from router.ModelData import ModelDataRouter
 from router.Meta import MetaRouter
 from router.Templates import TemplatesRouter
 
@@ -85,7 +88,8 @@ class TestSpecCoverage(unittest.TestCase):
         routers = [UploadRouter(db=db), OrgRouter(db=db), FilingRouter(db=db),
                    ScoreRouter(db=db), AuthRouter(db=db), PeopleRouter(db=db),
                    TagsRouter(db=db), ListsRouter(db=db), AdminRouter(db=db),
-                   FinancialsRouter(db=db), FollowRouter(db=db), MetaRouter(),
+                   FinancialsRouter(db=db), FollowRouter(db=db), NoteRouter(db=db),
+                   GivingRouter(db=db), ModelDataRouter(db=db), MetaRouter(),
                    TemplatesRouter(db=db)]
         routes = set()
         for r in routers:

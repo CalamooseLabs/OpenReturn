@@ -64,6 +64,16 @@ POST /financials/canonical                # choose the canonical observation for
 Reads require `data:read`; writes require `data:write` (granted to admin/editor;
 viewer/service read). Every write is audited.
 
+**Needs-review flag.** A sole observation auto-becomes canonical even when it is a
+low-confidence reading (e.g. OCR of a 990 PDF), so each fact also carries
+`canonical_source`, `canonical_confidence`, and a derived **`review`** flag — true
+when the canonical value is below the review threshold (0.80) **and** no human has
+verified it (`chosen_by` is auto/NULL). The `/financials` UI lists these under
+"Needs review" with a **Confirm value** action: choosing the existing observation
+as canonical (`POST /financials/canonical`) records `chosen_by = <actor>`, marking
+it human-verified and clearing the flag. Recording a corrected value instead turns
+it into a normal conflict to resolve.
+
 ## Scoring
 
 The engine reads the **canonical** value per concept for an org-year (single

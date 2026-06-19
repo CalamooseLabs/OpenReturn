@@ -38,6 +38,11 @@ def cmd_classify(args) -> int:
             if counts.get(t):
                 print(f"    {_CYN}{t:<11}{_R} {counts[t]:,}")
         print(f"    {_CYN}{'grantmaker':<11}{_R} {gm:,}")
+        # org_type / is_grantmaker are denormalized into the ranking cache; this
+        # standalone reclassify (unlike ingest finalize, which re-scores after)
+        # would otherwise leave the cache's dims stale. Refresh it.
+        db.scores.rebuild_score_latest()
+        db.commit()
         return 0
     finally:
         db.close()

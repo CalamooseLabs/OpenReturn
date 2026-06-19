@@ -46,6 +46,99 @@ class TestOcrPureFunctions(unittest.TestCase):
         self.assertEqual(ocr._amount_to_float("$5,000.50"), 5000.50)
         self.assertIsNone(ocr._amount_to_float("n/a"))
 
+    def test_row_total_picks_the_total_column_not_the_rightmost(self):
+        # Part IX line 25 "Total functional expenses" row: a line number then the
+        # four columns [Total, Program, Mgmt, Fundraising]. The right-most amount
+        # is fundraising and the left-most is the line number — the total is the
+        # LARGEST amount, which is what we must extract for total_exp.
+        tsv = "\n".join([
+            "level\tpage\tblock\tpar\tline\tword\tleft\ttop\twidth\theight\tconf\ttext",
+            "5\t1\t1\t1\t1\t1\t10\t10\t20\t12\t95\t25",
+            "5\t1\t1\t1\t1\t2\t40\t10\t40\t12\t95\tTotal",
+            "5\t1\t1\t1\t1\t3\t90\t10\t60\t12\t95\tfunctional",
+            "5\t1\t1\t1\t1\t4\t160\t10\t60\t12\t95\texpenses",
+            "5\t1\t1\t1\t1\t5\t300\t10\t50\t12\t90\t1,360,607",
+            "5\t1\t1\t1\t1\t6\t380\t10\t50\t12\t90\t1,083,299",
+            "5\t1\t1\t1\t1\t7\t460\t10\t50\t12\t90\t142,178",
+            "5\t1\t1\t1\t1\t8\t540\t10\t50\t12\t90\t135,130",
+        ])
+        concepts = ocr.extract_concepts(ocr.parse_tsv(tsv))
+        self.assertEqual(concepts["total_exp"]["value"], 1360607.0)
+
+    def test_detect_form_distinguishes_990_ez_pf(self):
+        head = ("level\tpage\tblock\tpar\tline\tword\tleft\ttop\twidth\theight"
+                "\tconf\ttext")
+
+        def words_for(title):
+            rows = [head]
+            for i, tok in enumerate(title.split(), start=1):
+                rows.append(f"5\t1\t1\t1\t1\t{i}\t{i * 40}\t10\t30\t12\t95\t{tok}")
+            return ocr.parse_tsv("\n".join(rows), page=0)
+
+        # A standard 990's subtitle says "(except private foundations)" — that must
+        # NOT be mistaken for a PF (we key on the PF title "Return of Private
+        # Foundation", not the bare phrase).
+        self.assertEqual(ocr.detect_form(words_for(
+            "Return of Organization Exempt From Income Tax "
+            "except private foundations")), "990")
+        self.assertEqual(
+            ocr.detect_form(words_for("Return of Private Foundation")), "990PF")
+        self.assertEqual(ocr.detect_form(words_for(
+            "Short Form Return of Organization Exempt From Income Tax")), "990EZ")
+
+    def test_pf_form_routes_shared_label_to_pf_concept(self):
+        # "Total assets" means pf_total_assets on a 990-PF, but the 990 `assets`
+        # concept on a 990 — the form-scoped map is what disambiguates them.
+        tsv = "\n".join([
+            "level\tpage\tblock\tpar\tline\tword\tleft\ttop\twidth\theight\tconf\ttext",
+            "5\t1\t1\t1\t1\t1\t10\t10\t40\t12\t95\tTotal",
+            "5\t1\t1\t1\t1\t2\t60\t10\t40\t12\t95\tassets",
+            "5\t1\t1\t1\t1\t3\t200\t10\t60\t12\t90\t9,000,000",
+        ])
+        pf = ocr.extract_concepts(ocr.parse_tsv(tsv), form="990PF")
+        self.assertEqual(pf["pf_total_assets"]["value"], 9000000.0)
+        self.assertNotIn("assets", pf)
+        nonprofit = ocr.extract_concepts(ocr.parse_tsv(tsv), form="990")
+        self.assertEqual(nonprofit["assets"]["value"], 9000000.0)
+        self.assertNotIn("pf_total_assets", nonprofit)
+
+    def test_low_confidence_reading_is_flagged_for_review(self):
+        tsv = "\n".join([
+            "level\tpage\tblock\tpar\tline\tword\tleft\ttop\twidth\theight\tconf\ttext",
+            "5\t1\t1\t1\t1\t1\t10\t10\t40\t12\t60\tTotal",
+            "5\t1\t1\t1\t1\t2\t60\t10\t40\t12\t55\tRevenue",
+            "5\t1\t1\t1\t1\t3\t200\t10\t40\t12\t58\t100",
+        ])
+        low = ocr.extract_concepts(ocr.parse_tsv(tsv))
+        self.assertTrue(low["cy_rev"]["review"])         # 0.55 < threshold
+        # The high-confidence fixture (cy_rev conf 0.90) is not flagged.
+        self.assertFalse(ocr.extract_concepts(ocr.parse_tsv(_TSV))["cy_rev"]["review"])
+
+    def test_pages_are_kept_distinct_so_lines_do_not_merge(self):
+        # tesseract resets its TSV page column to 1 for every page image, so two
+        # different physical pages can share line coordinates. parse_tsv(page=…)
+        # tags each so extract_concepts won't merge them: a "Total Revenue" line on
+        # page 0 and a "Total Expenses" line at the SAME coords on page 1 must keep
+        # their own amounts (else cy_rev would steal the right-most merged amount).
+        head = ("level\tpage\tblock\tpar\tline\tword\tleft\ttop\twidth\theight"
+                "\tconf\ttext")
+        page0 = "\n".join([
+            head,
+            "5\t1\t1\t1\t1\t1\t10\t10\t40\t12\t96\tTotal",
+            "5\t1\t1\t1\t1\t2\t60\t10\t40\t12\t95\tRevenue",
+            "5\t1\t1\t1\t1\t3\t200\t10\t40\t12\t90\t100",
+        ])
+        page1 = "\n".join([
+            head,
+            "5\t1\t1\t1\t1\t1\t10\t10\t40\t12\t96\tTotal",
+            "5\t1\t1\t1\t1\t2\t60\t10\t40\t12\t95\tExpenses",
+            "5\t1\t1\t1\t1\t3\t200\t10\t40\t12\t90\t200",
+        ])
+        words = ocr.parse_tsv(page0, page=0) + ocr.parse_tsv(page1, page=1)
+        concepts = ocr.extract_concepts(words)
+        self.assertEqual(concepts["cy_rev"]["value"], 100.0)
+        self.assertEqual(concepts["cy_exp"]["value"], 200.0)
+
 
 class TestOcrRecording(unittest.TestCase):
     def setUp(self):

@@ -310,9 +310,29 @@ stdlib-only and the core still runs (degraded) where the binaries are absent
 (`ocr.ocr_available()`). Tesseract's TSV output gives a **per-word confidence**,
 which becomes the confidence on each observation. Mapping recognized amounts to
 canonical concepts is a **best-effort label-proximity heuristic** (a 990 PDF's
-layout varies), so readings are confidence-scored and should be reviewed — OCR
-observations (`source = ocr_990_pdf`) never auto-override a higher-trust source,
-since [canonical selection is manual](financials.md).
+layout varies):
+
+- **Form detection.** The first page's title is read to pick the form
+  (`990` / `990-EZ` / `990-PF`) — a 990-PF's "Total assets" is the `pf_total_assets`
+  concept, not the 990 `assets`, so the label→concept map is **form-scoped**. (The
+  detector keys on the PF *title* "Return of Private Foundation", not the bare
+  phrase "private foundation", which also appears in a standard 990's "(except
+  private foundations)" subtitle.) PF coverage is preliminary; 990-EZ reuses the
+  990 concept codes.
+- **Line grouping.** Words are grouped into physical lines keyed by the **page
+  image** plus tesseract's block/paragraph/line — the image index matters because
+  tesseract resets its page number for each page it OCRs, which would otherwise
+  merge same-coordinate lines from different pages.
+- **Amount selection.** A known line label is matched on the line and the
+  line's **right-most** amount is taken — except a multi-column **row total**
+  (e.g. Part IX "Total functional expenses", laid out
+  `[Total, Program, Mgmt, Fundraising]` and prefixed by the line number), where the
+  total is the **largest** amount on the line.
+
+Each reading is confidence-scored and **flagged for review below 80%** confidence
+(surfaced in the CLI output and the `/upload` UI's concept table). OCR
+observations (`source = ocr_990_pdf`) never auto-override a higher-trust source —
+[canonical selection is manual](financials.md).
 
 ---
 

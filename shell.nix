@@ -144,7 +144,7 @@ in
       pkgs.claude-code
       # OCR binaries for `openreturn ocr` / POST /upload/pdf (990 PDF → observations).
       pkgs.tesseract
-      pkgs.poppler_utils
+      pkgs.poppler-utils
       gcommit
       runtests
       runserver

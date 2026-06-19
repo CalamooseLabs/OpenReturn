@@ -178,6 +178,38 @@ class TestConflictAndCanonical(unittest.TestCase):
     def test_set_canonical_rejects_foreign_observation(self):
         self.assertFalse(self.db.financials.set_canonical('123456789', 2023, 'cy_rev', 99999))
 
+    def test_low_confidence_sole_observation_is_flagged_for_review(self):
+        # A sole OCR reading below the threshold auto-becomes canonical but is
+        # flagged for review, carrying its confidence + source.
+        self.db.financials.record_observations(
+            '123456789', 2024, 'ocr_990_pdf', {'cy_exp': 500},
+            confidence=0.55, actor=_actor())
+        facts = {f['concept_code']: f for f in
+                 self.db.financials.get_org_financials('123456789', 2024)['facts']}
+        cy = facts['cy_exp']
+        self.assertTrue(cy['review'])
+        self.assertEqual(cy['canonical_confidence'], 0.55)
+        self.assertEqual(cy['canonical_source'], 'ocr_990_pdf')
+
+    def test_confident_value_is_not_flagged(self):
+        # The derived 990 cy_rev has no confidence (None) → not flagged.
+        facts = {f['concept_code']: f for f in
+                 self.db.financials.get_org_financials('123456789', 2023)['facts']}
+        self.assertFalse(facts['cy_rev']['review'])
+
+    def test_human_verified_low_confidence_is_not_flagged(self):
+        # A low-confidence OCR value a human explicitly chose is resolved, so it is
+        # no longer surfaced for review even though its confidence is low.
+        out = self.db.financials.record_observations(
+            '123456789', 2023, 'ocr_990_pdf', {'cy_rev': 900},
+            confidence=0.4, actor=_actor())
+        new_obs = out['observations'][0]['observation_id']
+        self.db.financials.set_canonical(
+            '123456789', 2023, 'cy_rev', new_obs, actor=_actor())
+        facts = {f['concept_code']: f for f in
+                 self.db.financials.get_org_financials('123456789', 2023)['facts']}
+        self.assertFalse(facts['cy_rev']['review'])
+
 
 class TestOrgsWithConflicts(unittest.TestCase):
     """The corpus-wide conflicts inbox: only orgs with ≥1 unresolved conflict

@@ -382,8 +382,8 @@ class UploadRouter(Router):
         out = ocr_mod.record_ocr(self.db, ein, year, result, filename=filename,
                                  actor=self._principal(headers))
         return {"status": "complete", "ein": ein, "year": year, "filename": filename,
-                "pages": result["pages"], "recorded": out["recorded"],
-                "concepts": result["concepts"]}
+                "pages": result["pages"], "form": result.get("form", "990"),
+                "recorded": out["recorded"], "concepts": result["concepts"]}
       return {"error": "No PDF file found in upload"}
 
     # ── Grab from the IRS website ────────────────────────────────────────────

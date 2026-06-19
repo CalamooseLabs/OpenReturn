@@ -945,5 +945,69 @@ class TestRegisterModel(unittest.TestCase):
             self.register(self.db, {"model": {}, "factor": []})
 
 
+class TestUpdateModel(unittest.TestCase):
+    """update_model (the edit path) + get_model_definition (load-for-edit)."""
+
+    def setUp(self):
+        from database import OpenReturnDB
+        from models import register_model
+        self.db = OpenReturnDB(path=':memory:')
+        register_model(self.db, {'model': _valid_model(version=2),
+                                 'factor': [_valid_factor(name='F1', weight=1.0)]})
+
+    def tearDown(self):
+        self.db.close()
+
+    def _new_def(self, **model_over):
+        return {'model': {**_valid_model(version=2), **model_over},
+                'factor': [_valid_factor(name='F2', weight=2.0,
+                                         inputs=['cy_rev', 'total_exp'])]}
+
+    def test_update_replaces_factors(self):
+        from models import update_model
+        res = update_model(self.db, '2', self._new_def())
+        self.assertTrue(res['updated'])
+        self.assertTrue(res['recompute_needed'])
+        facs = self.db.scores.get_factors('2')
+        self.assertEqual([f['name'] for f in facs], ['F2'])
+        self.assertAlmostEqual(facs[0]['weight'], 2.0)
+
+    def test_update_changes_header(self):
+        from models import update_model
+        update_model(self.db, '2', self._new_def(description='Edited desc'))
+        self.assertEqual(self.db.scores.get_model('2')['description'], 'Edited desc')
+
+    def test_dry_run_does_not_write(self):
+        from models import update_model
+        res = update_model(self.db, '2', self._new_def(), dry_run=True)
+        self.assertTrue(res['dry_run'])
+        self.assertEqual([f['name'] for f in self.db.scores.get_factors('2')], ['F1'])
+
+    def test_unknown_version_raises(self):
+        from models import update_model
+        with self.assertRaises(ValueError):
+            update_model(self.db, '999', {'model': _valid_model(version=999),
+                                          'factor': [_valid_factor()]})
+
+    def test_version_mismatch_raises(self):
+        from models import update_model
+        with self.assertRaises(ValueError):
+            update_model(self.db, '2', {'model': _valid_model(version=3),
+                                        'factor': [_valid_factor()]})
+
+    def test_get_model_definition_round_trips(self):
+        from models import update_model, validate_toml
+        d = self.db.scores.get_model_definition('2')
+        self.assertEqual(d['model']['version'], '2')
+        self.assertEqual([f['name'] for f in d['factor']], ['F1'])
+        self.assertEqual(d['factor'][0]['inputs'], ['prog', 'total_exp'])
+        self.assertEqual([i for i in validate_toml(d) if i.startswith('ERROR')], [])
+        # Re-applying the round-tripped definition is a clean update.
+        self.assertTrue(update_model(self.db, '2', d)['updated'])
+
+    def test_get_model_definition_unknown_is_none(self):
+        self.assertIsNone(self.db.scores.get_model_definition('999'))
+
+
 if __name__ == '__main__':
     unittest.main()

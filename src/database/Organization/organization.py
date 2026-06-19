@@ -559,6 +559,16 @@ class OrganizationDatabase(Database):
       # columns, and the ZIP may have changed — re-derive county from the new ZIP.
       self.derive_counties(eins=[ein])   # commits; a no-op without a crosswalk
     self.connection.commit()
+    # sector_code / address (state, city, county) are denormalized into the
+    # org_score_latest ranking cache; if any changed, refresh this org's cache
+    # rows so leaderboard subset filters don't match stale dims. Wrapped — an
+    # edit must never fail on the cache (an accelerator, not the source of truth).
+    if 'sector_code' in fields or phys_written:
+      try:
+        self._db.scores.rebuild_score_latest(eins=[ein])
+        self.connection.commit()
+      except Exception:  # noqa: BLE001
+        pass
     return self.get_organization(ein)
 
   def set_favorite(self, ein: str, is_favorite: bool, *, actor=None) -> bool:

@@ -33,6 +33,11 @@ _CONCEPT_META: dict[str, tuple[str, str]] = {
   'pf_net_assets': ('Net assets / fund balances EOY (990-PF)', 'balance'),
 }
 
+# A canonical value drawn from a reading below this confidence — and never
+# verified by a human (chosen_by auto/NULL) — is flagged for review (a sole
+# low-confidence OCR observation auto-becomes canonical, so surface it).
+_REVIEW_CONFIDENCE = 0.80
+
 
 def _to_float(raw):
   try:
@@ -336,7 +341,16 @@ class FinancialsDatabase(Database):
       # once chosen manually (chosen_by != 'auto') it is resolved.
       f["resolved"] = f["chosen_by"] not in (None, 'auto')
       f["conflict"] = f["diverges"] and not f["resolved"]
-      f["canonical_value"] = next((o["value"] for o in f["observations"] if o["is_canonical"]), None)
+      canon = next((o for o in f["observations"] if o["is_canonical"]), None)
+      f["canonical_value"] = canon["value"] if canon else None
+      f["canonical_source"] = canon["source_code"] if canon else None
+      f["canonical_confidence"] = canon["confidence"] if canon else None
+      # Flag a low-confidence canonical that no human has verified — a steward
+      # should confirm or override it (a sole OCR reading auto-becomes canonical).
+      f["review"] = bool(
+        canon and canon["confidence"] is not None
+        and canon["confidence"] < _REVIEW_CONFIDENCE
+        and f["chosen_by"] in (None, 'auto'))
       out.append(f)
     return {"ein": ein, "facts": out}
 

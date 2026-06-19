@@ -200,6 +200,38 @@ class AdminRouter(Router):
         return {"error": str(e) or "invalid model definition"}
       return result
 
+    @self.get('/models/definition', permission='user:admin')
+    def model_definition(query_params: dict, body: Any, headers: HTTPMessage):
+      """The full editable ``{model, factor}`` definition for one model, so the
+      builder can load it for editing. 404-ish soft error if unknown."""
+      version = (query_params.get('version') or [None])[0]
+      if not version:
+        return {"error": "version is required"}
+      definition = self.db.scores.get_model_definition(version)
+      if definition is None:
+        return {"error": f"model version {version} not found"}
+      return {"version": version, "definition": definition}
+
+    @self.post('/models/update', permission='user:admin')
+    def update_model_route(query_params: dict, body: Any, headers: HTTPMessage):
+      """Update an existing model's definition in place (edit). Same shape as
+      create; ``version`` is taken from the definition and can't change. Scores
+      under the old definition go stale → the result flags recompute_needed."""
+      data, err = self._require_fields(body, 'definition')
+      if err:
+        return err
+      definition = data['definition']
+      version = (definition or {}).get('model', {}).get('version')
+      if not version:
+        return {"error": "definition.model.version is required"}
+      from models import update_model
+      try:
+        return update_model(
+          self.db, version, definition, actor=self._principal(headers),
+          dry_run=bool(data.get('dry_run')))
+      except (ValueError, KeyError, TypeError) as e:
+        return {"error": str(e) or "invalid model definition"}
+
   def _set_active(self, body, active, headers):
     data, err = self._require_fields(body, 'username')
     if err:

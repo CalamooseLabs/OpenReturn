@@ -4428,6 +4428,136 @@
         }
       }
     },
+    "/admin/models/definition": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Full editable definition for one model (user:admin)",
+        "description": "Reconstructs the `{model, factor}` definition for a model (by `version`) so the builder can load it for editing.",
+        "parameters": [
+          {
+            "name": "version",
+            "in": "query",
+            "required": true,
+            "description": "Model version",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "version": {
+                          "type": "string"
+                        },
+                        "definition": {
+                          "type": "object",
+                          "description": "{model, factor}"
+                        }
+                      }
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/admin/models/update": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Update (edit) an existing scoring model (user:admin)",
+        "description": "Replaces a model's header + factors in place. The version is taken from the definition and can't change. `dry_run` validates only. Scores under the old definition go stale, so the result flags `recompute_needed`. Audited.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "definition"
+                ],
+                "properties": {
+                  "definition": {
+                    "type": "object",
+                    "description": "{model, factor} \u2014 must include model.version"
+                  },
+                  "dry_run": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK \u2014 the resource, or `{\"error\": \u2026}` on an application error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "version": {
+                          "type": "string"
+                        },
+                        "updated": {
+                          "type": "boolean"
+                        },
+                        "factors": {
+                          "type": "integer"
+                        },
+                        "recompute_needed": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
     "/admin/users": {
       "get": {
         "tags": [

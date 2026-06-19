@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import math
+import sys
 
 _FACTOR_PREFIX = 'factor:'
 # A composite / super-composite factor input that resolves to another model's
@@ -255,6 +256,17 @@ class ScoringEngine:
         self.db.scores.store_factor_values(score_id, factor_results)
         self.db.scores.finalize_score(score_id, total, imputed=score_imputed)
 
+        # This on-demand recompute changed a value the leaderboard/ranks read, so
+        # keep the ranking cache current for just this org+model. Wrapped — the
+        # cache is an accelerator and must never fail the calculation. (Manual
+        # models are never cached, so this is a no-op for them.)
+        try:
+            mid = self.db.scores.get_model_id(model_version)
+            self.db.scores.rebuild_score_latest(model_ids=[mid], eins=[ein])
+            self.db.commit()
+        except Exception:  # noqa: BLE001
+            pass
+
         return self.db.scores.get_score(score_id)
 
     # ── Batch / pre-computation ──────────────────────────────────────────────
@@ -298,8 +310,14 @@ class ScoringEngine:
                 continue
             sorted_factors = self._topo_sort(factors)
             model_default = m.get('missing_data')
+            # Pre-parse each factor's constant inputs ONCE (keys are independent of
+            # model_default; policies use it, == fill.model_default at score time).
+            # _compute_factor reads these caches instead of re-parsing the JSON per
+            # filing — byte-identical, but drops ~24M json.loads at full-corpus scale.
+            for f in sorted_factors:
+                f['_keys'], f['_policies'] = parse_inputs(f['inputs'], model_default)
             has_policy = bool(model_default and model_default != 'none') or any(
-                p != 'none' for f in sorted_factors for p in parse_inputs(f['inputs'])[1])
+                p != 'none' for f in sorted_factors for p in f['_policies'])
             prepared_by_version[m['version']] = {
                 "version":       m['version'],
                 "model_id":      m['model_id'],
@@ -458,13 +476,26 @@ class ScoringEngine:
         # ranking dims) for the models just scored, so leaderboards and per-org
         # ranks stay fast AND current. Full rebuild → whole cache; a touched-set
         # ingest → just those orgs. Wrapped so a cache hiccup never fails scoring.
+        prepared_ids = [m['model_id'] for m in prepared]
         try:
             self.db.scores.rebuild_score_latest(
-                model_ids=[m['model_id'] for m in prepared],
-                eins=None if full else eins)
+                model_ids=prepared_ids, eins=None if full else eins)
             self.db.commit()
-        except Exception:  # noqa: BLE001 — the cache is an accelerator, not truth
-            pass
+        except Exception as exc:  # noqa: BLE001
+            # The cache is an accelerator, never the source of truth — but a
+            # PARTIALLY-built cache still reads as "ready" and would serve stale
+            # ranks. So on failure, DROP the affected models' cache rows entirely
+            # (reads then fall back to the correct live window query) and surface
+            # the error rather than swallow it.
+            try:
+                self.db.scores.clear_score_latest(prepared_ids)
+                self.db.commit()
+            except Exception:  # noqa: BLE001
+                pass
+            print(
+                f"Warning: ranking-cache rebuild failed ({exc}); cleared the "
+                "affected models' cache — ranks fall back to the live query.",
+                file=sys.stderr)
         return {"orgs": total, "scores": scores, "models": len(prepared)}
 
     def _topo_sort(self, factors: list[dict]) -> list[dict]:
@@ -659,10 +690,16 @@ class ScoringEngine:
         if key.startswith(_MODEL_PREFIX):
             ref = key[len(_MODEL_PREFIX):]
             return (model_totals or {}).get(ref)
-        try:
-            return float(key)
-        except (ValueError, TypeError):
-            pass
+        # A numeric literal starts with a digit or sign; a concept code never does.
+        # Only attempt float() when the key could parse — skips a caught ValueError
+        # on the common concept path (~48M at full corpus) while staying
+        # byte-identical (the try/except is preserved for numeric-leading keys).
+        c = key[:1]
+        if c.isdigit() or c in '+-.':
+            try:
+                return float(key)
+            except (ValueError, TypeError):
+                pass
         # vals is keyed by canonical concept code (== the model input key).
         return vals.get(key)
 
@@ -701,8 +738,17 @@ class ScoringEngine:
         if historical is None:
             historical = {}
         formula_type = factor['formula_type']
-        keys, policies = parse_inputs(factor['inputs'],
-                                      fill.model_default if fill is not None else None)
+        # Prefer the parse cached by _prepare_models (constant per factor); fall back
+        # to a live parse for callers that build factors without it (calculate/debug
+        # off a raw definition). Equivalent: cached policies use the model default,
+        # which equals fill.model_default at score time, and the no-fill path uses
+        # only keys (policies ignored).
+        cached = factor.get('_keys')
+        if cached is not None:
+            keys, policies = cached, factor['_policies']
+        else:
+            keys, policies = parse_inputs(factor['inputs'],
+                                          fill.model_default if fill is not None else None)
         if fill is not None:
             # Reset per-factor scratch BEFORE the historical short-circuit so a
             # historical factor (which never fills) clears a prior factor's flag.

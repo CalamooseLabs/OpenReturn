@@ -23,7 +23,7 @@ pkgs.python3Packages.buildPythonApplication {
   # stdlib-only and degrades gracefully (ocr.ocr_available()) when they're absent.
   makeWrapperArgs = [
     "--prefix PATH : ${pkgs.tesseract}/bin"
-    "--prefix PATH : ${pkgs.poppler_utils}/bin"
+    "--prefix PATH : ${pkgs.poppler-utils}/bin"
   ];
 
   postInstall = ''

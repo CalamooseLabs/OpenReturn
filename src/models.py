@@ -361,6 +361,119 @@ def validate_toml(data: dict) -> list[str]:
     return issues
 
 
+def _validate_composite_refs(db, data: dict) -> None:
+    """For a composite/super-composite, verify every ``model:<v>`` child it
+    references exists, has factors, is computed, and is the right kind. Raises
+    ``ValueError`` (joined) on any problem; a no-op for base models. Shared by
+    register_model + update_model."""
+    kind = data['model'].get('kind', 'model')
+    if kind not in _CHILD_KIND:
+        return
+    want_kind = _CHILD_KIND[kind]
+    refs = sorted({
+        k[len(_MODEL_PREFIX):]
+        for factor in data['factor']
+        for k in parse_inputs(factor.get('inputs') or [])[0]
+        if isinstance(k, str) and k.startswith(_MODEL_PREFIX)
+        and valid_version(k[len(_MODEL_PREFIX):])
+    })
+    ref_errors = []
+    for ref in refs:
+        child = db.scores.get_model(ref)
+        if child is None:
+            ref_errors.append(f"references model version {ref}, which is not registered")
+        elif not db.scores.get_factors(ref):
+            ref_errors.append(f"references model version {ref}, which has no factors "
+                              f"(its score would always be 0)")
+        elif child.get('scoring_mode') == 'manual':
+            ref_errors.append(f"references manual model version {ref}; only computed "
+                              f"models can be composed")
+        elif child.get('model_kind', 'model') != want_kind:
+            ref_errors.append(f"is a '{kind}' but references version {ref}, which is a "
+                              f"'{child.get('model_kind', 'model')}' (expected '{want_kind}')")
+    if ref_errors:
+        raise ValueError("; ".join(f"model {e}" for e in ref_errors))
+
+
+def _insert_factors(db, model_id: int, data: dict) -> None:
+    """Insert a definition's factor rows for ``model_id`` (caller has already
+    cleared any existing ones for an update). Shared by register_model +
+    update_model."""
+    mode = data['model'].get('mode', 'computed')
+    for factor in data['factor']:
+        if mode == 'manual':
+            db.cursor.execute(
+                "INSERT INTO score_factor (model_id, name, weight, formula_type, inputs, "
+                "direction, benchmark_lo, benchmark_hi, manual_scale, formula_description) "
+                "VALUES (?, ?, ?, 'manual', '[]', ?, ?, ?, ?, ?)",
+                (model_id, factor['name'], factor['weight'], factor.get('direction', 'higher'),
+                 factor.get('benchmark_lo', 0.0), factor.get('benchmark_hi', 1.0),
+                 factor['scale'], factor.get('formula_description')))
+        else:
+            db.cursor.execute(
+                "INSERT INTO score_factor (model_id, name, weight, formula_type, inputs, "
+                "direction, benchmark_lo, benchmark_hi, formula_description) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (model_id, factor['name'], factor['weight'], factor['formula_type'],
+                 json.dumps(factor['inputs']), factor['direction'], factor['benchmark_lo'],
+                 factor['benchmark_hi'], factor.get('formula_description')))
+
+
+def update_model(db, version, data: dict, *, actor=None, dry_run: bool = False) -> dict:
+    """Update an EXISTING model's definition in place — the edit counterpart of
+    register_model. Same validation + composite-ref checks, then it rewrites the
+    score_model header and REPLACES all score_factor rows. Editing can't change a
+    model's version (the definition's version must equal ``version``). Raises
+    ``ValueError`` on validation / version-mismatch / unknown version. Scores
+    already stored under the OLD definition become stale, so the result carries
+    ``recompute_needed`` for the caller to prompt an `openreturn score`."""
+    issues = validate_toml(data)
+    errors = [i for i in issues if i.startswith('ERROR:')]
+    warnings = [i.removeprefix('WARNING: ') for i in issues if i.startswith('WARNING:')]
+    if errors:
+        raise ValueError("; ".join(e.removeprefix('ERROR: ') for e in errors))
+
+    target = str(version)
+    if str(data['model']['version']) != target:
+        raise ValueError(
+            f"definition version {data['model']['version']!r} does not match the model "
+            f"being edited ({target!r}); editing can't change a model's version")
+    if db.scores.get_model(target) is None:
+        raise ValueError(f"model version {target} is not registered")
+
+    model_type = data['model'].get('type')
+    if model_type is not None:
+        valid_types = {t['code'] for t in db.scores.list_model_types()}
+        if model_type not in valid_types:
+            raise ValueError(f"unknown model type '{model_type}'. Known types: "
+                             f"{sorted(valid_types)}")
+    _validate_composite_refs(db, data)
+
+    n_factors = len(data['factor'])
+    kind = data['model'].get('kind', 'model')
+    mode = data['model'].get('mode', 'computed')
+    applies_to = data['model'].get('applies_to', 'both')
+    if dry_run:
+        return {"dry_run": True, "valid": True, "version": target, "factors": n_factors,
+                "kind": kind, "mode": mode, "applies_to": applies_to, "warnings": warnings}
+
+    model_id = db.cursor.execute(
+        "SELECT model_id FROM score_model WHERE version = ?", (target,)).fetchone()[0]
+    db.cursor.execute(
+        "UPDATE score_model SET description = ?, model_type = ?, scoring_mode = ?, "
+        "model_kind = ?, missing_data = ?, applies_to = ? WHERE model_id = ?",
+        (data['model'].get('description'), model_type, mode, kind,
+         data['model'].get('missing_data'), applies_to, model_id))
+    db.cursor.execute("DELETE FROM score_factor WHERE model_id = ?", (model_id,))
+    _insert_factors(db, model_id, data)
+    db.audit.record(actor, 'update', 'score_model', target,
+                    {'kind': kind, 'mode': mode, 'factors': n_factors,
+                     'applies_to': applies_to}, commit=False)
+    db.connection.commit()
+    return {"updated": True, "version": target, "model_id": model_id,
+            "factors": n_factors, "recompute_needed": True, "warnings": warnings}
+
+
 def register_model(db, data: dict, *, actor=None, skip_existing: bool = False,
                    dry_run: bool = False) -> dict:
     """Validate + register one model definition (the shared core of the CLI
@@ -391,34 +504,9 @@ def register_model(db, data: dict, *, actor=None, skip_existing: bool = False,
                              f"{sorted(valid_types)}")
 
     # A composite/super-composite must reference models that already exist, are the
-    # right kind (composite → base models; super → composites), and are computed.
-    # validate_toml confirmed the model:<v> tokens are well-formed; this checks them
-    # against the DB, which it could not see.
-    if kind in _CHILD_KIND:
-        want_kind = _CHILD_KIND[kind]
-        refs = sorted({
-            k[len(_MODEL_PREFIX):]
-            for factor in data['factor']
-            for k in parse_inputs(factor.get('inputs') or [])[0]
-            if isinstance(k, str) and k.startswith(_MODEL_PREFIX)
-            and valid_version(k[len(_MODEL_PREFIX):])
-        })
-        ref_errors = []
-        for ref in refs:
-            child = db.scores.get_model(ref)
-            if child is None:
-                ref_errors.append(f"references model version {ref}, which is not registered")
-            elif not db.scores.get_factors(ref):
-                ref_errors.append(f"references model version {ref}, which has no factors "
-                                  f"(its score would always be 0)")
-            elif child.get('scoring_mode') == 'manual':
-                ref_errors.append(f"references manual model version {ref}; only computed "
-                                  f"models can be composed")
-            elif child.get('model_kind', 'model') != want_kind:
-                ref_errors.append(f"is a '{kind}' but references version {ref}, which is a "
-                                  f"'{child.get('model_kind', 'model')}' (expected '{want_kind}')")
-        if ref_errors:
-            raise ValueError("; ".join(f"model {e}" for e in ref_errors))
+    # right kind, and are computed — checked against the DB (which validate_toml
+    # can't see). Shared with update_model.
+    _validate_composite_refs(db, data)
 
     if dry_run:
         return {"dry_run": True, "valid": True, "version": version,
@@ -439,24 +527,7 @@ def register_model(db, data: dict, *, actor=None, skip_existing: bool = False,
         (version, description, model_type, mode, kind, data['model'].get('missing_data'),
          applies_to))
     model_id = db.cursor.lastrowid
-
-    for factor in data['factor']:
-        if mode == 'manual':
-            db.cursor.execute(
-                "INSERT INTO score_factor (model_id, name, weight, formula_type, inputs, "
-                "direction, benchmark_lo, benchmark_hi, manual_scale, formula_description) "
-                "VALUES (?, ?, ?, 'manual', '[]', ?, ?, ?, ?, ?)",
-                (model_id, factor['name'], factor['weight'], factor.get('direction', 'higher'),
-                 factor.get('benchmark_lo', 0.0), factor.get('benchmark_hi', 1.0),
-                 factor['scale'], factor.get('formula_description')))
-        else:
-            db.cursor.execute(
-                "INSERT INTO score_factor (model_id, name, weight, formula_type, inputs, "
-                "direction, benchmark_lo, benchmark_hi, formula_description) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (model_id, factor['name'], factor['weight'], factor['formula_type'],
-                 json.dumps(factor['inputs']), factor['direction'], factor['benchmark_lo'],
-                 factor['benchmark_hi'], factor.get('formula_description')))
+    _insert_factors(db, model_id, data)
 
     db.audit.record(actor, 'create', 'score_model', str(version),
                     {'kind': kind, 'mode': mode, 'factors': n_factors,

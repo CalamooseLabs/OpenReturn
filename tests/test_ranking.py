@@ -240,6 +240,75 @@ class TestRankingCache(unittest.TestCase):
         n = self.db.cursor.execute("SELECT COUNT(*) FROM org_score_latest").fetchone()[0]
         self.assertEqual(n, 0)
 
+    def test_clear_score_latest_forces_fallback(self):
+        mid = self.db.cursor.execute(
+            "SELECT model_id FROM score_model WHERE version='1'").fetchone()[0]
+        self.assertTrue(self.db.scores._score_latest_ready(mid))
+        self.db.scores.clear_score_latest([mid])
+        self.db.connection.commit()
+        self.assertFalse(self.db.scores._score_latest_ready(mid))
+        # With the cache cleared, reads still work (live fallback) and match.
+        self.assertTrue(self.db.scores.rank_leaderboard(1)["leaderboard"])
+
+    def test_dimension_edit_keeps_cache_consistent_with_fallback(self):
+        # Editing a denormalized dim (sector) must refresh the cache, or the
+        # cached subset filter would diverge from the live fallback. update_org
+        # moves 100000004 from sector E to P.
+        self.db.orgs.update_org("100000004", {"sector_code": "P"}, actor=_actor())
+        for sector in ("E", "P"):
+            cached = self.db.scores.rank_leaderboard(1, sector=sector)
+            # Clearing the cache forces the live fallback; the two must agree.
+            self.db.cursor.execute("DELETE FROM org_score_latest")
+            self.db.connection.commit()
+            fallback = self.db.scores.rank_leaderboard(1, sector=sector)
+            self.assertEqual(
+                [r["ein"] for r in cached["leaderboard"]],
+                [r["ein"] for r in fallback["leaderboard"]],
+                f"cache≠fallback for sector={sector} after a dim edit")
+            self.assertEqual(cached["total"], fallback["total"])
+            self.db.scores.rebuild_score_latest()  # restore cache for next iter
+            self.db.connection.commit()
+
+    def test_page1_walk_and_deep_page_match_fallback_with_ties(self):
+        # Tie 100000002 with 100000001 at 0.90 (both cache + source), so RANK
+        # ties are exercised on the page-1 walk (offset 0) AND the windowed deep
+        # pages (offset > 0). Both must equal the live fallback exactly.
+        self.db.cursor.execute(
+            "UPDATE organization_score SET total_score = 0.90 WHERE filing_id IN "
+            "(SELECT filing_id FROM filing WHERE organization_id = '100000002')")
+        self.db.connection.commit()
+        self.db.scores.rebuild_score_latest()
+        self.db.connection.commit()
+        for limit, offset in [(10, 0), (2, 0), (2, 1), (2, 2), (1, 3)]:
+            cached = self.db.scores.rank_leaderboard(1, limit=limit, offset=offset)
+            self.db.cursor.execute("DELETE FROM org_score_latest")
+            self.db.connection.commit()
+            fb = self.db.scores.rank_leaderboard(1, limit=limit, offset=offset)
+            self.assertEqual(
+                [(r["ein"], r["rank"]) for r in cached["leaderboard"]],
+                [(r["ein"], r["rank"]) for r in fb["leaderboard"]],
+                f"cache≠fallback at limit={limit} offset={offset}")
+            self.assertEqual(cached["total"], fb["total"])
+            self.db.scores.rebuild_score_latest()
+            self.db.connection.commit()
+
+    def test_city_index_self_heals_to_nocase(self):
+        # A DB built before the city index was made case-insensitive has a BINARY
+        # idx_osl_type_city, which the COLLATE NOCASE city filter can't seek. The
+        # migration must rebuild it NOCASE.
+        cur = self.db.cursor
+        cur.execute("DROP INDEX idx_osl_type_city")
+        cur.execute("CREATE INDEX idx_osl_type_city ON org_score_latest "
+                    "(model_id, org_type, city, total_score)")  # BINARY
+        self.db.connection.commit()
+        sql = cur.execute("SELECT sql FROM sqlite_master WHERE "
+                          "name='idx_osl_type_city'").fetchone()[0]
+        self.assertNotIn("NOCASE", sql.upper())
+        self.db.scores._migrate_score_latest_indexes()
+        sql = cur.execute("SELECT sql FROM sqlite_master WHERE "
+                          "name='idx_osl_type_city'").fetchone()[0]
+        self.assertIn("NOCASE", sql.upper())
+
 
 if __name__ == '__main__':
     unittest.main()

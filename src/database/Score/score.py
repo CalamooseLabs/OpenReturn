@@ -1,3 +1,5 @@
+import json
+
 from database.base import Database
 
 
@@ -16,6 +18,24 @@ class ScoreDatabase(Database):
     super().__init__("Score", "Score", populate_guard="score_model",
                      connection=db.connection, cursor=db.cursor)
     self._migrate_columns()
+    self._migrate_score_latest_indexes()
+
+  def _migrate_score_latest_indexes(self) -> None:
+    """Self-heal the ranking-cache city index on DBs built before it was made
+    case-insensitive. `idx_osl_type_city` must collate `city` NOCASE (the rank
+    filter uses COLLATE NOCASE); a BINARY one is silently unusable for the city
+    seek → a full (model, org_type) scan. setup's CREATE ... IF NOT EXISTS won't
+    redefine an existing index, so drop+recreate it once when the collation is
+    wrong (runs after setup; a no-op once correct)."""
+    row = self.cursor.execute(
+      "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_osl_type_city'"
+    ).fetchone()
+    if row and row[0] and 'NOCASE' not in row[0].upper():
+      self.cursor.execute("DROP INDEX idx_osl_type_city")
+      self.cursor.execute(
+        "CREATE INDEX idx_osl_type_city ON org_score_latest "
+        "(model_id, org_type, city COLLATE NOCASE, total_score)")
+      self.connection.commit()
 
   def _migrate_columns(self) -> None:
     """Add the model-type / manual-scoring columns to databases created before
@@ -98,6 +118,51 @@ class ScoreDatabase(Database):
     if not row:
       raise ValueError(f"Score model version {version} not found")
     return row[0]
+
+  def get_model_definition(self, version: str) -> dict | None:
+    """Reconstruct the editable ``{model, factor}`` definition for a model — the
+    same shape register_model / update_model accept — so the admin builder can
+    load an existing model for editing. None if no such version. Inputs are
+    reduced to their bare keys (dropping any per-input missing-data policy, which
+    the structured form doesn't edit; the Advanced JSON path preserves them)."""
+    m = self.get_model(version)
+    if m is None:
+      return None
+    model: dict = {"version": m["version"]}
+    if m.get("description"):
+      model["description"] = m["description"]
+    if m.get("model_type"):
+      model["type"] = m["model_type"]
+    model["mode"] = m.get("scoring_mode") or "computed"
+    model["kind"] = m.get("model_kind") or "model"
+    if m.get("missing_data"):
+      model["missing_data"] = m["missing_data"]
+    if m.get("applies_to") and m["applies_to"] != "both":
+      model["applies_to"] = m["applies_to"]
+
+    manual = model["mode"] == "manual"
+    factors = []
+    for f in self.get_factors(version):
+      if manual or f.get("formula_type") == "manual":
+        factors.append({"name": f["name"], "weight": f["weight"],
+                        "scale": f.get("manual_scale") or "benchmark"})
+        continue
+      raw = f.get("inputs")
+      try:
+        parsed = json.loads(raw) if isinstance(raw, str) else (raw or [])
+      except (ValueError, TypeError):
+        parsed = []
+      keys = [i if isinstance(i, str) else (i or {}).get("key") for i in parsed]
+      fac: dict = {
+        "name": f["name"], "weight": f["weight"],
+        "formula_type": f["formula_type"], "inputs": [k for k in keys if k],
+        "direction": f.get("direction") or "higher",
+        "benchmark_lo": f.get("benchmark_lo"), "benchmark_hi": f.get("benchmark_hi"),
+      }
+      if f.get("formula_description"):
+        fac["formula_description"] = f["formula_description"]
+      factors.append(fac)
+    return {"model": model, "factor": factors}
 
   def get_factors(self, model_version: str = "1") -> list[dict]:
     rows = self.cursor.execute(
@@ -358,6 +423,20 @@ class ScoreDatabase(Database):
       "SELECT 1 FROM org_score_latest WHERE model_id = ? LIMIT 1", (model_id,)
     ).fetchone() is not None
 
+  def clear_score_latest(self, model_ids=None) -> None:
+    """Drop the ranking cache for the given models (or all). After this,
+    _score_latest_ready is False and reads fall back to the live window query —
+    used to recover cleanly from a failed/partial rebuild rather than serve a
+    stale cache. No commit (the caller batches)."""
+    if model_ids is None:
+      self.cursor.execute("DELETE FROM org_score_latest")
+    else:
+      mids = [int(m) for m in model_ids]
+      if not mids:
+        return
+      self.cursor.execute("DELETE FROM org_score_latest WHERE model_id IN (%s)"
+                          % ",".join("?" * len(mids)), mids)
+
   @staticmethod
   def _cache_subset(*, sector=None, state=None, city=None, county=None,
                     org_type=None, grantmaker=None, list_id=None):
@@ -505,9 +584,33 @@ class ScoreDatabase(Database):
       cl, p = self._cache_subset(**subset)
       where = "s.model_id = ?" + "".join(" AND " + c for c in cl)
       params = [mid, *p]
-      # Window + LIMIT over the cache FIRST (the board index streams it and stops
-      # at the page), THEN join organization for names on just those rows — a
-      # JOIN inside the windowed query would force materializing the whole subset.
+      # Plain COUNT (no org join) — fast, and exact because the ein FK +
+      # INNER-JOIN-at-build mean every cache row has an organization, so this
+      # matches the org-joined page set.
+      total = self.cursor.execute(
+        f"SELECT COUNT(*) FROM org_score_latest s WHERE {where}", params).fetchone()[0]
+      if offset == 0:
+        # Page 1 (the common case — the default /reports view): the board index
+        # already yields rows in total_score-DESC order, so RANK is just a walk
+        # over the page (ties share a rank) — no RANK() window over the whole
+        # subset (hundreds of thousands of rows). Exact only because offset 0 has
+        # no pre-page rows that could share the first row's score.
+        page = self.cursor.execute(
+          "SELECT s.ein, o.name, s.total_score, s.year "
+          "FROM org_score_latest s JOIN organization o ON o.ein = s.ein "
+          f"WHERE {where} ORDER BY s.total_score DESC, s.ein LIMIT ?",
+          [*params, limit]).fetchall()
+        lb, rank, prev = [], 0, None
+        for i, r in enumerate(page):
+          if prev is None or r[2] < prev:
+            rank = i + 1
+          prev = r[2]
+          lb.append({"rank": rank, "ein": r[0], "name": r[1],
+                     "total_score": r[2], "year": r[3]})
+        return {"model_version": model_version, "year": year, "total": total,
+                "limit": limit, "offset": offset, "leaderboard": lb}
+      # Deeper pages (rare): window + LIMIT over the cache (the board index streams
+      # it and stops at the page), then join organization for names on those rows.
       rows = self.cursor.execute(
         "SELECT t.ein, o.name, t.total_score, t.year, t.rank FROM ("
         " SELECT s.ein AS ein, s.total_score AS total_score, s.year AS year,"
@@ -517,8 +620,6 @@ class ScoreDatabase(Database):
         ") t JOIN organization o ON o.ein = t.ein "
         "ORDER BY t.total_score DESC, t.ein",
         [*params, limit, offset]).fetchall()
-      total = self.cursor.execute(
-        f"SELECT COUNT(*) FROM org_score_latest s WHERE {where}", params).fetchone()[0]
     else:
       cl, p = self._rank_subset(**subset)
       cte, cparams = self._rank_cte(model_version, year, cl, p)
@@ -593,13 +694,25 @@ class ScoreDatabase(Database):
     # ── fast path: read the org_score_latest cache (one indexed row per org) ──
     mid = self._model_id_for_version(model_version)
     if year is None and mid is not None and self._score_latest_ready(mid):
-      type_clause, type_args = (("s.org_type = ?", [org_type]) if org_type is not None
+      # Read the org's OWN ranking dims from the SAME cache row it is ranked
+      # against — NOT from the live organization/address row. The cache freezes
+      # the dims at rebuild time; mixing a live key with cached peers could make
+      # the org's `my` lookup miss its own (stale-typed) row, or filter peers by
+      # a key the cache no longer shares. Reading both sides from the cache keeps
+      # the fast path internally consistent.
+      crow = cur.execute(
+        "SELECT total_score, org_type, sector_code, state_code, city, county_fips "
+        "FROM org_score_latest WHERE model_id = ? AND ein = ?", (mid, ein)).fetchone()
+      my = crow[0] if crow else None
+      if crow:
+        c_type, c_sector, c_state, c_city, c_county = crow[1:6]
+      else:
+        c_type, c_sector = org_type, org.get('sector_code')
+        c_state = str(addr['state']).strip().upper() if addr.get('state') else None
+        c_city = str(addr['city']).strip() if addr.get('city') else None
+        c_county = addr.get('county_fips')
+      type_clause, type_args = (("s.org_type = ?", [c_type]) if c_type is not None
                                 else ("s.org_type IS NULL", []))
-      my_row = cur.execute(
-        f"SELECT s.total_score FROM org_score_latest s "
-        f"WHERE s.model_id = ? AND {type_clause} AND s.ein = ?",
-        [mid, *type_args, ein]).fetchone()
-      my = my_row[0] if my_row else None
 
       def _crank(extra_clause=None, extra_args=None):
         clauses = ["s.model_id = ?", type_clause] + ([extra_clause] if extra_clause else [])
@@ -616,16 +729,16 @@ class ScoreDatabase(Database):
         return {"ein": ein, "rank": rank, "of": of, "percentile": pct, "total_score": my}
 
       dims = {"global": _crank()}
-      if org.get('sector_code'):
-        dims["sector"] = _crank("s.sector_code = ?", [org['sector_code']])
-      if addr.get('state'):
-        dims["state"] = _crank("s.state_code = ?", [str(addr['state']).strip().upper()])
-      if addr.get('city'):
-        dims["city"] = _crank("s.city = ? COLLATE NOCASE", [str(addr['city']).strip()])
-      if addr.get('county_fips'):
-        dims["county"] = _crank("s.county_fips = ?", [addr['county_fips']])
+      if c_sector:
+        dims["sector"] = _crank("s.sector_code = ?", [c_sector])
+      if c_state:
+        dims["state"] = _crank("s.state_code = ?", [c_state])
+      if c_city:
+        dims["city"] = _crank("s.city = ? COLLATE NOCASE", [c_city])
+      if c_county:
+        dims["county"] = _crank("s.county_fips = ?", [c_county])
       return {"ein": ein, "model_version": model_version, "year": year,
-              "org_type": org_type, "dimensions": dims}
+              "org_type": c_type, "dimensions": dims}
 
     # ── fallback: build the latest-per-org set in a per-request temp table ──
     cur.execute("DROP TABLE IF EXISTS _rank_set")
@@ -781,17 +894,6 @@ class ScoreDatabase(Database):
       f"(SELECT filing_id FROM filing WHERE {where})", params).fetchone()[0]
     return {"filings": f, "values": v, "scores": s}
 
-  def _invalidate_score_latest(self, eins) -> None:
-    """Drop ranking-cache rows for the given orgs (chunked for the param limit).
-    They reappear at the next score rebuild; until then they rank as unscored —
-    which is correct after their scores are gone, and better than a stale rank."""
-    eins = list(dict.fromkeys(eins))
-    for i in range(0, len(eins), 800):
-      chunk = eins[i:i + 800]
-      self.cursor.execute(
-        "DELETE FROM org_score_latest WHERE ein IN (%s)" % ",".join("?" * len(chunk)),
-        chunk)
-
   def _purge(self, where: str, params: tuple) -> dict:
     counts = self._purge_counts(where, params)
     # reported_data AND organization_score both cascade off filing.filing_id, but
@@ -804,7 +906,11 @@ class ScoreDatabase(Database):
       affected = [r[0] for r in self.cursor.execute(
         f"SELECT DISTINCT organization_id FROM filing WHERE {where}", params).fetchall()]
       self.cursor.execute(f"DELETE FROM filing WHERE {where}", params)
-      self._invalidate_score_latest(affected)
+      # Re-derive (not just drop) the affected orgs' cache rows from whatever
+      # scores REMAIN: an org that lost one year's filing but kept others must
+      # keep its rank (a bare delete would make it rank as unscored until the
+      # next full rebuild). rebuild_score_latest drops orgs left with no scores.
+      self.rebuild_score_latest(eins=affected)
     self.connection.commit()
     return counts
 

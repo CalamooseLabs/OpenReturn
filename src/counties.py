@@ -101,6 +101,11 @@ def cmd_import(args) -> int:
         return 1
     n = db.orgs.import_zip_county(rows)
     derived = db.orgs.derive_counties()
+    if derived.get('updated'):
+        # county_fips is a ranking-cache dimension; refresh it so leaderboard
+        # county filters aren't stale (ingest finalize re-scores; this CLI doesn't).
+        db.scores.rebuild_score_latest()
+        db.commit()
     db.close()
     zips = len({r[0] for r in rows})
     print(f"\n{_B}{_GRN}Imported{_R} {_CYN}{n:,}{_R} crosswalk row(s) "
@@ -116,6 +121,10 @@ def cmd_derive(args) -> int:
     from console import _GRN, _R, _DIM
     have = db.cursor.execute("SELECT COUNT(*) FROM zip_county").fetchone()[0]
     res = db.orgs.derive_counties()
+    if res.get('updated'):
+        # county_fips is a ranking-cache dimension — refresh after a standalone derive.
+        db.scores.rebuild_score_latest()
+        db.commit()
     db.close()
     if not have:
         print("ZIP→county crosswalk is empty — run `openreturn counties import <file>` first.")

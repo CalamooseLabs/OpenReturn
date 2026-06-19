@@ -131,7 +131,12 @@ CREATE INDEX IF NOT EXISTS idx_score_factor_value_score ON organization_score_fa
 -- is purely an accelerator — never a source of truth.
 CREATE TABLE IF NOT EXISTS org_score_latest (
   model_id     INTEGER NOT NULL REFERENCES score_model (model_id) ON DELETE CASCADE,
-  ein          TEXT NOT NULL,
+  -- FK to organization (org table is created before Score) so a deleted org
+  -- cascades its cache rows away: orphans are structurally impossible, which
+  -- lets the leaderboard `total` use a plain (fast) COUNT that still matches the
+  -- org-joined page. (Cache rows are only ever inserted for orgs that exist —
+  -- rebuild_score_latest INNER-JOINs organization.)
+  ein          TEXT NOT NULL REFERENCES organization (ein) ON DELETE CASCADE,
   total_score  REAL NOT NULL,
   year         INTEGER,
   org_type     TEXT,
@@ -153,6 +158,9 @@ CREATE TABLE IF NOT EXISTS org_score_latest (
 CREATE INDEX IF NOT EXISTS idx_osl_model_type_score ON org_score_latest (model_id, org_type, total_score);
 CREATE INDEX IF NOT EXISTS idx_osl_type_sector      ON org_score_latest (model_id, org_type, sector_code, total_score);
 CREATE INDEX IF NOT EXISTS idx_osl_type_state       ON org_score_latest (model_id, org_type, state_code, total_score);
-CREATE INDEX IF NOT EXISTS idx_osl_type_city        ON org_score_latest (model_id, org_type, city, total_score);
+-- city is matched case-insensitively (the rank filter uses COLLATE NOCASE), so
+-- the index column must be NOCASE too or the seek degrades to a full scan of the
+-- (model, org_type) slice + a per-row table lookup for city.
+CREATE INDEX IF NOT EXISTS idx_osl_type_city        ON org_score_latest (model_id, org_type, city COLLATE NOCASE, total_score);
 CREATE INDEX IF NOT EXISTS idx_osl_type_county      ON org_score_latest (model_id, org_type, county_fips, total_score);
 CREATE INDEX IF NOT EXISTS idx_osl_model_board      ON org_score_latest (model_id, total_score DESC, ein);

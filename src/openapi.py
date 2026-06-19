@@ -1329,6 +1329,43 @@ def _paths() -> dict:
                                    "kind": {"type": "string"}}}),
             },
         },
+        "/admin/models/definition": {
+            "get": {
+                "tags": ["Admin"],
+                "summary": "Full editable definition for one model (user:admin)",
+                "description": "Reconstructs the `{model, factor}` definition for a model "
+                               "(by `version`) so the builder can load it for editing.",
+                "parameters": [_q("version", required=True, desc="Model version")],
+                "responses": _responses({
+                    "type": "object",
+                    "properties": {"version": {"type": "string"},
+                                   "definition": {"type": "object",
+                                                  "description": "{model, factor}"}}}),
+            },
+        },
+        "/admin/models/update": {
+            "post": {
+                "tags": ["Admin"],
+                "summary": "Update (edit) an existing scoring model (user:admin)",
+                "description": "Replaces a model's header + factors in place. The version "
+                               "is taken from the definition and can't change. `dry_run` "
+                               "validates only. Scores under the old definition go stale, so "
+                               "the result flags `recompute_needed`. Audited.",
+                "requestBody": _body({
+                    "type": "object", "required": ["definition"],
+                    "properties": {
+                        "definition": {"type": "object",
+                                       "description": "{model, factor} — must include model.version"},
+                        "dry_run": {"type": "boolean"}},
+                }),
+                "responses": _responses({
+                    "type": "object",
+                    "properties": {"version": {"type": "string"},
+                                   "updated": {"type": "boolean"},
+                                   "factors": {"type": "integer"},
+                                   "recompute_needed": {"type": "boolean"}}}),
+            },
+        },
         "/admin/users": {
             "get": {"tags": ["Admin"], "summary": "List users (user:admin)",
                     "responses": _responses({"type": "object", "properties": {
